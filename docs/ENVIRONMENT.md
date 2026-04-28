@@ -130,10 +130,16 @@ OmniRoute uses **SQLite** (via `better-sqlite3`) for all persistence. These vari
 | `AUTH_COOKIE_SECURE`          | `false`               | `src/lib/auth`                           | Sets the `Secure` flag on session cookies. **Must be `true`** when running behind HTTPS.                  |
 | `REQUIRE_API_KEY`             | `false`               | API middleware                           | When `true`, all `/v1/*` proxy requests must include a valid API key.                                     |
 | `ALLOW_API_KEY_REVEAL`        | `false`               | Dashboard providers page                 | Allows revealing full API key values in the Dashboard UI. Security risk on shared instances.              |
+| `OMNIROUTE_MANAGEMENT_TOKEN`  | _(unset)_             | `src/lib/api/requireManagementAuth.ts`   | Trusted server-to-server Bearer token for internal backend integrations that call management APIs.        |
 | `NO_LOG_API_KEY_IDS`          | _(empty)_             | `src/lib/compliance/index.ts`            | Comma-separated API key IDs that bypass request logging (GDPR compliance).                                |
 | `MAX_BODY_SIZE_BYTES`         | `10485760` (10 MB)    | `src/shared/middleware/bodySizeGuard.ts` | Maximum allowed request body size. Rejects payloads exceeding this limit.                                 |
 | `CORS_ORIGIN`                 | `*`                   | Next.js middleware                       | CORS `Access-Control-Allow-Origin` value. Restrict for production.                                        |
 | `OUTBOUND_SSRF_GUARD_ENABLED` | `true`                | `src/shared/network/outboundUrlGuard.ts` | Block provider calls targeting private/loopback/link-local IP ranges. Disable only in isolated test envs. |
+
+`OMNIROUTE_MANAGEMENT_TOKEN` is intended only for trusted internal backend integrations,
+such as SLAI provisioning OmniRoute API keys or syncing usage from a Go backend. Generate a
+long random token, keep it out of logs, and send it only over HTTPS or a private network.
+Unset, empty, and whitespace-only values do not authenticate requests.
 
 ### Hardening Checklist
 

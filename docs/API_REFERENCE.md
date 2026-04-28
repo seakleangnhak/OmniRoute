@@ -171,6 +171,11 @@ Response example:
 
 ### Authentication
 
+Management API routes are protected when login is required. They accept a valid dashboard
+`auth_token` session cookie, or `Authorization: Bearer <OMNIROUTE_MANAGEMENT_TOKEN>` for
+trusted internal backend integrations such as SLAI. The management token should be long,
+random, kept out of logs, and used only over HTTPS or a private network.
+
 | Endpoint                      | Method  | Description           |
 | ----------------------------- | ------- | --------------------- |
 | `/api/auth/login`             | POST    | Login                 |
@@ -464,4 +469,5 @@ Full architecture reference: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - Dashboard routes (`/dashboard/*`) use `auth_token` cookie
 - Login uses saved password hash; fallback to `INITIAL_PASSWORD`
 - `requireLogin` toggleable via `/api/settings/require-login`
+- Management API routes accept `auth_token` or `Authorization: Bearer <OMNIROUTE_MANAGEMENT_TOKEN>` for trusted internal backends
 - `/v1/*` routes optionally require Bearer API key when `REQUIRE_API_KEY=true`

@@ -74,15 +74,62 @@ function getCookieValueFromHeader(headers: Headers | undefined, name: string): s
   return null;
 }
 
-function getBearerToken(request: RequestLike | Request | null | undefined): string | null {
+function getAuthorizationHeader(request: RequestLike | Request | null | undefined): string | null {
   const headers =
     request && typeof request === "object" && "headers" in request ? request.headers : undefined;
   const authHeader = headers?.get("authorization") || headers?.get("Authorization");
+
+  if (typeof authHeader !== "string") return null;
+  return authHeader;
+}
+
+export function hasBearerToken(request: RequestLike | Request | null | undefined): boolean {
+  const authHeader = getAuthorizationHeader(request);
+  return typeof authHeader === "string" && authHeader.trim().toLowerCase().startsWith("bearer ");
+}
+
+function getBearerToken(request: RequestLike | Request | null | undefined): string | null {
+  const authHeader = getAuthorizationHeader(request);
   if (typeof authHeader !== "string") return null;
 
   const trimmedHeader = authHeader.trim();
   if (!trimmedHeader.toLowerCase().startsWith("bearer ")) return null;
   return trimmedHeader.slice(7).trim() || null;
+}
+
+function getExactBearerToken(request: RequestLike | Request | null | undefined): string | null {
+  const authHeader = getAuthorizationHeader(request);
+  if (typeof authHeader !== "string") return null;
+
+  if (!authHeader.toLowerCase().startsWith("bearer ")) return null;
+  return authHeader.slice(7) || null;
+}
+
+function safeTokenEquals(providedToken: string, configuredToken: string): boolean {
+  const encoder = new TextEncoder();
+  const providedBytes = encoder.encode(providedToken);
+  const configuredBytes = encoder.encode(configuredToken);
+
+  let mismatch = providedBytes.length ^ configuredBytes.length;
+  const maxLength = Math.max(providedBytes.length, configuredBytes.length);
+
+  for (let i = 0; i < maxLength; i++) {
+    mismatch |= (providedBytes[i] ?? 0) ^ (configuredBytes[i] ?? 0);
+  }
+
+  return mismatch === 0;
+}
+
+export function isManagementBearerTokenAuthenticated(
+  request: RequestLike | Request | null | undefined
+): boolean {
+  const configuredToken = process.env.OMNIROUTE_MANAGEMENT_TOKEN;
+  if (typeof configuredToken !== "string" || configuredToken.trim().length === 0) return false;
+
+  const bearerToken = getExactBearerToken(request);
+  if (!bearerToken) return false;
+
+  return safeTokenEquals(bearerToken, configuredToken);
 }
 
 async function validateBearerApiKey(apiKey: string | null): Promise<boolean> {
@@ -155,11 +202,12 @@ export async function verifyAuth(request: any): Promise<string | null> {
     return null;
   }
 
-  const bearerToken = getBearerToken(request);
   if (isManagementApiRequest(request)) {
-    return bearerToken ? "Invalid management token" : "Authentication required";
+    if (isManagementBearerTokenAuthenticated(request)) return null;
+    return hasBearerToken(request) ? "Invalid management token" : "Authentication required";
   }
 
+  const bearerToken = getBearerToken(request);
   if (await validateBearerApiKey(bearerToken)) {
     return null;
   }
@@ -187,7 +235,7 @@ export async function isAuthenticated(request: Request): Promise<boolean> {
   }
 
   if (isManagementApiRequest(request)) {
-    return false;
+    return isManagementBearerTokenAuthenticated(request);
   }
 
   return validateBearerApiKey(getBearerToken(request));

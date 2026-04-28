@@ -15,6 +15,7 @@ const modelSync = await import("../../../src/shared/services/modelSyncScheduler.
 
 const ORIGINAL_JWT = process.env.JWT_SECRET;
 const ORIGINAL_INITIAL = process.env.INITIAL_PASSWORD;
+const ORIGINAL_MANAGEMENT_TOKEN = process.env.OMNIROUTE_MANAGEMENT_TOKEN;
 
 function reset() {
   core.resetDbInstance();
@@ -23,6 +24,7 @@ function reset() {
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
   delete process.env.JWT_SECRET;
   delete process.env.INITIAL_PASSWORD;
+  delete process.env.OMNIROUTE_MANAGEMENT_TOKEN;
 }
 
 test.beforeEach(() => {
@@ -35,6 +37,8 @@ test.after(() => {
   else process.env.JWT_SECRET = ORIGINAL_JWT;
   if (ORIGINAL_INITIAL === undefined) delete process.env.INITIAL_PASSWORD;
   else process.env.INITIAL_PASSWORD = ORIGINAL_INITIAL;
+  if (ORIGINAL_MANAGEMENT_TOKEN === undefined) delete process.env.OMNIROUTE_MANAGEMENT_TOKEN;
+  else process.env.OMNIROUTE_MANAGEMENT_TOKEN = ORIGINAL_MANAGEMENT_TOKEN;
 });
 
 async function loadPolicy() {
@@ -96,6 +100,42 @@ test("managementPolicy: rejects client API keys for dashboard access", async () 
   if (!out.allow) {
     assert.equal(out.status, 403);
     assert.equal(out.code, "AUTH_001");
+  }
+});
+
+test("managementPolicy: allows a valid management bearer token", async () => {
+  process.env.JWT_SECRET = "test-jwt-secret-for-mgmt-policy";
+  process.env.INITIAL_PASSWORD = "initial-pass";
+  process.env.OMNIROUTE_MANAGEMENT_TOKEN = "mgmt-policy-token";
+  await settingsDb.updateSettings({ requireLogin: true });
+
+  const policy = await loadPolicy();
+  const out = await policy.evaluate(
+    ctx(new Headers({ authorization: "Bearer mgmt-policy-token" }), "GET", "/api/keys")
+  );
+
+  assert.equal(out.allow, true);
+  if (out.allow) {
+    assert.equal(out.subject.kind, "management_key");
+    assert.equal(out.subject.id, "env-management-token");
+  }
+});
+
+test("managementPolicy: rejects bearer tokens when env management token is blank", async () => {
+  process.env.JWT_SECRET = "test-jwt-secret-for-mgmt-policy";
+  process.env.INITIAL_PASSWORD = "initial-pass";
+  process.env.OMNIROUTE_MANAGEMENT_TOKEN = "   ";
+  await settingsDb.updateSettings({ requireLogin: true });
+
+  const policy = await loadPolicy();
+  const out = await policy.evaluate(
+    ctx(new Headers({ authorization: "Bearer mgmt-policy-token" }), "GET", "/api/keys")
+  );
+
+  assert.equal(out.allow, false);
+  if (!out.allow) {
+    assert.equal(out.status, 403);
+    assert.equal(out.message, "Invalid management token");
   }
 });
 
