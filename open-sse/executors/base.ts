@@ -466,7 +466,7 @@ export class BaseExecutor {
           remapToolNamesInRequest(tb);
           obfuscateInBody(tb);
 
-          const ccVersion = "2.1.114";
+          const ccVersion = "2.1.121";
           // Fix #1638: Use a stable fingerprint instead of message-derived one.
           // The original computeFingerprint() hashed first-user-message chars, which
           // changes every conversation turn. This mutated the system[] prefix on each
@@ -482,6 +482,18 @@ export class BaseExecutor {
 
           if (Array.isArray(tb.system)) {
             const sysBlocks = tb.system as Array<Record<string, unknown>>;
+            // Fix #1712: Remove any existing billing headers from the client
+            // to prevent stacking that breaks Anthropic prompt cache prefix matching.
+            for (let i = sysBlocks.length - 1; i >= 0; i--) {
+              const block = sysBlocks[i];
+              if (
+                block &&
+                typeof block.text === "string" &&
+                block.text.startsWith("x-anthropic-billing-header:")
+              ) {
+                sysBlocks.splice(i, 1);
+              }
+            }
             const firstSystemCacheControl =
               sysBlocks[0] &&
               typeof sysBlocks[0] === "object" &&

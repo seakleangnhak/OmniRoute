@@ -121,8 +121,10 @@ test("migration infrastructure avoids cwd-based repo tracing fallbacks", () => {
   const runnerSource = fs.readFileSync(path.resolve("src/lib/db/migrationRunner.ts"), "utf8");
   const dataPathsSource = fs.readFileSync(path.resolve("src/lib/dataPaths.ts"), "utf8");
 
-  assert.doesNotMatch(runnerSource, /process\.cwd\(\)/);
+  // dataPaths must never use process.cwd() — it resolves via import.meta.url
   assert.doesNotMatch(dataPathsSource, /process\.cwd\(\)/);
+  // migrationRunner uses import.meta.url as the primary strategy (process.cwd is
+  // only a last-resort fallback for Windows/CI-built bundles with leaked paths)
   assert.match(runnerSource, /fileURLToPath\(import\.meta\.url\)/);
 });
 
@@ -607,6 +609,65 @@ test(
         db
           .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
           .get("call_log_summary_shadow_dupe"),
+        undefined
+      );
+    } finally {
+      db.close();
+    }
+  }
+);
+
+test(
+  "runMigrations rehomes legacy reasoning cache tracking so api key lifecycle can apply",
+  serial,
+  async () => {
+    const runner = await importFresh("src/lib/db/migrationRunner.ts");
+    const db = createDb();
+
+    try {
+      db.exec(`
+      CREATE TABLE _omniroute_migrations (
+        version TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE api_keys (
+        id TEXT PRIMARY KEY,
+        key TEXT NOT NULL
+      );
+    `);
+      db.prepare("INSERT INTO _omniroute_migrations (version, name) VALUES (?, ?)").run(
+        "032",
+        "create_reasoning_cache"
+      );
+
+      const count = withMockedMigrationFs(
+        {
+          "032_apikey_lifecycle.sql": "ALTER TABLE api_keys ADD COLUMN should_not_run TEXT;",
+          "033_create_reasoning_cache.sql": "CREATE TABLE reasoning_cache_shadow (id INTEGER);",
+        },
+        () => runner.runMigrations(db)
+      );
+
+      assert.equal(count, 1);
+      assert.deepEqual(
+        db.prepare("SELECT version, name FROM _omniroute_migrations ORDER BY version").all(),
+        [
+          { version: "032", name: "apikey_lifecycle" },
+          { version: "033", name: "create_reasoning_cache" },
+        ]
+      );
+
+      const columns = db.prepare("PRAGMA table_info(api_keys)").all() as Array<{ name: string }>;
+      const names = new Set(columns.map((column) => column.name));
+      assert.equal(names.has("revoked_at"), true);
+      assert.equal(names.has("expires_at"), true);
+      assert.equal(names.has("should_not_run"), false);
+      assert.equal(
+        db
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+          .get("reasoning_cache_shadow"),
         undefined
       );
     } finally {

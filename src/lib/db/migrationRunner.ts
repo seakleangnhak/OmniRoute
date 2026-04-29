@@ -33,12 +33,33 @@ function resolveMigrationsDir(): string {
   try {
     return path.join(path.dirname(fileURLToPath(import.meta.url)), "migrations");
   } catch {
-    // Fall through to a more defensive URL parse below.
+    // Fall through to more defensive URL parsing below.
   }
 
+  // Fix #1704: On Windows with global npm installs, import.meta.url may contain
+  // CI build-time paths (e.g., /home/runner/work/...) that are not valid file://
+  // URLs on Windows. Extract the path portion directly and normalize it.
   const metaUrl = import.meta.url;
   if (typeof metaUrl === "string" && metaUrl.startsWith("file://")) {
-    return path.join(path.dirname(fileURLToPath(metaUrl)), "migrations");
+    try {
+      // Strip the file:// prefix and decode, then normalize for the platform
+      const rawPath = decodeURIComponent(
+        metaUrl.replace(/^file:\/\/\//, "/").replace(/^file:\/\//, "")
+      );
+      return path.join(path.dirname(path.resolve(rawPath)), "migrations");
+    } catch {
+      // Fall through to process.cwd fallback
+    }
+  }
+
+  // Last resort: use process.cwd to find migrations relative to the app root
+  const cwdFallback = path.join(process.cwd(), "src", "lib", "db", "migrations");
+  if (fs.existsSync(cwdFallback)) {
+    return cwdFallback;
+  }
+  const appFallback = path.join(process.cwd(), "app", "src", "lib", "db", "migrations");
+  if (fs.existsSync(appFallback)) {
+    return appFallback;
   }
 
   throw new Error(
@@ -70,6 +91,12 @@ const RENAMED_MIGRATION_COMPATIBILITY = [
     fromName: "provider_connection_max_concurrent",
     toVersion: "029",
     toName: "provider_connection_max_concurrent",
+  },
+  {
+    fromVersion: "032",
+    fromName: "create_reasoning_cache",
+    toVersion: "033",
+    toName: "create_reasoning_cache",
   },
 ] as const;
 
@@ -188,6 +215,20 @@ function applyApiKeyLifecycleMigration(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_api_keys_revoked_at ON api_keys(revoked_at);
     CREATE INDEX IF NOT EXISTS idx_api_keys_expires_at ON api_keys(expires_at);
   `);
+}
+
+function isSearchRequestTypeMigration(migration: { version: string; name: string }): boolean {
+  return migration.version === "007";
+}
+
+function applySearchRequestTypeMigration(db: Database.Database): void {
+  ensureColumn(
+    db,
+    "call_logs",
+    "request_type",
+    "ALTER TABLE call_logs ADD COLUMN request_type TEXT DEFAULT NULL"
+  );
+  db.exec("CREATE INDEX IF NOT EXISTS idx_call_logs_request_type ON call_logs(request_type);");
 }
 
 function inferPhysicalSchemaBaseline(db: Database.Database): {
@@ -456,6 +497,8 @@ export function runMigrations(db: Database.Database, options?: { isNewDb?: boole
     const applyMigration = db.transaction(() => {
       if (isApiKeyLifecycleMigration(migration)) {
         applyApiKeyLifecycleMigration(db);
+      } else if (isSearchRequestTypeMigration(migration)) {
+        applySearchRequestTypeMigration(db);
       } else {
         const sql = fs.readFileSync(migration.path, "utf-8");
         db.exec(sql);

@@ -32,24 +32,29 @@ import {
 import { fetchRemoteImage } from "@/shared/network/remoteImageFetch";
 
 const OPENAI_IMAGE_TO_IMAGE_MODELS = new Set([
-  "black-forest-labs/FLUX.1-redux",
-  "black-forest-labs/FLUX.1-depth",
-  "black-forest-labs/FLUX.1-canny",
-  "black-forest-labs/FLUX.1.1-pro",
-  "FLUX.1-redux",
-  "FLUX.1-depth",
-  "FLUX.1-canny",
-  "FLUX.1.1-pro",
+  "black-forest-labs/FLUX.2-max",
+  "black-forest-labs/FLUX.2-pro",
+  "black-forest-labs/FLUX.2-flex",
+  "black-forest-labs/FLUX.2-dev",
+  "openai/gpt-image-1.5",
+  "Wan-AI/Wan2.6-image",
+  "Qwen/Qwen-Image-2.0-Pro",
+  "Qwen/Qwen-Image-2.0",
+  "google/flash-image-3.1",
+  "google/gemini-3-pro-image",
   "flux-kontext-max",
   "flux-kontext",
   "flux-kontext-pro",
 ]);
 
 const BFL_MODEL_ENDPOINTS = {
+  "flux-2-max": "/v1/flux-2-max",
+  "flux-2-pro": "/v1/flux-2-pro",
+  "flux-2-flex": "/v1/flux-2-flex",
+  "flux-2-klein-9b": "/v1/flux-2-klein-9b",
+  "flux-2-klein-4b": "/v1/flux-2-klein-4b",
   "flux-kontext-pro": "/v1/flux-kontext-pro",
   "flux-kontext-max": "/v1/flux-kontext-max",
-  "flux-pro-1.0-fill": "/v1/flux-pro-1.0-fill",
-  "flux-pro-1.0-expand": "/v1/flux-pro-1.0-expand",
   "flux-pro-1.1": "/v1/flux-pro-1.1",
   "flux-pro-1.1-ultra": "/v1/flux-pro-1.1-ultra",
   "flux-dev": "/v1/flux-dev",
@@ -57,22 +62,20 @@ const BFL_MODEL_ENDPOINTS = {
 };
 
 const BFL_EDIT_MODELS = new Set([
+  "flux-2-max",
+  "flux-2-pro",
+  "flux-2-flex",
   "flux-kontext-pro",
   "flux-kontext-max",
-  "flux-pro-1.0-fill",
-  "flux-pro-1.0-expand",
 ]);
 
 const BFL_FAILURE_STATUSES = new Set(["Error", "Failed", "Content Moderated", "Request Moderated"]);
 
 const STABILITY_GENERATION_ENDPOINTS = {
-  sd3: "/v2beta/stable-image/generate/sd3",
-  "sd3-large": "/v2beta/stable-image/generate/sd3",
-  "sd3-large-turbo": "/v2beta/stable-image/generate/sd3",
-  "sd3-medium": "/v2beta/stable-image/generate/sd3",
   "sd3.5-large": "/v2beta/stable-image/generate/sd3",
   "sd3.5-large-turbo": "/v2beta/stable-image/generate/sd3",
   "sd3.5-medium": "/v2beta/stable-image/generate/sd3",
+  "sd3.5-flash": "/v2beta/stable-image/generate/sd3",
   "stable-image-ultra": "/v2beta/stable-image/generate/ultra",
   "stable-image-core": "/v2beta/stable-image/generate/core",
 };
@@ -95,6 +98,21 @@ const STABILITY_EDIT_ENDPOINTS = {
 };
 
 const STABILITY_CONTROL_MODELS = new Set(["sketch", "structure", "style", "style-transfer"]);
+
+function appendOptionalFormValue(formData, key, value) {
+  if (value === undefined || value === null || value === "") return;
+  formData.append(key, String(value));
+}
+
+function appendImageFormValue(formData, key, source, filename) {
+  formData.append(
+    key,
+    new Blob([source.buffer], {
+      type: source.contentType || "application/octet-stream",
+    }),
+    filename
+  );
+}
 
 const FAL_PRESET_SIZES = {
   "1024x1024": "square_hd",
@@ -1051,52 +1069,107 @@ async function handleStabilityAIImageGeneration({
         ? normalizeRequestedImageFormat(body, "png", ["png", "webp"])
         : normalizeRequestedImageFormat(body, "png"),
   };
+  const formData = new FormData();
 
-  if (body.prompt) upstreamBody.prompt = body.prompt;
-  if (body.negative_prompt) upstreamBody.negative_prompt = body.negative_prompt;
-  if (body.seed !== undefined) upstreamBody.seed = body.seed;
+  appendOptionalFormValue(formData, "output_format", upstreamBody.output_format);
+  if (body.prompt) {
+    upstreamBody.prompt = body.prompt;
+    appendOptionalFormValue(formData, "prompt", body.prompt);
+  }
+  if (body.negative_prompt) {
+    upstreamBody.negative_prompt = body.negative_prompt;
+    appendOptionalFormValue(formData, "negative_prompt", body.negative_prompt);
+  }
+  if (body.seed !== undefined) {
+    upstreamBody.seed = body.seed;
+    appendOptionalFormValue(formData, "seed", body.seed);
+  }
 
   try {
     if (STABILITY_GENERATION_ENDPOINTS[model]) {
-      if (model.startsWith("sd3") && model !== "sd3") {
+      if (model.startsWith("sd3.5")) {
         upstreamBody.model = model;
+        appendOptionalFormValue(formData, "model", model);
       }
 
       if (imageUrl) {
+        const imageSource = await resolveImageSource(imageUrl);
         upstreamBody.mode = "image-to-image";
-        upstreamBody.image = (await resolveImageSource(imageUrl)).base64;
-        if (body.strength !== undefined) upstreamBody.strength = body.strength;
+        appendOptionalFormValue(formData, "mode", "image-to-image");
+        upstreamBody.image = imageSource.base64;
+        appendImageFormValue(formData, "image", imageSource, "image");
+        if (body.strength !== undefined) {
+          upstreamBody.strength = body.strength;
+          appendOptionalFormValue(formData, "strength", body.strength);
+        }
       } else {
         upstreamBody.mode = "text-to-image";
+        appendOptionalFormValue(formData, "mode", "text-to-image");
       }
 
-      if (!model.startsWith("sd3") || !imageUrl) {
-        upstreamBody.aspect_ratio = body.aspect_ratio || mapImageSize(body.size);
+      if (!model.startsWith("sd3.5") || !imageUrl) {
+        const aspectRatio = body.aspect_ratio || mapImageSize(body.size);
+        upstreamBody.aspect_ratio = aspectRatio;
+        appendOptionalFormValue(formData, "aspect_ratio", aspectRatio);
       }
 
-      if (body.style_preset) upstreamBody.style_preset = body.style_preset;
+      if (body.style_preset) {
+        upstreamBody.style_preset = body.style_preset;
+        appendOptionalFormValue(formData, "style_preset", body.style_preset);
+      }
     } else {
       if (imageUrl) {
-        upstreamBody.image = (await resolveImageSource(imageUrl)).base64;
+        const imageSource = await resolveImageSource(imageUrl);
+        upstreamBody.image = imageSource.base64;
+        appendImageFormValue(formData, "image", imageSource, "image");
       }
 
       if (maskUrl && shouldIncludeStabilityMask(model)) {
-        upstreamBody.mask = (await resolveImageSource(maskUrl)).base64;
+        const maskSource = await resolveImageSource(maskUrl);
+        upstreamBody.mask = maskSource.base64;
+        appendImageFormValue(formData, "mask", maskSource, "mask");
       }
 
-      if (body.search_prompt) upstreamBody.search_prompt = body.search_prompt;
-      if (body.grow_mask !== undefined) upstreamBody.grow_mask = body.grow_mask;
-      if (body.control_strength !== undefined)
+      if (body.search_prompt) {
+        upstreamBody.search_prompt = body.search_prompt;
+        appendOptionalFormValue(formData, "search_prompt", body.search_prompt);
+      }
+      if (body.grow_mask !== undefined) {
+        upstreamBody.grow_mask = body.grow_mask;
+        appendOptionalFormValue(formData, "grow_mask", body.grow_mask);
+      }
+      if (body.control_strength !== undefined) {
         upstreamBody.control_strength = body.control_strength;
-      if (body.creativity !== undefined) upstreamBody.creativity = body.creativity;
-      if (body.left !== undefined) upstreamBody.left = body.left;
-      if (body.right !== undefined) upstreamBody.right = body.right;
-      if (body.up !== undefined) upstreamBody.up = body.up;
-      if (body.down !== undefined) upstreamBody.down = body.down;
-      if (body.style_preset) upstreamBody.style_preset = body.style_preset;
+        appendOptionalFormValue(formData, "control_strength", body.control_strength);
+      }
+      if (body.creativity !== undefined) {
+        upstreamBody.creativity = body.creativity;
+        appendOptionalFormValue(formData, "creativity", body.creativity);
+      }
+      if (body.left !== undefined) {
+        upstreamBody.left = body.left;
+        appendOptionalFormValue(formData, "left", body.left);
+      }
+      if (body.right !== undefined) {
+        upstreamBody.right = body.right;
+        appendOptionalFormValue(formData, "right", body.right);
+      }
+      if (body.up !== undefined) {
+        upstreamBody.up = body.up;
+        appendOptionalFormValue(formData, "up", body.up);
+      }
+      if (body.down !== undefined) {
+        upstreamBody.down = body.down;
+        appendOptionalFormValue(formData, "down", body.down);
+      }
+      if (body.style_preset) {
+        upstreamBody.style_preset = body.style_preset;
+        appendOptionalFormValue(formData, "style_preset", body.style_preset);
+      }
 
       if (STABILITY_CONTROL_MODELS.has(model) && !upstreamBody.prompt) {
         upstreamBody.prompt = body.prompt || "";
+        appendOptionalFormValue(formData, "prompt", body.prompt || "");
       }
     }
 
@@ -1108,11 +1181,10 @@ async function handleStabilityAIImageGeneration({
     const response = await fetch(`${providerConfig.baseUrl.replace(/\/$/, "")}${endpoint}`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
         Accept: "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify(upstreamBody),
+      body: formData,
     });
 
     if (!response.ok) {

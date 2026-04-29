@@ -4,6 +4,75 @@
 
 ---
 
+## [3.7.5] — 2026-04-29
+
+### ✨ New Features
+
+- **feat(tunnels):** integrate native ngrok tunnel support with dashboard UI parity (#1753)
+
+### 🐛 Bug Fixes
+
+- **fix(models):** apply blocked providers filter to non-chat catalog models (image, embedding, audio, etc.) (#1752)
+- **fix(antigravity):** stabilize streaming payload parsing and deduplicate usage/model metadata refreshes (#1748)
+
+---
+
+## [3.7.4] — 2026-04-28
+
+### ✨ New Features
+
+- **feat(ui):** add endpoint tunnel visibility settings (#1743)
+- **feat(cli):** refresh CLI fingerprint provider profiles (#1746)
+- **feat(proxy):** implement bulk proxy import via pipe-delimited parser with update-or-create (upsert) logic and real-time preview table
+- **feat(pwa):** add fullscreen installable PWA with manifest, service worker, and cross-platform app icons (#1728)
+
+### 🔒 Security
+
+- **security:** replace insecure `Math.random` with `crypto.getRandomValues` for fallback UUID generation to resolve CodeQL CWE-338 finding (#182)
+
+### 🐛 Bug Fixes
+
+- **fix(cc-compatible):** fix CC-compatible relay format and UI copy (#1742)
+- **fix(codex):** normalize max reasoning effort for Codex routing (#1744)
+- **fix(claude-code):** fix Claude Code gateway config helper (#1745)
+- **fix(db):** reconcile legacy `create_reasoning_cache` migration tracking to prevent version shadowing on `032` and resolve startup warnings (#1734)
+- **fix(db):** intercept `007` migration to use idempotent `IF NOT EXISTS` logic via `PRAGMA table_info`, preventing syntax crashes on fresh installs (#1733)
+- **fix(cc-compatible):** preserve Claude Code system skeleton to prevent request rejection by strict compatible upstream providers (#1740)
+
+- **fix(providers):** add API key validation for image-only providers and fix Stability AI requests to use `multipart/form-data` instead of JSON (#1726)
+- **fix(codex):** preserve `previous_response_id` and `conversation_id` fields when input array is empty to prevent schema validation errors (#1729)
+- **fix(searxng):** bypass UI validation block when `apiKeyOptional` is true and fix typing errors in provider dashboard to allow saving search providers without credentials (#1721)
+- **fix(proxy):** disable HTTP keep-alive and pipelining in Undici proxy dispatcher to prevent "Socket hang up" rotation failures
+- **stream:** correctly identify `thought` and `error` blocks in Antigravity/Gemini SSE streams to prevent premature 502 timeouts (#1725, #1705)
+
+### 🛠️ Maintenance
+
+- **workflow:** add phase 4 release monitoring instructions to `/generate-release` workflow
+- **test:** fix typescript compilation errors in unit tests to keep CI typecheck pipeline fully green
+- **test:** update responses store expectations for empty input arrays
+
+---
+
+## [3.7.3] — 2026-04-28
+
+### 🐛 Bug Fixes
+
+- **fix(claude):** strip existing billing headers from system array before injecting to prevent Anthropic prompt cache misses — stacked `x-anthropic-billing-header` blocks invalidated prefix matching, causing ~100% cache_create instead of cache_read (#1712)
+- **fix(claude):** strip `output_config.format` for non-Anthropic Claude-compatible providers during passthrough — third-party Claude endpoints (MiniMax, DeepSeek via aggregators) reject structured output fields with 400 errors (#1719)
+- **fix(combo):** set terminal error state on response quality validation failure — prevents misleading `ALL_ACCOUNTS_INACTIVE` 503 when the real issue is response quality validation (#1707, #1710)
+- **fix(combo):** treat combo fallback as target-level orchestration — all non-ok responses (including generic 400s) now fall through to the next target instead of being terminal; removes complex bad-request allowlist regex (#1713)
+- **fix(codex):** restore namespace MCP tools and hosted-tool whitelist — regression from #1581 that silently dropped all MCP tool groups and Responses-API hosted tools (#1715)
+- **fix(codex):** add neutral instructions for bare chat requests — Codex Responses backend rejects requests without `instructions`, making Codex unusable for normal chat (#1709)
+- **fix(proxy):** wrap proxy assignment queries in try-catch for missing `proxy_assignments` table — Electron installs where migration 004 hasn't run no longer crash with `no such table` error (#1706)
+- **fix(migration):** improve Windows file URL path resolution in migration runner — adds direct URL path extraction and `process.cwd()` fallback for CI-built bundles with leaked build-time paths (#1704)
+- **fix(ui):** fix light mode active request payload modal — add missing `--color-card` theme token, use opaque `bg-surface` instead of translucent `bg-card/70`, add backdrop blur (#1714)
+
+### 🔄 Updates
+
+- **chore(image-models):** refresh image generation model registry — replace stale FLUX aliases with FLUX Kontext / FLUX.2 mappings, remove deprecated FLUX Redux/Depth/Canny variants (#1722)
+
+---
+
 ## [3.7.2] — 2026-04-28
 
 ### ✨ New Features

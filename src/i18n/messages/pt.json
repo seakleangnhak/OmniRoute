@@ -734,7 +734,8 @@
     "logoPreview": "Logo Preview",
     "themeCustom": "Theme Custom",
     "hideHealthLogsDesc": "Hide Health Logs Desc",
-    "faviconPreview": "Favicon Preview"
+    "faviconPreview": "Favicon Preview",
+    "changelog": "Changelog"
   },
   "themesPage": {
     "title": "Themes",
@@ -1873,7 +1874,24 @@
     "tailscaleInstallIntro": "Installs Tailscale on this machine and prepares OmniRoute to enable Funnel.",
     "tailscaleInstallPasswordHint": "On macOS and Linux, sudo may be required for the package install and daemon start.",
     "tailscaleSudoPlaceholder": "Optional sudo password",
-    "tailscaleInstalling": "Installing"
+    "tailscaleInstalling": "Installing",
+    "ngrokTitle": "Túnel ngrok",
+    "ngrokRunning": "Rodando",
+    "ngrokStarting": "Iniciando",
+    "ngrokStoppedState": "Parado",
+    "ngrokNeedsAuth": "Requer Autenticação",
+    "ngrokNotInstalled": "Não instalado",
+    "ngrokUnsupported": "Não suportado",
+    "ngrokError": "Erro",
+    "ngrokEnable": "Habilitar Túnel",
+    "ngrokDisable": "Parar Túnel",
+    "ngrokUrlNotice": "Cria um túnel público ngrok.",
+    "ngrokAuthTokenLabel": "Authtoken (Necessário caso NGROK_AUTHTOKEN não esteja definido)",
+    "ngrokAuthTokenPlaceholder": "Digite seu authtoken do ngrok",
+    "ngrokLastError": "Último erro: {error}",
+    "ngrokStarted": "Túnel ngrok iniciado",
+    "ngrokStopped": "Túnel ngrok parado",
+    "ngrokRequestFailed": "Falha ao atualizar túnel ngrok"
   },
   "endpoints": {
     "tabProxy": "Endpoint Proxy",

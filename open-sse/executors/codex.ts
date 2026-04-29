@@ -5,7 +5,10 @@ import {
   setUserAgentHeader,
   type ExecuteInput,
 } from "./base.ts";
-import { CODEX_DEFAULT_INSTRUCTIONS } from "../config/codexInstructions.ts";
+import {
+  CODEX_CHAT_DEFAULT_INSTRUCTIONS,
+  CODEX_DEFAULT_INSTRUCTIONS,
+} from "../config/codexInstructions.ts";
 import { PROVIDERS } from "../config/constants.ts";
 import { getCodexClientVersion, getCodexUserAgent } from "../config/codexClient.ts";
 import { getAccessToken } from "../services/tokenRefresh.ts";
@@ -359,12 +362,16 @@ function convertSystemToDeveloperRole(body: Record<string, unknown>): void {
  *   4. Always deletes previous_response_id (endpoint doesn't persist responses)
  */
 function stripStoredItemReferences(body: Record<string, unknown>): void {
-  // Always strip previous_response_id — the /codex/responses endpoint does not
-  // persist responses, so any reference to a previous response would cause a 404.
-  // The official Codex CLI sets previous_response_id to None for HTTP transport.
-  // Ref: codex-rs codex-api/src/common.rs:187 — previous_response_id: None
-  // Ref: CLIProxyAPI codex_executor.go:115 — sjson.DeleteBytes(body, "previous_response_id")
-  delete body.previous_response_id;
+  const hasInput = Array.isArray(body.input) && body.input.length > 0;
+
+  // Always strip previous_response_id IF we have input.
+  // The /codex/responses endpoint does not persist responses, so any reference
+  // to a previous response would cause a 404. However, if input is missing (e.g. Cursor
+  // trying to continue generation), stripping it leaves the payload empty causing a 400 Schema error.
+  // We leave it intact so Codex returns 404, which correctly triggers Cursor's fallback to resend history.
+  if (hasInput) {
+    delete body.previous_response_id;
+  }
 
   if (!Array.isArray(body.input)) return;
 
@@ -410,6 +417,23 @@ function stripStoredItemReferences(body: Record<string, unknown>): void {
   }
 }
 
+// Responses-API hosted tool types that OpenAI/Codex executes server-side.
+// These arrive shaped as `{ type, ...params }` with no `function` object and no `name` —
+// e.g. Codex CLI injects `{ type: "image_generation", output_format: "png" }` or
+// `{ type: "namespace", name: "mcp__atlassian__", tools: [...] }` for MCP tool groups.
+// Keep them through `normalizeCodexTools` so upstream can execute them.
+const CODEX_HOSTED_TOOL_TYPES: ReadonlySet<string> = new Set([
+  "image_generation",
+  "web_search",
+  "web_search_preview",
+  "file_search",
+  "computer",
+  "computer_use_preview",
+  "code_interpreter",
+  "mcp",
+  "local_shell",
+]);
+
 function normalizeCodexTools(body: Record<string, unknown>): void {
   if (!Array.isArray(body.tools)) return;
 
@@ -420,7 +444,33 @@ function normalizeCodexTools(body: Record<string, unknown>): void {
     }
 
     const tool = toolValue as Record<string, unknown>;
-    if (tool.type !== "function") {
+    const toolType = typeof tool.type === "string" ? tool.type : "";
+
+    // Preserve namespace tools (MCP tool groups used by Codex/OpenAI Responses API).
+    // Codex API supports them natively; register sub-tool names for tool_choice validation.
+    if (toolType === "namespace") {
+      if (Array.isArray(tool.tools)) {
+        for (const st of tool.tools as unknown[]) {
+          if (st && typeof st === "object" && !Array.isArray(st)) {
+            const subTool = st as Record<string, unknown>;
+            const name = typeof subTool.name === "string" ? subTool.name.trim() : "";
+            if (name) validToolNames.add(name);
+          }
+        }
+      }
+      return true;
+    }
+
+    if (toolType !== "function") {
+      const hasFunctionObject = tool.function && typeof tool.function === "object";
+      const hasName = typeof tool.name === "string";
+      if (!toolType || hasFunctionObject || hasName) {
+        return false;
+      }
+      if (CODEX_HOSTED_TOOL_TYPES.has(toolType)) {
+        return true;
+      }
+      console.debug(`[Codex] dropping unknown hosted tool type: ${toolType}`);
       return false;
     }
 
@@ -508,6 +558,7 @@ function clampEffort(model: string, requested: string): string {
 function normalizeEffortValue(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const normalized = value.trim().toLowerCase();
+  if (normalized === "max") return "xhigh";
   return normalized || undefined;
 }
 
@@ -994,9 +1045,9 @@ export class CodexExecutor extends BaseExecutor {
         body.instructions = "Follow the developer instructions in the conversation.";
       }
     } else {
-      // Translated: use CODEX_DEFAULT_INSTRUCTIONS as fallback when no system
-      // prompt was provided by the client, BUT only if tools are requested.
-      // Injecting tool instructions on bare requests causes Harmony leaks (#1686).
+      // Translated: keep the full Codex tool instructions only for tool-capable
+      // requests. Bare chat requests still need a neutral instructions value
+      // because the Codex Responses backend rejects requests without it.
       const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
       if (
         !body.instructions ||
@@ -1005,7 +1056,7 @@ export class CodexExecutor extends BaseExecutor {
         if (hasTools) {
           body.instructions = CODEX_DEFAULT_INSTRUCTIONS;
         } else {
-          delete body.instructions;
+          body.instructions = CODEX_CHAT_DEFAULT_INSTRUCTIONS;
         }
       }
     }
@@ -1098,9 +1149,13 @@ export class CodexExecutor extends BaseExecutor {
 
     // Delete session_id and conversation_id from the body.
     // These are often injected by OmniRoute's fallback logic for store=true,
-    // but the upstream Codex API strictly rejects them as unsupported parameters.
+    // but the upstream Codex API strictly rejects them as unsupported parameters
+    // UNLESS the request lacks input entirely (where they are required to avoid a 400 Schema Error).
     delete body.session_id;
-    delete body.conversation_id;
+    const hasInput = Array.isArray(body.input) && body.input.length > 0;
+    if (hasInput) {
+      delete body.conversation_id;
+    }
 
     if (nativeCodexPassthrough) {
       return body;

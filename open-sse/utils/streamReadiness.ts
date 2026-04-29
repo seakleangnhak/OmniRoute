@@ -31,6 +31,10 @@ function hasUsefulValue(value: unknown): boolean {
     "partial_json",
     "arguments",
     "name",
+    "thought",
+    "error",
+    "executableCode",
+    "codeExecutionResult",
   ]) {
     const candidate = value[key];
     if (hasNonEmptyString(candidate)) return true;
@@ -46,6 +50,9 @@ function hasUsefulValue(value: unknown): boolean {
     "function_call_output",
     "output",
     "content_block",
+    "response",
+    "choices",
+    "candidates",
     "parts",
   ]) {
     if (hasUsefulValue(value[key])) return true;
@@ -56,19 +63,7 @@ function hasUsefulValue(value: unknown): boolean {
 
 function hasUsefulJsonPayload(payload: unknown): boolean {
   if (!isRecord(payload)) return false;
-
-  const type = typeof payload.type === "string" ? payload.type : "";
-  if (
-    type.includes("delta") ||
-    type.includes("tool") ||
-    type.includes("function") ||
-    type.includes("content_block") ||
-    type.includes("output_item")
-  ) {
-    if (hasUsefulValue(payload)) return true;
-  }
-
-  return hasUsefulValue(payload.choices) || hasUsefulValue(payload.candidates) || hasUsefulValue(payload);
+  return hasUsefulValue(payload);
 }
 
 export function hasUsefulStreamContent(text: string): boolean {
@@ -185,7 +180,11 @@ export async function ensureStreamReadiness(
           `${reason} (${options.provider || "provider"}/${options.model || "unknown"})`
         );
         await reader.cancel(reason).catch(() => {});
-        return { ok: false, reason, response: createErrorResponse(HTTP_STATUS.GATEWAY_TIMEOUT, reason) };
+        return {
+          ok: false,
+          reason,
+          response: createErrorResponse(HTTP_STATUS.GATEWAY_TIMEOUT, reason),
+        };
       }
 
       let readResult: ReadableStreamReadResult<Uint8Array>;
@@ -198,7 +197,11 @@ export async function ensureStreamReadiness(
           `${reason} (${options.provider || "provider"}/${options.model || "unknown"})`
         );
         await reader.cancel(reason).catch(() => {});
-        return { ok: false, reason, response: createErrorResponse(HTTP_STATUS.GATEWAY_TIMEOUT, reason) };
+        return {
+          ok: false,
+          reason,
+          response: createErrorResponse(HTTP_STATUS.GATEWAY_TIMEOUT, reason),
+        };
       }
 
       if (readResult.done) {
@@ -207,7 +210,11 @@ export async function ensureStreamReadiness(
           "STREAM",
           `${reason} (${options.provider || "provider"}/${options.model || "unknown"})`
         );
-        return { ok: false, reason, response: createErrorResponse(HTTP_STATUS.BAD_GATEWAY, reason) };
+        return {
+          ok: false,
+          reason,
+          response: createErrorResponse(HTTP_STATUS.BAD_GATEWAY, reason),
+        };
       }
 
       if (!readResult.value) continue;

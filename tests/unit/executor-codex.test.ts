@@ -17,13 +17,14 @@ import {
   setThinkingBudgetConfig,
   ThinkingMode,
 } from "../../open-sse/services/thinkingBudget.ts";
+import { CODEX_CHAT_DEFAULT_INSTRUCTIONS } from "../../open-sse/config/codexInstructions.ts";
 
 test.afterEach(() => {
   setThinkingBudgetConfig(DEFAULT_THINKING_CONFIG);
   __setCodexWebSocketTransportForTesting(undefined);
 });
 
-async function withEnv(entries, fn) {
+async function withEnv(entries: Record<string, string | undefined>, fn: () => any) {
   const previous = new Map();
 
   for (const [key, value] of Object.entries(entries)) {
@@ -200,6 +201,56 @@ test("CodexExecutor.transformRequest injects default instructions, clamps reason
   assert.equal(result.stream_options, undefined);
 });
 
+test("CodexExecutor.transformRequest normalizes max reasoning_effort to xhigh", () => {
+  const executor = new CodexExecutor();
+  const result = executor.transformRequest(
+    "gpt-5.5",
+    {
+      model: "gpt-5.5",
+      input: [],
+      reasoning_effort: "max",
+    },
+    false,
+    {
+      requestEndpointPath: "/responses",
+    }
+  );
+
+  assert.equal(result.reasoning.effort, "xhigh");
+  assert.equal(result.reasoning_effort, undefined);
+});
+
+test("CodexExecutor.transformRequest sends neutral instructions for bare chat requests", () => {
+  const executor = new CodexExecutor();
+  const body = {
+    model: "gpt-5.5-medium",
+    input: [
+      {
+        type: "message",
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: "Calculate 79530+41475, and reply with the result only.",
+          },
+        ],
+      },
+    ],
+    instructions: "",
+    stream: false,
+  };
+
+  const result = executor.transformRequest("gpt-5.5-medium", body, false, {
+    requestEndpointPath: "/responses",
+  });
+
+  assert.equal(result.instructions, CODEX_CHAT_DEFAULT_INSTRUCTIONS);
+  assert.equal(result.stream, true);
+  assert.equal(result.model, "gpt-5.5");
+  assert.equal(result.input.length, 1);
+  assert.equal(result.tools, undefined);
+});
+
 test("CodexExecutor.transformRequest preserves compact requests and native passthrough semantics", () => {
   const executor = new CodexExecutor();
   const body = {
@@ -242,7 +293,7 @@ test("CodexExecutor.transformRequest preserves store-enabled responses state whe
 
   assert.equal(result._omnirouteResponsesStore, undefined);
   assert.equal(result.store, true);
-  assert.equal(result.previous_response_id, undefined);
+  assert.equal(result.previous_response_id, "resp_prev_123");
 });
 
 test("CodexExecutor.transformRequest applies per-connection reasoning and service tier defaults", () => {
@@ -347,10 +398,55 @@ test("CodexExecutor.execute falls back to HTTP when websocket transport is unava
     // When WS transport is unavailable, isCodexResponsesWebSocketRequired returns false
     // and the executor falls back to HTTP via super.execute()
     assert.equal(result.response.status, 200);
-    assert.equal(result.transformedBody.model, "gpt-5.5");
+    assert.equal((result.transformedBody as any).model, "gpt-5.5");
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("CodexExecutor.transformRequest preserves namespace MCP tools and hosted tool types", () => {
+  // Regression: PR #1581 đã vô tình xoá nhánh `namespace` + whitelist hosted tools
+  // trong normalizeCodexTools, khiến MCP tool group (vd. mcp__atlassian__) bị strip
+  // trước khi forward lên Codex Responses API. Test này khoá lại hành vi đúng.
+  const executor = new CodexExecutor();
+  const result = executor.transformRequest(
+    "gpt-5.4",
+    {
+      model: "gpt-5.4",
+      input: [],
+      tools: [
+        { type: "function", name: "exec_command", parameters: { type: "object" } },
+        {
+          type: "namespace",
+          name: "mcp__atlassian__",
+          description: "Tools in the mcp__atlassian__ namespace.",
+          tools: [
+            { type: "function", name: "jira_get_issue", parameters: { type: "object" } },
+            { type: "function", name: "jira_search", parameters: { type: "object" } },
+          ],
+        },
+        { type: "image_generation", output_format: "png" },
+        { type: "web_search" },
+        { type: "unknown_hosted_tool" },
+      ],
+      tool_choice: { type: "function", name: "jira_get_issue" },
+    },
+    false,
+    {}
+  );
+
+  const types = (result.tools as Array<Record<string, unknown>>).map((tool) => tool.type);
+  assert.deepEqual(types, ["function", "namespace", "image_generation", "web_search"]);
+
+  const namespaceTool = (result.tools as Array<Record<string, unknown>>).find(
+    (tool) => tool.type === "namespace"
+  );
+  assert.equal((namespaceTool as { name: string }).name, "mcp__atlassian__");
+  assert.equal(((namespaceTool as { tools: unknown[] }).tools ?? []).length, 2);
+
+  // tool_choice trỏ vào sub-tool của namespace phải được giữ nguyên (không bị xoá
+  // do tên nằm trong namespace.tools[*].name đã được đăng ký vào validToolNames).
+  assert.deepEqual(result.tool_choice, { type: "function", name: "jira_get_issue" });
 });
 
 test("CodexExecutor maps Codex websocket error events to response.failed SSE", () => {
