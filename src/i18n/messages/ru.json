@@ -1752,7 +1752,6 @@
     "disableCloud": "Отключить облако",
     "enableCloud": "Включить облако",
     "modelsAcrossEndpoints": "{models} модели на {endpoints} конечных точках",
-    "loadingModels": "Загрузка доступных моделей...",
     "chatDesc": "Потоковое и непотоковое чат со всеми провайдерами",
     "embeddings": "Вложения",
     "embeddingsDesc": "Встраивание текста для конвейеров поиска и RAG",

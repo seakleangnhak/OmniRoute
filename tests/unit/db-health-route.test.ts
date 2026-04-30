@@ -3,42 +3,27 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { SignJWT } from "jose";
 
 const TEST_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "omniroute-db-health-route-"));
 process.env.DATA_DIR = TEST_DATA_DIR;
 process.env.API_KEY_SECRET = process.env.API_KEY_SECRET || "task-303-api-key-secret";
 
 const core = await import("../../src/lib/db/core.ts");
-const routeModule = await import("../../src/app/api/db/health/route.ts");
-
-const ORIGINAL_JWT_SECRET = process.env.JWT_SECRET;
-const ORIGINAL_INITIAL_PASSWORD = process.env.INITIAL_PASSWORD;
-const TEST_JWT_SECRET = "db-health-route-jwt-secret";
-const TEST_INITIAL_PASSWORD = "db-health-route-password";
+const apiKeysDb = await import("../../src/lib/db/apiKeys.ts");
+const routeModule = await import("../../src/app/api/v1/db/health/route.ts");
 
 async function resetStorage() {
   core.resetDbInstance();
+  apiKeysDb.resetApiKeyState();
   fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
-  process.env.JWT_SECRET = TEST_JWT_SECRET;
-  process.env.INITIAL_PASSWORD = TEST_INITIAL_PASSWORD;
 }
 
-function makeRequest(method, cookie) {
-  return new Request("http://localhost/api/db/health", {
+function makeRequest(method, token) {
+  return new Request("http://localhost/api/v1/db/health", {
     method,
-    headers: cookie ? { cookie } : {},
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
-}
-
-async function dashboardCookie() {
-  const secret = new TextEncoder().encode(TEST_JWT_SECRET);
-  const token = await new SignJWT({ authenticated: true })
-    .setProtectedHeader({ alg: "HS256" })
-    .setExpirationTime("1h")
-    .sign(secret);
-  return `auth_token=${token}`;
 }
 
 function insertBrokenRows(db) {
@@ -58,27 +43,35 @@ test.beforeEach(async () => {
 
 test.after(async () => {
   core.resetDbInstance();
+  apiKeysDb.resetApiKeyState();
   fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
-  if (ORIGINAL_JWT_SECRET === undefined) delete process.env.JWT_SECRET;
-  else process.env.JWT_SECRET = ORIGINAL_JWT_SECRET;
-  if (ORIGINAL_INITIAL_PASSWORD === undefined) delete process.env.INITIAL_PASSWORD;
-  else process.env.INITIAL_PASSWORD = ORIGINAL_INITIAL_PASSWORD;
 });
 
-test("GET /api/db/health requires authentication", async () => {
-  const response = await routeModule.GET(makeRequest("GET"));
-  const body = (await response.json()) as any;
+test("GET /api/v1/db/health requires authentication", async () => {
+  const previousInitialPassword = process.env.INITIAL_PASSWORD;
+  process.env.INITIAL_PASSWORD = "route-health-auth";
 
-  assert.equal(response.status, 401);
-  assert.equal(body.error.message, "Authentication required");
+  try {
+    const response = await routeModule.GET(makeRequest("GET"));
+    const body = (await response.json()) as any;
+
+    assert.equal(response.status, 401);
+    assert.equal(body.error.message, "Authentication required");
+  } finally {
+    if (previousInitialPassword === undefined) {
+      delete process.env.INITIAL_PASSWORD;
+    } else {
+      process.env.INITIAL_PASSWORD = previousInitialPassword;
+    }
+  }
 });
 
-test("GET /api/db/health diagnoses without mutating database rows", async () => {
-  const cookie = await dashboardCookie();
+test("GET /api/v1/db/health diagnoses without mutating database rows", async () => {
+  const authKey = await apiKeysDb.createApiKey("Health Route", "machine-route-health");
   const db = core.getDbInstance();
   insertBrokenRows(db);
 
-  const response = await routeModule.GET(makeRequest("GET", cookie));
+  const response = await routeModule.GET(makeRequest("GET", authKey.key));
   const body = (await response.json()) as any;
 
   assert.equal(response.status, 200);
@@ -88,12 +81,12 @@ test("GET /api/db/health diagnoses without mutating database rows", async () => 
   assert.equal((db.prepare("SELECT COUNT(*) AS count FROM domain_budgets").get() as any).count, 1);
 });
 
-test("POST /api/db/health repairs broken rows for authenticated callers", async () => {
-  const cookie = await dashboardCookie();
+test("POST /api/v1/db/health repairs broken rows for authenticated callers", async () => {
+  const authKey = await apiKeysDb.createApiKey("Health Route", "machine-route-health");
   const db = core.getDbInstance();
   insertBrokenRows(db);
 
-  const response = await routeModule.POST(makeRequest("POST", cookie));
+  const response = await routeModule.POST(makeRequest("POST", authKey.key));
   const body = (await response.json()) as any;
 
   assert.equal(response.status, 200);

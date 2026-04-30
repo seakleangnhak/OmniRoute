@@ -53,11 +53,11 @@ test("model sync route skips success log when fetched models do not change store
     apiKey: "test-key",
   });
 
-  await modelsDb.replaceSyncedAvailableModelsForConnection("openrouter", connection.id, [
+  await modelsDb.replaceCustomModels("openrouter", [
     {
       id: "custom-model-1",
       name: "Custom Model 1",
-      source: "imported",
+      source: "auto-sync",
     },
   ]);
 
@@ -85,7 +85,6 @@ test("model sync route skips success log when fetched models do not change store
     const body = (await response.json()) as any;
     assert.equal(body.logged, false);
     assert.deepEqual(body.modelChanges, { added: 0, removed: 0, updated: 0, total: 0 });
-    assert.deepEqual(body.models, []);
 
     const logs = await callLogs.getCallLogs({ model: "model-sync", limit: 10 });
     assert.equal(logs.length, 0);
@@ -251,45 +250,6 @@ test("model sync route falls back to the upstream HTTP status when the models pa
   assert.equal(logs[0].error, "HTTP 429");
 });
 
-test("model sync route reports invalid JSON /models responses without losing upstream status", async () => {
-  await resetStorage();
-
-  const connection = await providersDb.createProviderConnection({
-    provider: "openrouter",
-    authType: "apikey",
-    name: "Invalid JSON Sync",
-    apiKey: "test-key",
-  });
-
-  globalThis.fetch = async (url) => {
-    assert.equal(
-      String(url),
-      `http://localhost/api/providers/${connection.id}/models?refresh=true`
-    );
-    return new Response("<html>bad gateway</html>", {
-      status: 200,
-      headers: { "content-type": "text/html" },
-    });
-  };
-
-  const response = await modelSyncRoute.POST(
-    new Request(`http://localhost/api/providers/${connection.id}/sync-models`, {
-      method: "POST",
-      headers: scheduler.buildModelSyncInternalHeaders(),
-    }),
-    { params: { id: connection.id } }
-  );
-  const body = (await response.json()) as any;
-  const logs = await callLogs.getCallLogs({ model: "model-sync", limit: 10 });
-
-  assert.equal(response.status, 502);
-  assert.equal(body.error, "Invalid JSON response from /models");
-  assert.equal(body.upstreamStatus, 200);
-  assert.equal(logs.length, 1);
-  assert.equal(logs[0].status, 200);
-  assert.equal(logs[0].error, "Invalid JSON response from /models");
-});
-
 test("model sync route preserves previously synced models when the upstream omits the models list", async () => {
   await resetStorage();
 
@@ -300,11 +260,11 @@ test("model sync route preserves previously synced models when the upstream omit
     apiKey: "test-key",
   });
 
-  await modelsDb.replaceSyncedAvailableModelsForConnection("openrouter", connection.id, [
+  await modelsDb.replaceCustomModels("openrouter", [
     {
       id: "persisted-model",
       name: "Persisted Model",
-      source: "imported",
+      source: "auto-sync",
     },
   ]);
 
@@ -330,12 +290,13 @@ test("model sync route preserves previously synced models when the upstream omit
   assert.equal(body.syncedModels, 1);
   assert.equal(body.logged, false);
   assert.deepEqual(body.modelChanges, { added: 0, removed: 0, updated: 0, total: 0 });
-  assert.deepEqual(body.models, []);
-  assert.deepEqual(await modelsDb.getSyncedAvailableModels("openrouter"), [
+  assert.deepEqual(body.models, [
     {
       id: "persisted-model",
       name: "Persisted Model",
-      source: "imported",
+      source: "auto-sync",
+      apiFormat: "chat-completions",
+      supportedEndpoints: ["chat"],
     },
   ]);
   assert.equal(logs.length, 0);
@@ -387,12 +348,24 @@ test("model sync route writes synced available models for Gemini connections", a
   assert.equal(body.syncedModels, 1);
   assert.equal(body.logged, true);
   assert.deepEqual(body.modelChanges, { added: 1, removed: 0, updated: 0, total: 1 });
-  assert.deepEqual(body.models, []);
+  assert.deepEqual(body.models, [
+    {
+      id: "gemini-custom-preview",
+      name: "Gemini Custom Preview",
+      source: "api-sync",
+      apiFormat: "chat-completions",
+      supportedEndpoints: ["chat", "embeddings"],
+      inputTokenLimit: 32768,
+      outputTokenLimit: 8192,
+      description: "Custom Gemini preview model",
+      supportsThinking: true,
+    },
+  ]);
   assert.deepEqual(synced, [
     {
       id: "gemini-custom-preview",
       name: "Gemini Custom Preview",
-      source: "imported",
+      source: "api-sync",
       supportedEndpoints: ["chat", "embeddings"],
       inputTokenLimit: 32768,
       outputTokenLimit: 8192,
@@ -448,7 +421,7 @@ test("model sync route writes synced available models for non-Gemini providers t
     {
       id: "glm-5.1",
       name: "GLM 5.1",
-      source: "imported",
+      source: "api-sync",
       supportedEndpoints: ["chat"],
       inputTokenLimit: 262144,
     },
@@ -466,7 +439,6 @@ test("model sync route import mode merges discovered models without deleting man
   });
 
   await modelsDb.addCustomModel("openrouter", "manual-only", "Manual Only", "manual");
-  await modelsDb.addCustomModel("openrouter", "router-v4", "Manual Router V4", "manual");
   await localDb.setModelAlias("manual-only", "openrouter/manual-only");
 
   globalThis.fetch = async (url) => {
@@ -495,21 +467,16 @@ test("model sync route import mode merges discovered models without deleting man
   assert.equal(body.updatedCount, 0);
   assert.equal(body.syncedAliases, 1);
   assert.deepEqual(body.modelChanges, { added: 1, removed: 0, updated: 0, total: 1 });
-  assert.deepEqual(body.customModelChanges, { added: 0, removed: 1, updated: 0, total: 1 });
   assert.deepEqual(
     body.models.map((model) => ({ id: model.id, source: model.source })),
-    [{ id: "manual-only", source: "manual" }]
+    [
+      { id: "manual-only", source: "manual" },
+      { id: "router-v4", source: "api-sync" },
+    ]
   );
   assert.deepEqual(
     body.importedModels.map((model) => ({ id: model.id, source: model.source })),
-    [{ id: "router-v4", source: "imported" }]
-  );
-  assert.deepEqual(
-    (await modelsDb.getSyncedAvailableModels("openrouter")).map((model) => ({
-      id: model.id,
-      source: model.source,
-    })),
-    [{ id: "router-v4", source: "imported" }]
+    [{ id: "router-v4", source: "api-sync" }]
   );
   assert.equal(aliases["manual-only"], "openrouter/manual-only");
   assert.equal(aliases["router-v4"], "openrouter/router-v4");
@@ -525,11 +492,12 @@ test("model sync route import mode ignores supported endpoint ordering changes",
     apiKey: "test-key",
   });
 
-  await modelsDb.replaceSyncedAvailableModelsForConnection("openrouter", connection.id, [
+  await modelsDb.replaceCustomModels("openrouter", [
     {
       id: "router-v4",
       name: "Router V4",
-      source: "imported",
+      source: "api-sync",
+      apiFormat: "chat-completions",
       supportedEndpoints: ["chat", "embeddings"],
     },
   ]);
@@ -568,13 +536,12 @@ test("model sync route import mode ignores supported endpoint ordering changes",
   assert.equal(body.logged, false);
   assert.deepEqual(body.importedModels, []);
   assert.deepEqual(
-    (await modelsDb.getSyncedAvailableModels("openrouter")).map((model) => ({
+    body.models.map((model) => ({
       id: model.id,
       supportedEndpoints: model.supportedEndpoints,
     })),
     [{ id: "router-v4", supportedEndpoints: ["chat", "embeddings"] }]
   );
-  assert.deepEqual(body.models, []);
   assert.equal(logs.length, 0);
 });
 
@@ -588,11 +555,12 @@ test("model sync route import mode reports updates without counting them as new 
     apiKey: "test-key",
   });
 
-  await modelsDb.replaceSyncedAvailableModelsForConnection("openrouter", connection.id, [
+  await modelsDb.replaceCustomModels("openrouter", [
     {
       id: "router-v4",
       name: "Router V4",
-      source: "imported",
+      source: "api-sync",
+      apiFormat: "chat-completions",
       supportedEndpoints: ["chat"],
     },
   ]);
@@ -629,7 +597,7 @@ test("model sync route import mode reports updates without counting them as new 
   assert.deepEqual(body.importedChanges, { added: 0, updated: 1, unchanged: 0, total: 1 });
   assert.deepEqual(body.importedModels, []);
   assert.deepEqual(
-    (await modelsDb.getSyncedAvailableModels("openrouter")).map((model) => ({
+    body.models.map((model) => ({
       id: model.id,
       name: model.name,
       supportedEndpoints: model.supportedEndpoints,
@@ -642,7 +610,6 @@ test("model sync route import mode reports updates without counting them as new 
       },
     ]
   );
-  assert.deepEqual(body.models, []);
   assert.equal(body.logged, true);
   assert.equal(logs.length, 1);
 });
@@ -657,16 +624,16 @@ test("model sync route records added, removed, and updated model diffs with fall
     accessToken: "sync-token",
   });
 
-  await modelsDb.replaceSyncedAvailableModelsForConnection("openrouter", connection.id, [
+  await modelsDb.replaceCustomModels("openrouter", [
     {
       id: "persisted-model",
       name: "Persisted Model",
-      source: "imported",
+      source: "auto-sync",
     },
     {
       id: "removed-model",
       name: "Removed Model",
-      source: "imported",
+      source: "auto-sync",
     },
   ]);
 
@@ -706,7 +673,7 @@ test("model sync route records added, removed, and updated model diffs with fall
   assert.equal(body.logged, true);
   assert.deepEqual(body.modelChanges, { added: 1, removed: 1, updated: 1, total: 3 });
   assert.deepEqual(
-    (await modelsDb.getSyncedAvailableModels("openrouter")).map((model) => ({
+    body.models.map((model) => ({
       id: model.id,
       name: model.name,
       supportedEndpoints: model.supportedEndpoints,
@@ -722,7 +689,7 @@ test("model sync route records added, removed, and updated model diffs with fall
       {
         id: "fallback-model",
         name: "Fallback Model",
-        supportedEndpoints: undefined,
+        supportedEndpoints: ["chat"],
         description: "Fallback from model field",
       },
     ]
@@ -786,12 +753,17 @@ test("model sync route forwards cookies, filters built-ins, and syncs aliases fo
   assert.equal(body.provider, "openrouter");
   assert.equal(body.syncedModels, 3);
   assert.equal(body.availableModelsCount, 3);
-  assert.equal(body.syncedAliases, 3);
+  assert.equal(body.syncedAliases, 2);
   assert.equal(body.logged, true);
-  assert.deepEqual(body.modelChanges, { added: 3, removed: 0, updated: 0, total: 3 });
-  assert.deepEqual(body.models, []);
+  assert.deepEqual(body.modelChanges, { added: 2, removed: 0, updated: 0, total: 2 });
+  assert.deepEqual(
+    body.models.map((model) => ({ id: model.id, name: model.name })),
+    [
+      { id: "router-v2", name: "Router V2" },
+      { id: "router-v3", name: "Router V3" },
+    ]
+  );
   assert.equal(aliases["stale-model"], undefined);
-  assert.equal(aliases["auto"], "openrouter/auto");
   assert.equal(aliases["openrouter-router-v2"], "openrouter/router-v2");
   assert.equal(aliases["router-v3"], "openrouter/router-v3");
   assert.equal(logs.length, 1);
@@ -810,7 +782,6 @@ test("model sync route reports synced managed models separately from preserved m
   });
 
   await modelsDb.addCustomModel("openrouter", "manual-only", "Manual Only", "manual");
-  await modelsDb.addCustomModel("openrouter", "router-v4", "Manual Router V4", "manual");
 
   globalThis.fetch = async (url) => {
     assert.equal(
@@ -836,17 +807,12 @@ test("model sync route reports synced managed models separately from preserved m
   assert.equal(body.availableModelsCount, 2);
   assert.equal(body.importedCount, 1);
   assert.equal(body.updatedCount, 0);
-  assert.deepEqual(body.customModelChanges, { added: 0, removed: 1, updated: 0, total: 1 });
   assert.deepEqual(
     body.models.map((model) => ({ id: model.id, source: model.source })),
-    [{ id: "manual-only", source: "manual" }]
-  );
-  assert.deepEqual(
-    (await modelsDb.getSyncedAvailableModels("openrouter")).map((model) => ({
-      id: model.id,
-      source: model.source,
-    })),
-    [{ id: "router-v4", source: "imported" }]
+    [
+      { id: "manual-only", source: "manual" },
+      { id: "router-v4", source: "api-sync" },
+    ]
   );
 });
 
@@ -902,71 +868,33 @@ test("model sync route uses provider-node prefixes when syncing compatible-provi
   assert.equal(aliases["cm-sonnet-4-6"], "anthropic-compatible-demo/sonnet-4-6");
 });
 
-test("model sync route falls back to in-process discovery when internal self-fetch throws", async () => {
+test("model sync route returns 500 and records a failure when the internal models fetch throws", async () => {
   await resetStorage();
 
   const connection = await providersDb.createProviderConnection({
-    provider: "openai-compatible-aio",
+    provider: "openrouter",
     authType: "apikey",
-    name: "AIO Import",
+    name: "Exploding Sync",
     apiKey: "test-key",
-    providerSpecificData: {
-      prefix: "aio",
-      apiType: "chat",
-      baseUrl: "https://api.bltcy.ai/v1",
-      nodeName: "aio",
-      autoSync: true,
-    },
   });
 
-  const fetchCalls: string[] = [];
-  globalThis.fetch = async (url) => {
-    const urlString = String(url);
-    fetchCalls.push(urlString);
-
-    if (urlString === `http://localhost/api/providers/${connection.id}/models?refresh=true`) {
-      throw new Error("fetch failed");
-    }
-
-    assert.equal(urlString, "https://api.bltcy.ai/v1/models");
-    return Response.json({
-      data: [{ id: "aio-model", name: "AIO Model" }],
-    });
+  globalThis.fetch = async () => {
+    throw new Error("network exploded");
   };
 
   const response = await modelSyncRoute.POST(
-    new Request(`http://localhost/api/providers/${connection.id}/sync-models?mode=import`, {
+    new Request(`http://localhost/api/providers/${connection.id}/sync-models`, {
       method: "POST",
       headers: scheduler.buildModelSyncInternalHeaders(),
     }),
     { params: { id: connection.id } }
   );
-  const body = (await response.json()) as {
-    importedCount: number;
-    importedModels: Array<{ id: string; source: string }>;
-  };
-  const customModels = (await modelsDb.getCustomModels("openai-compatible-aio")) as Array<{
-    id: string;
-    source: string;
-  }>;
-  const availableModels = await modelsDb.getSyncedAvailableModels("openai-compatible-aio");
+  const body = (await response.json()) as any;
+  const logs = await callLogs.getCallLogs({ model: "model-sync", limit: 10 });
 
-  assert.equal(response.status, 200);
-  assert.equal(body.importedCount, 1);
-  assert.deepEqual(
-    body.importedModels.map((model) => ({ id: model.id, source: model.source })),
-    [{ id: "aio-model", source: "imported" }]
-  );
-  assert.deepEqual(
-    customModels.map((model) => ({ id: model.id, source: model.source })),
-    []
-  );
-  assert.deepEqual(
-    availableModels.map((model) => ({ id: model.id, source: model.source })),
-    [{ id: "aio-model", source: "imported" }]
-  );
-  assert.deepEqual(fetchCalls, [
-    `http://localhost/api/providers/${connection.id}/models?refresh=true`,
-    "https://api.bltcy.ai/v1/models",
-  ]);
+  assert.equal(response.status, 500);
+  assert.equal(body.error, "network exploded");
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].status, 500);
+  assert.equal(logs[0].provider, "openrouter");
 });

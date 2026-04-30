@@ -177,21 +177,18 @@ test("listMemories filters by api key, type and session while preserving newest-
 test("listMemories supports limit and offset pagination even when only offset is provided", async () => {
   insertMemoryRow({
     id: "page-1",
-    key: "pagination:1",
     content: "oldest",
     createdAt: "2026-04-01T00:00:00.000Z",
     updatedAt: "2026-04-01T00:00:00.000Z",
   });
   insertMemoryRow({
     id: "page-2",
-    key: "pagination:2",
     content: "middle",
     createdAt: "2026-04-02T00:00:00.000Z",
     updatedAt: "2026-04-02T00:00:00.000Z",
   });
   insertMemoryRow({
     id: "page-3",
-    key: "pagination:3",
     content: "newest",
     createdAt: "2026-04-03T00:00:00.000Z",
     updatedAt: "2026-04-03T00:00:00.000Z",
@@ -254,21 +251,18 @@ test("listMemories applies query filtering before pagination and type stats", as
 test("listMemories supports page-based pagination (page 1)", async () => {
   insertMemoryRow({
     id: "pg-1",
-    key: "page:test:1",
     content: "first",
     createdAt: "2026-04-01T00:00:00.000Z",
     updatedAt: "2026-04-01T00:00:00.000Z",
   });
   insertMemoryRow({
     id: "pg-2",
-    key: "page:test:2",
     content: "second",
     createdAt: "2026-04-02T00:00:00.000Z",
     updatedAt: "2026-04-02T00:00:00.000Z",
   });
   insertMemoryRow({
     id: "pg-3",
-    key: "page:test:3",
     content: "third",
     createdAt: "2026-04-03T00:00:00.000Z",
     updatedAt: "2026-04-03T00:00:00.000Z",
@@ -285,21 +279,18 @@ test("listMemories supports page-based pagination (page 1)", async () => {
 test("listMemories supports page-based pagination (page 2 returns remainder)", async () => {
   insertMemoryRow({
     id: "pg-1",
-    key: "page:test:1",
     content: "first",
     createdAt: "2026-04-01T00:00:00.000Z",
     updatedAt: "2026-04-01T00:00:00.000Z",
   });
   insertMemoryRow({
     id: "pg-2",
-    key: "page:test:2",
     content: "second",
     createdAt: "2026-04-02T00:00:00.000Z",
     updatedAt: "2026-04-02T00:00:00.000Z",
   });
   insertMemoryRow({
     id: "pg-3",
-    key: "page:test:3",
     content: "third",
     createdAt: "2026-04-03T00:00:00.000Z",
     updatedAt: "2026-04-03T00:00:00.000Z",
@@ -316,7 +307,6 @@ test("listMemories supports page-based pagination (page 2 returns remainder)", a
 test("listMemories returns empty data for a page beyond the result set", async () => {
   insertMemoryRow({
     id: "pg-1",
-    key: "page:test:1",
     content: "only entry",
     createdAt: "2026-04-01T00:00:00.000Z",
     updatedAt: "2026-04-01T00:00:00.000Z",
@@ -330,14 +320,12 @@ test("listMemories returns empty data for a page beyond the result set", async (
 test("listMemories page parameter defaults to page 1 when omitted with limit", async () => {
   insertMemoryRow({
     id: "pg-1",
-    key: "page:test:1",
     content: "first",
     createdAt: "2026-04-01T00:00:00.000Z",
     updatedAt: "2026-04-01T00:00:00.000Z",
   });
   insertMemoryRow({
     id: "pg-2",
-    key: "page:test:2",
     content: "second",
     createdAt: "2026-04-02T00:00:00.000Z",
     updatedAt: "2026-04-02T00:00:00.000Z",

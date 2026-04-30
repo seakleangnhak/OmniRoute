@@ -30,17 +30,12 @@ function normalizeGeminiToolName(
   options: GeminiToolSanitizationOptions = {}
 ): string {
   const trimmed = name.trim();
-  const namespaceStripped = !options.stripNamespace
-    ? trimmed
-    : (() => {
-        const namespaceIndex = trimmed.indexOf(":");
-        return namespaceIndex >= 0 ? trimmed.slice(namespaceIndex + 1) : trimmed;
-      })();
+  if (!options.stripNamespace) {
+    return trimmed;
+  }
 
-  return namespaceStripped
-    .replace(/[^a-zA-Z0-9_]/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_+|_+$/g, "");
+  const namespaceIndex = trimmed.indexOf(":");
+  return namespaceIndex >= 0 ? trimmed.slice(namespaceIndex + 1) : trimmed;
 }
 
 function buildHashedGeminiToolName(

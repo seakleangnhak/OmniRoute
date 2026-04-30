@@ -138,19 +138,17 @@ export default function KiroAuthModal({
               </div>
             </button>
 
-            {/* AWS IAM Identity Center (IDC) */}
+            {/* AWS IAM Identity Center (IDC) - HIDDEN */}
             <button
               onClick={() => handleMethodSelect("idc")}
-              className="w-full p-4 text-left border border-border rounded-lg hover:bg-sidebar transition-colors"
+              className="hidden w-full p-4 text-left border border-border rounded-lg hover:bg-sidebar transition-colors"
             >
               <div className="flex items-start gap-3">
                 <span className="material-symbols-outlined text-primary mt-0.5">business</span>
                 <div className="flex-1">
-                  <h3 className="font-semibold mb-1">
-                    Your Organization (AWS IAM Identity Center)
-                  </h3>
+                  <h3 className="font-semibold mb-1">AWS IAM Identity Center</h3>
                   <p className="text-sm text-text-muted">
-                    Use your company SSO start URL (example: https://your-org.awsapps.com/start).
+                    For enterprise users with custom AWS IAM Identity Center.
                   </p>
                 </div>
               </div>

@@ -4,27 +4,6 @@ export const kiro = {
   config: KIRO_CONFIG,
   flowType: "device_code",
   requestDeviceCode: async (config) => {
-    const regionMatch = String(config.tokenUrl || "").match(/oidc\.([a-z0-9-]+)\.amazonaws\.com/i);
-    const resolvedRegion = regionMatch?.[1] || "us-east-1";
-    const registerPayload: {
-      clientName: string;
-      clientType: string;
-      scopes: string[];
-      grantTypes: string[];
-      issuerUrl?: string;
-    } = {
-      clientName: config.clientName,
-      clientType: config.clientType,
-      scopes: config.scopes,
-      grantTypes: config.grantTypes,
-    };
-
-    // For enterprise IDC custom startUrl flows, issuerUrl can differ per tenant.
-    // Sending a fixed issuerUrl often causes invalid_request during device auth.
-    if (config.issuerUrl && !config.skipIssuerUrlForRegistration) {
-      registerPayload.issuerUrl = config.issuerUrl;
-    }
-
     // Step 1: Register client with AWS SSO OIDC
     const registerRes = await fetch(config.registerClientUrl, {
       method: "POST",
@@ -32,7 +11,13 @@ export const kiro = {
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify(registerPayload),
+      body: JSON.stringify({
+        clientName: config.clientName,
+        clientType: config.clientType,
+        scopes: config.scopes,
+        grantTypes: config.grantTypes,
+        issuerUrl: config.issuerUrl,
+      }),
     });
 
     if (!registerRes.ok) {
@@ -72,14 +57,10 @@ export const kiro = {
       interval: deviceData.interval || 5,
       _clientId: clientInfo.clientId,
       _clientSecret: clientInfo.clientSecret,
-      _region: resolvedRegion,
     };
   },
   pollToken: async (config, deviceCode, codeVerifier, extraData) => {
-    const tokenRegion = extraData?._region || "us-east-1";
-    const tokenUrl = `https://oidc.${tokenRegion}.amazonaws.com/token`;
-
-    const response = await fetch(tokenUrl, {
+    const response = await fetch(config.tokenUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -110,7 +91,6 @@ export const kiro = {
           expires_in: data.expiresIn,
           _clientId: extraData?._clientId,
           _clientSecret: extraData?._clientSecret,
-          _region: tokenRegion,
         },
       };
     }
@@ -130,7 +110,6 @@ export const kiro = {
     providerSpecificData: {
       clientId: tokens._clientId,
       clientSecret: tokens._clientSecret,
-      region: tokens._region,
     },
   }),
 };

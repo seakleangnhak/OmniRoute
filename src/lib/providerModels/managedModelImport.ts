@@ -1,10 +1,7 @@
 import {
   getCustomModels,
-  getSyncedAvailableModelsForConnection,
-  mergeModelCompatOverride,
   replaceCustomModels,
   replaceSyncedAvailableModelsForConnection,
-  type ModelCompatPatch,
   type SyncedAvailableModel,
 } from "@/lib/db/models";
 import {
@@ -12,6 +9,7 @@ import {
   usesManagedAvailableModels,
 } from "@/lib/providerModels/managedAvailableModels";
 import { normalizeDiscoveredModels } from "@/lib/providerModels/modelDiscovery";
+import { getModelsByProviderId } from "@/shared/constants/models";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -20,7 +18,7 @@ export type ManagedModelImportMode = "merge" | "sync";
 export type ManagedImportedModel = {
   id: string;
   name: string;
-  source: "imported";
+  source: "api-sync";
   apiFormat: "chat-completions";
   supportedEndpoints?: string[];
   inputTokenLimit?: number;
@@ -36,39 +34,42 @@ function toNonEmptyString(value: unknown): string | null {
 function normalizeManagedSource(source: unknown): string {
   const normalized = toNonEmptyString(source)?.toLowerCase();
   if (normalized === "api-sync" || normalized === "auto-sync" || normalized === "imported") {
-    return "imported";
+    return "api-sync";
   }
   return normalized || "manual";
 }
 
-function normalizeImportedModels(fetchedModels: unknown): ManagedImportedModel[] {
+function normalizeImportedModels(
+  providerId: string,
+  fetchedModels: unknown
+): ManagedImportedModel[] {
   const discovered = normalizeDiscoveredModels(fetchedModels);
+  const registryIds = new Set(getModelsByProviderId(providerId).map((model: any) => model.id));
 
-  return discovered.map((model) => ({
-    id: model.id,
-    name: model.name || model.id,
-    source: "imported",
-    apiFormat: "chat-completions",
-    ...(Array.isArray(model.supportedEndpoints) && model.supportedEndpoints.length > 0
-      ? { supportedEndpoints: model.supportedEndpoints }
-      : {}),
-    ...(typeof model.inputTokenLimit === "number"
-      ? { inputTokenLimit: model.inputTokenLimit }
-      : {}),
-    ...(typeof model.outputTokenLimit === "number"
-      ? { outputTokenLimit: model.outputTokenLimit }
-      : {}),
-    ...(typeof model.description === "string" ? { description: model.description } : {}),
-    ...(model.supportsThinking === true ? { supportsThinking: true } : {}),
-  }));
+  return discovered
+    .filter((model) => !registryIds.has(model.id))
+    .map((model) => ({
+      id: model.id,
+      name: model.name || model.id,
+      source: "api-sync",
+      apiFormat: "chat-completions",
+      ...(Array.isArray(model.supportedEndpoints) && model.supportedEndpoints.length > 0
+        ? { supportedEndpoints: model.supportedEndpoints }
+        : {}),
+      ...(typeof model.inputTokenLimit === "number"
+        ? { inputTokenLimit: model.inputTokenLimit }
+        : {}),
+      ...(typeof model.outputTokenLimit === "number"
+        ? { outputTokenLimit: model.outputTokenLimit }
+        : {}),
+      ...(typeof model.description === "string" ? { description: model.description } : {}),
+      ...(model.supportsThinking === true ? { supportsThinking: true } : {}),
+    }));
 }
 
-function isImportedSource(source: unknown): boolean {
-  return normalizeManagedSource(source) === "imported";
-}
-
-function getModelId(model: JsonRecord): string | null {
-  return toNonEmptyString(model.id);
+function isManagedDiscoveredSource(source: unknown): boolean {
+  const normalized = toNonEmptyString(source)?.toLowerCase();
+  return normalized === "api-sync" || normalized === "auto-sync" || normalized === "imported";
 }
 
 function summarizeImportedChanges(
@@ -85,30 +86,9 @@ function summarizeImportedChanges(
 
   const toComparable = (model: JsonRecord | undefined) => {
     if (!model) return null;
-    const id = toNonEmptyString(model.id) || "";
-    const supportedEndpoints = Array.isArray(model.supportedEndpoints)
-      ? Array.from(
-          new Set(
-            model.supportedEndpoints
-              .map((endpoint) => toNonEmptyString(endpoint))
-              .filter((endpoint): endpoint is string => Boolean(endpoint))
-          )
-        ).sort()
-      : ["chat"];
     return {
-      id,
-      name: toNonEmptyString(model.name) || id,
+      ...model,
       source: normalizeManagedSource(model.source),
-      apiFormat: toNonEmptyString(model.apiFormat) || "chat-completions",
-      supportedEndpoints,
-      ...(typeof model.inputTokenLimit === "number"
-        ? { inputTokenLimit: model.inputTokenLimit }
-        : {}),
-      ...(typeof model.outputTokenLimit === "number"
-        ? { outputTokenLimit: model.outputTokenLimit }
-        : {}),
-      ...(typeof model.description === "string" ? { description: model.description } : {}),
-      ...(model.supportsThinking === true ? { supportsThinking: true } : {}),
     };
   };
 
@@ -145,71 +125,37 @@ function collectAddedImportedModels(
   return importedModels.filter((model) => !previousIds.has(model.id));
 }
 
-function getCompatPatchFromCustomModel(model: JsonRecord): ModelCompatPatch | null {
-  const patch: ModelCompatPatch = {};
-
-  if (typeof model.normalizeToolCallId === "boolean") {
-    patch.normalizeToolCallId = model.normalizeToolCallId;
-  }
-  if (typeof model.preserveOpenAIDeveloperRole === "boolean") {
-    patch.preserveOpenAIDeveloperRole = model.preserveOpenAIDeveloperRole;
-  }
-  if (typeof model.isHidden === "boolean") {
-    patch.isHidden = model.isHidden;
-  }
-  if (model.compatByProtocol && typeof model.compatByProtocol === "object") {
-    patch.compatByProtocol = model.compatByProtocol as ModelCompatPatch["compatByProtocol"];
-  }
-  if (model.upstreamHeaders && typeof model.upstreamHeaders === "object") {
-    patch.upstreamHeaders = model.upstreamHeaders as Record<string, string>;
-  }
-
-  return Object.keys(patch).length > 0 ? patch : null;
-}
-
-function preserveRemovedCustomModelCompat(providerId: string, removedModels: JsonRecord[]) {
-  for (const model of removedModels) {
-    const modelId = getModelId(model);
-    if (!modelId) continue;
-    const patch = getCompatPatchFromCustomModel(model);
-    if (!patch) continue;
-    mergeModelCompatOverride(providerId, modelId, patch);
-  }
-}
-
 export async function importManagedModels({
   providerId,
   connectionId,
   fetchedModels,
   mode,
-  previousSyncedAvailableModels: previousSyncedAvailableModelsInput,
 }: {
   providerId: string;
   connectionId: string;
   fetchedModels: unknown;
   mode: ManagedModelImportMode;
-  previousSyncedAvailableModels?: SyncedAvailableModel[];
 }) {
   const previousModels = (await getCustomModels(providerId)) as JsonRecord[];
-  const previousSyncedAvailableModels =
-    previousSyncedAvailableModelsInput ??
-    (await getSyncedAvailableModelsForConnection(providerId, connectionId));
-  const discoveredModels = normalizeDiscoveredModels(fetchedModels);
-  const candidateImportedModels = normalizeImportedModels(fetchedModels);
+  const candidateImportedModels = normalizeImportedModels(providerId, fetchedModels);
   const importedIds = new Set(candidateImportedModels.map((model) => model.id));
-  const discoveredIds = new Set(discoveredModels.map((model) => model.id));
 
   const nextModelsMap = new Map<string, JsonRecord>();
-  const removedCustomModels: JsonRecord[] = [];
 
-  for (const model of previousModels) {
-    const modelId = getModelId(model);
-    if (!modelId) continue;
-    if (isImportedSource(model.source) || discoveredIds.has(modelId)) {
-      removedCustomModels.push(model);
-      continue;
+  if (mode === "merge") {
+    for (const model of previousModels) {
+      if (model?.id) nextModelsMap.set(String(model.id), model);
     }
-    nextModelsMap.set(modelId, model);
+  } else {
+    for (const model of previousModels) {
+      if (!model?.id) continue;
+      if (isManagedDiscoveredSource(model.source)) continue;
+      nextModelsMap.set(String(model.id), model);
+    }
+  }
+
+  for (const model of candidateImportedModels) {
+    nextModelsMap.set(model.id, model);
   }
 
   const persistedModels = (await replaceCustomModels(
@@ -224,12 +170,11 @@ export async function importManagedModels({
       outputTokenLimit?: number;
       description?: string;
       supportsThinking?: boolean;
-    }>,
-    { allowEmpty: true }
+    }>
   )) as JsonRecord[];
-  preserveRemovedCustomModelCompat(providerId, removedCustomModels);
 
-  let syncedAvailableModels: SyncedAvailableModel[] = previousSyncedAvailableModels;
+  const discoveredModels = normalizeDiscoveredModels(fetchedModels);
+  let syncedAvailableModels: SyncedAvailableModel[] = [];
   if (discoveredModels.length > 0) {
     syncedAvailableModels = await replaceSyncedAvailableModelsForConnection(
       providerId,
@@ -239,28 +184,24 @@ export async function importManagedModels({
   }
 
   let syncedAliases = 0;
-  if (usesManagedAvailableModels(providerId) && (mode === "merge" || discoveredModels.length > 0)) {
+  if (usesManagedAvailableModels(providerId)) {
     const aliasSync = await syncManagedAvailableModelAliases(
       providerId,
-      discoveredModels.map((model) => model.id),
+      mode === "sync"
+        ? persistedModels
+            .map((model) => toNonEmptyString(model.id))
+            .filter((modelId): modelId is string => Boolean(modelId))
+        : candidateImportedModels.map((model) => model.id),
       { pruneMissing: mode === "sync" }
     );
     syncedAliases = aliasSync.assignedAliases.length;
   }
 
-  const importedChanges = summarizeImportedChanges(
-    previousSyncedAvailableModels as JsonRecord[],
-    discoveredModels as JsonRecord[],
-    importedIds
-  );
-  const importedModels = collectAddedImportedModels(
-    previousSyncedAvailableModels as JsonRecord[],
-    candidateImportedModels
-  );
+  const importedChanges = summarizeImportedChanges(previousModels, persistedModels, importedIds);
+  const importedModels = collectAddedImportedModels(previousModels, candidateImportedModels);
 
   return {
     previousModels,
-    previousSyncedAvailableModels,
     persistedModels,
     importedModels,
     discoveredModels,

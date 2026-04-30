@@ -88,22 +88,6 @@ type TunnelNotice = {
   message: string;
 };
 
-type EndpointTunnelVisibility = {
-  showCloudflaredTunnel: boolean;
-  showTailscaleFunnel: boolean;
-};
-
-const DEFAULT_TUNNEL_VISIBILITY: EndpointTunnelVisibility = {
-  showCloudflaredTunnel: true,
-  showTailscaleFunnel: true,
-};
-
-function runEndpointBackgroundTask(taskName: string, task: () => Promise<unknown>) {
-  void task().catch((error) => {
-    console.log(`Error running endpoint background task (${taskName}):`, error);
-  });
-}
-
 export default function APIPageClient({ machineId }) {
   const [resolvedMachineId, setResolvedMachineId] = useState(machineId || "");
   const t = useTranslations("endpoint");
@@ -112,7 +96,6 @@ export default function APIPageClient({ machineId }) {
 
   // Endpoints / models state
   const [allModels, setAllModels] = useState([]);
-  const [modelsLoading, setModelsLoading] = useState(true);
   const [expandedEndpoint, setExpandedEndpoint] = useState(null);
 
   // Cloud sync state
@@ -273,36 +256,20 @@ export default function APIPageClient({ machineId }) {
   );
 
   useEffect(() => {
-    let mounted = true;
-
-    const loadPage = async () => {
-      const tunnelVisibility = await loadCloudSettings(() => mounted);
-
-      if (!mounted) return;
+    Promise.allSettled([
+      loadCloudSettings(),
+      fetchModels(),
+      fetchProtocolStatus(),
+      fetchSearchProviders(),
+      fetchCloudflaredStatus(true),
+      fetchTailscaleStatus(true),
+      fetchNgrokStatus(true),
+    ]).finally(() => {
       setLoading(false);
-
-      runEndpointBackgroundTask("models", fetchModels);
-      runEndpointBackgroundTask("protocol-status", fetchProtocolStatus);
-      runEndpointBackgroundTask("search-providers", fetchSearchProviders);
-
-      if (tunnelVisibility.showCloudflaredTunnel) {
-        runEndpointBackgroundTask("cloudflared-status", () => fetchCloudflaredStatus(true));
-      }
-      if (tunnelVisibility.showTailscaleFunnel) {
-        runEndpointBackgroundTask("tailscale-status", () => fetchTailscaleStatus(true));
-      }
-      runEndpointBackgroundTask("ngrok-status", () => fetchNgrokStatus(true));
-    };
-
-    void loadPage();
-
-    return () => {
-      mounted = false;
-    };
+    });
   }, [fetchCloudflaredStatus, fetchTailscaleStatus, fetchNgrokStatus]);
 
   const fetchModels = async () => {
-    setModelsLoading(true);
     try {
       const res = await fetch("/v1/models");
       if (res.ok) {
@@ -311,8 +278,6 @@ export default function APIPageClient({ machineId }) {
       }
     } catch (e) {
       console.log("Error fetching models:", e);
-    } finally {
-      setModelsLoading(false);
     }
   };
 
@@ -363,16 +328,6 @@ export default function APIPageClient({ machineId }) {
     };
   }, [allModels]);
 
-  const totalEndpointModelCount = useMemo(
-    () => Object.values(endpointData).reduce((acc, models) => acc + models.length, 0),
-    [endpointData]
-  );
-
-  const availableEndpointCount = useMemo(
-    () => Object.values(endpointData).filter((models) => models.length > 0).length + 2,
-    [endpointData]
-  );
-
   const postCloudAction = async (action, timeoutMs = CLOUD_ACTION_TIMEOUT_MS) => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -395,22 +350,11 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
-  const loadCloudSettings = async (
-    shouldApplyState: () => boolean = () => true
-  ): Promise<EndpointTunnelVisibility> => {
+  const loadCloudSettings = async () => {
     try {
       const res = await fetch("/api/settings");
       if (res.ok) {
         const data = await res.json();
-        const tunnelVisibility = {
-          showCloudflaredTunnel: data.hideEndpointCloudflaredTunnel !== true,
-          showTailscaleFunnel: data.hideEndpointTailscaleFunnel !== true,
-        };
-
-        if (!shouldApplyState()) {
-          return tunnelVisibility;
-        }
-
         setCloudEnabled(data.cloudEnabled || false);
         if (typeof data.cloudConfigured === "boolean") {
           setCloudConfigured(data.cloudConfigured);
@@ -421,25 +365,12 @@ export default function APIPageClient({ machineId }) {
         if (data.machineId) {
           setResolvedMachineId(data.machineId);
         }
-        setShowCloudflaredTunnel(tunnelVisibility.showCloudflaredTunnel);
-        setShowTailscaleFunnel(tunnelVisibility.showTailscaleFunnel);
-
-        if (!tunnelVisibility.showCloudflaredTunnel) {
-          setCloudflaredStatus(null);
-          setCloudflaredNotice(null);
-        }
-        if (!tunnelVisibility.showTailscaleFunnel) {
-          setTailscaleStatus(null);
-          setTailscaleNotice(null);
-        }
-
-        return tunnelVisibility;
+        setShowCloudflaredTunnel(data.hideEndpointCloudflaredTunnel !== true);
+        setShowTailscaleFunnel(data.hideEndpointTailscaleFunnel !== true);
       }
     } catch (error) {
       console.log("Error loading cloud settings:", error);
     }
-
-    return DEFAULT_TUNNEL_VISIBILITY;
   };
 
   const handleCloudToggle = (checked) => {
@@ -482,15 +413,11 @@ export default function APIPageClient({ machineId }) {
   useEffect(() => {
     const interval = setInterval(() => {
       void fetchProtocolStatus();
-      if (showCloudflaredTunnel) {
-        void fetchCloudflaredStatus(true);
-      }
-      if (showTailscaleFunnel) {
-        void fetchTailscaleStatus(true);
-      }
+      void fetchCloudflaredStatus(true);
+      void fetchTailscaleStatus(true);
     }, 30000);
     return () => clearInterval(interval);
-  }, [fetchCloudflaredStatus, fetchTailscaleStatus, showCloudflaredTunnel, showTailscaleFunnel]);
+  }, [fetchCloudflaredStatus, fetchTailscaleStatus]);
 
   const dispatchCloudChange = () => {
     globalThis.dispatchEvent(new Event("cloud-status-changed"));
@@ -863,7 +790,7 @@ export default function APIPageClient({ machineId }) {
       setTailscaleBusy(false);
       await fetchTailscaleStatus(true);
     }
-  }, [fetchTailscaleStatus, tailscalePassword, translateOrFallback]);
+  }, [fetchTailscaleStatus, translateOrFallback]);
 
   const handleTailscaleInstall = useCallback(async () => {
     setTailscaleInstallBusy(true);
@@ -1582,12 +1509,24 @@ export default function APIPageClient({ machineId }) {
             <div>
               <h2 className="text-lg font-semibold">{t("available")}</h2>
               <p className="text-sm text-text-muted">
-                {modelsLoading
-                  ? translateOrFallback("loadingModels", "Loading available models...")
-                  : t("modelsAcrossEndpoints", {
-                      models: totalEndpointModelCount,
-                      endpoints: availableEndpointCount,
-                    })}
+                {t("modelsAcrossEndpoints", {
+                  models: Object.values(endpointData).reduce(
+                    (acc, models) => acc + models.length,
+                    0
+                  ),
+                  endpoints:
+                    [
+                      endpointData.chat,
+                      endpointData.embeddings,
+                      endpointData.images,
+                      endpointData.video,
+                      endpointData.rerank,
+                      endpointData.audioTranscription,
+                      endpointData.audioSpeech,
+                      endpointData.moderation,
+                      endpointData.music,
+                    ].filter((a) => a.length > 0).length + 2,
+                })}
               </p>
             </div>
           </div>
@@ -1616,7 +1555,6 @@ export default function APIPageClient({ machineId }) {
                 copy={copy}
                 copied={copied}
                 baseUrl={currentEndpoint}
-                modelsLoading={modelsLoading}
               />
 
               {/* Responses API */}
@@ -1638,7 +1576,6 @@ export default function APIPageClient({ machineId }) {
                 copy={copy}
                 copied={copied}
                 baseUrl={currentEndpoint}
-                modelsLoading={modelsLoading}
               />
 
               {/* Legacy Completions */}
@@ -1660,7 +1597,6 @@ export default function APIPageClient({ machineId }) {
                 copy={copy}
                 copied={copied}
                 baseUrl={currentEndpoint}
-                modelsLoading={modelsLoading}
               />
             </div>
           </div>
@@ -1691,7 +1627,6 @@ export default function APIPageClient({ machineId }) {
                 copy={copy}
                 copied={copied}
                 baseUrl={currentEndpoint}
-                modelsLoading={modelsLoading}
               />
 
               {/* Image Generation */}
@@ -1710,7 +1645,6 @@ export default function APIPageClient({ machineId }) {
                 copy={copy}
                 copied={copied}
                 baseUrl={currentEndpoint}
-                modelsLoading={modelsLoading}
               />
 
               {/* Audio Transcription */}
@@ -1731,7 +1665,6 @@ export default function APIPageClient({ machineId }) {
                 copy={copy}
                 copied={copied}
                 baseUrl={currentEndpoint}
-                modelsLoading={modelsLoading}
               />
 
               {/* Audio Speech (TTS) */}
@@ -1750,7 +1683,6 @@ export default function APIPageClient({ machineId }) {
                 copy={copy}
                 copied={copied}
                 baseUrl={currentEndpoint}
-                modelsLoading={modelsLoading}
               />
 
               {/* Music Generation */}
@@ -1770,7 +1702,6 @@ export default function APIPageClient({ machineId }) {
                 copy={copy}
                 copied={copied}
                 baseUrl={currentEndpoint}
-                modelsLoading={modelsLoading}
               />
 
               {/* Video Generation */}
@@ -1790,7 +1721,6 @@ export default function APIPageClient({ machineId }) {
                 copy={copy}
                 copied={copied}
                 baseUrl={currentEndpoint}
-                modelsLoading={modelsLoading}
               />
             </div>
           </div>
@@ -1862,7 +1792,6 @@ export default function APIPageClient({ machineId }) {
                 copy={copy}
                 copied={copied}
                 baseUrl={currentEndpoint}
-                modelsLoading={modelsLoading}
               />
 
               {/* Moderations */}
@@ -1881,7 +1810,6 @@ export default function APIPageClient({ machineId }) {
                 copy={copy}
                 copied={copied}
                 baseUrl={currentEndpoint}
-                modelsLoading={modelsLoading}
               />
 
               {/* List Models */}
@@ -2401,7 +2329,6 @@ function EndpointSection({
   copy,
   copied,
   baseUrl,
-  modelsLoading = false,
 }) {
   const t = useTranslations("endpoint");
   const grouped = useMemo(() => {
@@ -2435,7 +2362,7 @@ function EndpointSection({
           <div className="flex items-center gap-2">
             <span className="font-semibold text-sm">{title}</span>
             <span className="text-xs px-2 py-0.5 rounded-full bg-surface text-text-muted font-medium">
-              {modelsLoading ? "..." : t("modelsCount", { count: models.length })}
+              {t("modelsCount", { count: models.length })}
             </span>
           </div>
           <p className="text-xs text-text-muted mt-0.5">{description}</p>
@@ -2467,44 +2394,35 @@ function EndpointSection({
           </div>
 
           {/* Models grouped by provider */}
-          {modelsLoading ? (
-            <div className="flex items-center gap-2 rounded-lg border border-border/70 bg-surface/40 px-3 py-2 text-xs text-text-muted">
-              <span className="material-symbols-outlined animate-spin text-sm">
-                progress_activity
-              </span>
-              <span>{t("loadingModels")}</span>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {grouped.map(([providerId, providerModels]) => (
-                <div key={providerId}>
-                  <div className="flex items-center gap-2 mb-1">
-                    <div
-                      className="size-2.5 rounded-full shrink-0"
-                      style={{ backgroundColor: providerColor(providerId) }}
-                    />
-                    <span className="text-xs font-semibold text-text-main">
-                      {providerName(providerId)}
-                    </span>
-                    <span className="text-xs text-text-muted">
-                      ({(providerModels as any).length})
-                    </span>
-                  </div>
-                  <div className="ml-5 flex flex-wrap gap-1.5">
-                    {(providerModels as any).map((m) => (
-                      <span
-                        key={m.id}
-                        className="text-xs px-2 py-0.5 rounded-md bg-surface/80 text-text-muted font-mono"
-                        title={m.id}
-                      >
-                        {m.root || m.id.split("/").pop()}
-                      </span>
-                    ))}
-                  </div>
+          <div className="flex flex-col gap-2">
+            {grouped.map(([providerId, providerModels]) => (
+              <div key={providerId}>
+                <div className="flex items-center gap-2 mb-1">
+                  <div
+                    className="size-2.5 rounded-full shrink-0"
+                    style={{ backgroundColor: providerColor(providerId) }}
+                  />
+                  <span className="text-xs font-semibold text-text-main">
+                    {providerName(providerId)}
+                  </span>
+                  <span className="text-xs text-text-muted">
+                    ({(providerModels as any).length})
+                  </span>
                 </div>
-              ))}
-            </div>
-          )}
+                <div className="ml-5 flex flex-wrap gap-1.5">
+                  {(providerModels as any).map((m) => (
+                    <span
+                      key={m.id}
+                      className="text-xs px-2 py-0.5 rounded-md bg-surface/80 text-text-muted font-mono"
+                      title={m.id}
+                    >
+                      {m.root || m.id.split("/").pop()}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -2524,5 +2442,4 @@ EndpointSection.propTypes = {
   copy: PropTypes.func.isRequired,
   copied: PropTypes.string,
   baseUrl: PropTypes.string.isRequired,
-  modelsLoading: PropTypes.bool,
 };

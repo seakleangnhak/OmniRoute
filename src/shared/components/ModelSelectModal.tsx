@@ -9,7 +9,6 @@ import { getCompatibleFallbackModels } from "@/lib/providers/managedAvailableMod
 import {
   getModelCatalogSourceLabel,
   matchesModelCatalogQuery,
-  normalizeModelCatalogSource,
 } from "@/shared/utils/modelCatalogSearch";
 import {
   OAUTH_PROVIDERS,
@@ -145,7 +144,7 @@ export default function ModelSelectModal({
             name: cm.name || cm.id,
             value: `${alias}/${cm.id}`,
             isCustom: true,
-            source: normalizeModelCatalogSource(cm.source) === "imported" ? "imported" : "custom",
+            source: cm.source === "api-sync" ? "api-sync" : "custom",
           }));
 
         const allModels = [...aliasModels, ...customEntries];
@@ -199,7 +198,7 @@ export default function ModelSelectModal({
             name: cm.name || cm.id,
             value: `${nodePrefix}/${cm.id}`,
             isCustom: true,
-            source: normalizeModelCatalogSource(cm.source) === "imported" ? "imported" : "custom",
+            source: cm.source === "api-sync" ? "api-sync" : "custom",
           }));
 
         const allModels = [...nodeModels, ...fallbackEntries, ...customEntries];
@@ -232,7 +231,7 @@ export default function ModelSelectModal({
             name: cm.name || cm.id,
             value: `${alias}/${cm.id}`,
             isCustom: true,
-            source: normalizeModelCatalogSource(cm.source) === "imported" ? "imported" : "custom",
+            source: cm.source === "api-sync" ? "api-sync" : "custom",
           }));
 
         const allModels = [...systemEntries, ...customEntries];

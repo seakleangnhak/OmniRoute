@@ -205,21 +205,17 @@ export default function MemoryPage() {
             {health !== null && (
               <span
                 className={`inline-block w-3 h-3 rounded-full ${health.working ? "bg-green-500" : "bg-red-500"}`}
-                title={
-                  health.working
-                    ? t("pipelineOk", { latencyMs: health.latencyMs })
-                    : t("pipelineError")
-                }
+                title={health.working ? `Pipeline OK (${health.latencyMs}ms)` : "Pipeline error"}
               />
             )}
             {health === null && !checkingHealth && (
               <span
                 className="inline-block w-3 h-3 rounded-full bg-gray-400"
-                title={t("healthUnknown")}
+                title="Health unknown"
               />
             )}
             <Button variant="outline" size="sm" onClick={checkHealth} disabled={checkingHealth}>
-              {checkingHealth ? t("checkingHealth") : t("checkHealth")}
+              {checkingHealth ? "Checking..." : "Check Health"}
             </Button>
           </div>
         </div>
@@ -325,7 +321,7 @@ export default function MemoryPage() {
 
           <div className="flex items-center justify-between mt-4">
             <div className="text-sm text-gray-500">
-              {t("pageInfo", { page, totalPages, total })}
+              Page {page} of {totalPages} ({total} total)
             </div>
             <div className="flex gap-2">
               <Button
@@ -334,7 +330,7 @@ export default function MemoryPage() {
                 disabled={page === 1}
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
               >
-                {t("previous")}
+                Previous
               </Button>
               <Button
                 variant="outline"
@@ -342,7 +338,7 @@ export default function MemoryPage() {
                 disabled={page >= totalPages}
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               >
-                {t("next")}
+                Next
               </Button>
             </div>
           </div>
@@ -360,47 +356,47 @@ export default function MemoryPage() {
               onClick={() => setAddDialogOpen(false)}
               disabled={isSubmitting}
             >
-              {t("cancel")}
+              Cancel
             </Button>
             <Button
               onClick={handleAddMemory}
               loading={isSubmitting}
               disabled={!newMemory.key || !newMemory.content}
             >
-              {t("save")}
+              Save
             </Button>
           </>
         }
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium mb-1">{t("type")}</label>
+            <label className="block text-sm font-medium mb-1">Type</label>
             <Select
               value={newMemory.type}
               onChange={(e) => setNewMemory({ ...newMemory, type: e.target.value as any })}
               className="w-full"
             >
-              <option value="factual">{t("factual")}</option>
-              <option value="episodic">{t("episodic")}</option>
-              <option value="procedural">{t("procedural")}</option>
-              <option value="semantic">{t("semantic")}</option>
+              <option value="factual">Factual</option>
+              <option value="episodic">Episodic</option>
+              <option value="procedural">Procedural</option>
+              <option value="semantic">Semantic</option>
             </Select>
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">{t("key")}</label>
+            <label className="block text-sm font-medium mb-1">Key</label>
             <Input
               value={newMemory.key}
               onChange={(e) => setNewMemory({ ...newMemory, key: e.target.value })}
-              placeholder={t("keyPlaceholder")}
+              placeholder="e.g., user_preference_theme"
               className="w-full"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">{t("content")}</label>
+            <label className="block text-sm font-medium mb-1">Content</label>
             <Input
               value={newMemory.content}
               onChange={(e) => setNewMemory({ ...newMemory, content: e.target.value })}
-              placeholder={t("contentPlaceholder")}
+              placeholder="e.g., Prefers dark mode"
               className="w-full"
             />
           </div>

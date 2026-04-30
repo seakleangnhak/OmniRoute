@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 
 import { AntigravityExecutor } from "../../open-sse/executors/antigravity.ts";
 import { setCliCompatProviders } from "../../open-sse/config/cliFingerprints.ts";
-import { scrubProxyAndFingerprintHeaders } from "../../open-sse/services/antigravityHeaderScrub.ts";
 import {
   clearAntigravityVersionCache,
   seedAntigravityVersionCache,
@@ -44,28 +43,13 @@ test("AntigravityExecutor.buildUrl always targets the streaming endpoint", () =>
   );
 });
 
-test("AntigravityExecutor.buildHeaders includes native headers without OmniRoute internals", () => {
+test("AntigravityExecutor.buildHeaders includes auth and SSE accept", () => {
   const executor = new AntigravityExecutor();
   const headers = executor.buildHeaders({ accessToken: "ag-token" }, false);
 
   assert.equal(headers.Authorization, "Bearer ag-token");
   assert.equal(headers.Accept, "text/event-stream");
-  assert.equal(headers["X-OmniRoute-Source"], undefined);
-});
-
-test("Antigravity header scrub removes OmniRoute internal headers", () => {
-  const headers = scrubProxyAndFingerprintHeaders({
-    Authorization: "Bearer ag-token",
-    "X-OmniRoute-Source": "omniroute",
-    "X-OmniRoute-No-Cache": "true",
-    "X-Forwarded-For": "127.0.0.1",
-  });
-
-  assert.equal(headers.Authorization, "Bearer ag-token");
-  assert.equal(headers["X-OmniRoute-Source"], undefined);
-  assert.equal(headers["X-OmniRoute-No-Cache"], undefined);
-  assert.equal(headers["X-Forwarded-For"], undefined);
-  assert.equal(headers["Accept-Encoding"], "gzip, deflate, br");
+  assert.equal(headers["X-OmniRoute-Source"], "omniroute");
 });
 
 test("AntigravityExecutor.transformRequest normalizes model, project and contents", async () => {
@@ -469,13 +453,10 @@ test("AntigravityExecutor.execute applies CLI fingerprint when enabled", async (
       "request",
     ]);
 
-    return new Response(
-      'data: {"response":{"candidates":[{"content":{"parts":[{"text":"OK"}]},"finishReason":"STOP"}]}}\n\n',
-      {
-        status: 200,
-        headers: { "Content-Type": "text/event-stream" },
-      }
-    );
+    return new Response('data: {"response":{"candidates":[{"content":{"parts":[{"text":"OK"}]},"finishReason":"STOP"}]}}\n\n', {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    });
   };
 
   try {

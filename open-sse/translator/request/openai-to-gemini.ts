@@ -27,12 +27,6 @@ import {
 } from "../helpers/geminiHelper.ts";
 import { buildGeminiTools, sanitizeGeminiToolName } from "../helpers/geminiToolsSanitizer.ts";
 
-// Observed Antigravity wrapper output cap, not an underlying model capability.
-// Keep this bridge-local: capMaxOutputTokens() falls back to OmniRoute's generic
-// 8192 default for unknown Claude-family IDs, while Antigravity currently caps
-// visible output around 16K. See: https://github.com/keisksw/antigravity-output-analysis
-const ANTIGRAVITY_CLAUDE_MAX_OUTPUT_TOKENS = 16_384;
-
 type GeminiPart = Record<string, unknown>;
 type GeminiContent = { role: string; parts: GeminiPart[] };
 
@@ -192,7 +186,7 @@ function openaiToGeminiBase(model, body, stream, toolNameOptions: GeminiToolName
         if (systemText) {
           if (!result.systemInstruction) {
             result.systemInstruction = {
-              role: "system",
+              role: "user",
               parts: [{ text: systemText }],
             };
           } else {
@@ -419,7 +413,7 @@ function wrapInCloudCodeEnvelope(model, geminiCLI, credentials = null, isAntigra
     if (envelope.request.systemInstruction?.parts) {
       envelope.request.systemInstruction.parts.unshift(defaultPart);
     } else {
-      envelope.request.systemInstruction = { role: "system", parts: [defaultPart] };
+      envelope.request.systemInstruction = { role: "user", parts: [defaultPart] };
     }
 
     // Add toolConfig for Antigravity
@@ -436,20 +430,7 @@ function wrapInCloudCodeEnvelope(model, geminiCLI, credentials = null, isAntigra
   return envelope;
 }
 
-function getAntigravityClaudeOutputTokens(body: Record<string, unknown>): number {
-  const requested = body.max_tokens ?? body.max_completion_tokens;
-  if (typeof requested === "number" && Number.isFinite(requested) && requested >= 1) {
-    return Math.min(Math.floor(requested), ANTIGRAVITY_CLAUDE_MAX_OUTPUT_TOKENS);
-  }
-  return ANTIGRAVITY_CLAUDE_MAX_OUTPUT_TOKENS;
-}
-
-function wrapInCloudCodeEnvelopeForClaude(
-  model,
-  claudeRequest,
-  credentials = null,
-  sourceBody = {}
-) {
+function wrapInCloudCodeEnvelopeForClaude(model, claudeRequest, credentials = null) {
   const toolNameMap = new Map<string, string>();
   const sanitizeToolName = (name: string) =>
     sanitizeGeminiToolName(name, {
@@ -468,11 +449,6 @@ function wrapInCloudCodeEnvelopeForClaude(
 
   const cleanModel = model.includes("/") ? model.split("/").pop()! : model;
 
-  const generationConfig: GeminiGenerationConfig = {
-    temperature: claudeRequest.temperature || 1,
-    maxOutputTokens: getAntigravityClaudeOutputTokens(sourceBody),
-  };
-
   const envelope: CloudCodeEnvelope = {
     project: projectId,
     model: cleanModel,
@@ -482,7 +458,10 @@ function wrapInCloudCodeEnvelopeForClaude(
     request: {
       sessionId: generateSessionId(),
       contents: [],
-      generationConfig,
+      generationConfig: {
+        temperature: claudeRequest.temperature || 1,
+        maxOutputTokens: claudeRequest.max_tokens || 4096,
+      },
     },
   };
 
@@ -576,7 +555,7 @@ function wrapInCloudCodeEnvelopeForClaude(
     }
   }
 
-  envelope.request.systemInstruction = { role: "system", parts: systemParts };
+  envelope.request.systemInstruction = { role: "user", parts: systemParts };
 
   const changedToolNameMap = buildChangedToolNameMap(toolNameMap);
   if (changedToolNameMap) {
@@ -592,7 +571,7 @@ export function openaiToAntigravityRequest(model, body, stream, credentials = nu
 
   if (isClaude) {
     const claudeRequest = openaiToClaudeRequestForAntigravity(model, body, stream);
-    return wrapInCloudCodeEnvelopeForClaude(model, claudeRequest, credentials, body);
+    return wrapInCloudCodeEnvelopeForClaude(model, claudeRequest, credentials);
   }
 
   const geminiCLI = openaiToGeminiCLIRequest(model, body, stream);

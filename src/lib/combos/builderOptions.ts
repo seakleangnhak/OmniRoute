@@ -21,7 +21,7 @@ import type { RegistryModel } from "@omniroute/open-sse/config/providerRegistry.
 
 type JsonRecord = Record<string, unknown>;
 
-type BuilderModelSource = "imported" | "system" | "custom" | "fallback";
+type BuilderModelSource = "api-sync" | "system" | "custom" | "fallback";
 type BuilderConnectionStatus = "active" | "inactive" | "rate-limited" | "error";
 type ProviderVisual = { icon: string; color: string; source: "system" | "provider-node" };
 
@@ -159,7 +159,7 @@ function isChatCapable(supportedEndpoints: string[] | undefined): boolean {
 
 function getSourcePriority(source: BuilderModelSource): number {
   switch (source) {
-    case "imported":
+    case "api-sync":
       return 0;
     case "system":
       return 1;
@@ -412,7 +412,7 @@ export async function getComboBuilderOptions(): Promise<ComboBuilderOptionsPaylo
       addModelOption(modelMap, providerId, {
         id: toStringOrNull(model.id),
         name: toStringOrNull(model.name),
-        source: "imported",
+        source: "api-sync",
         supportedEndpoints: toStringArray(model.supportedEndpoints),
         contextLength: toNumberOrNull(model.inputTokenLimit) ?? resolved.contextWindow,
         outputTokenLimit: toNumberOrNull(model.outputTokenLimit) ?? resolved.maxOutputTokens,
@@ -440,11 +440,8 @@ export async function getComboBuilderOptions(): Promise<ComboBuilderOptionsPaylo
 
     for (const model of customModels) {
       if (model.isHidden === true) continue;
-      const source = ["api-sync", "auto-sync", "imported"].includes(
-        toStringOrNull(model.source)?.toLowerCase() || ""
-      )
-        ? "imported"
-        : ("custom" as BuilderModelSource);
+      const source =
+        toStringOrNull(model.source) === "api-sync" ? "api-sync" : ("custom" as BuilderModelSource);
       const resolved = getResolvedModelCapabilities({
         provider: providerId,
         model: toStringOrNull(model.id),
