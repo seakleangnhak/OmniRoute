@@ -85,6 +85,7 @@ import {
   parseCodexQuotaHeaders,
   getCodexModelScope,
   getCodexDualWindowCooldownMs,
+  isCompactResponsesEndpoint,
 } from "../executors/codex.ts";
 import { invalidateCodexQuotaCache } from "../services/codexQuotaFetcher.ts";
 import { translateNonStreamingResponse } from "./responseTranslator.ts";
@@ -621,10 +622,11 @@ function wrapReadableStreamWithFinalize<T>(
     },
 
     async cancel(reason) {
+      runFinalize();
       try {
         await reader.cancel(reason);
-      } finally {
-        runFinalize();
+      } catch (error) {
+        // Ignored
       }
     },
   });
@@ -1339,7 +1341,12 @@ export async function handleChatCore({
     delete b.streaming;
   }
 
-  const stream = resolveStreamFlag(body?.stream, acceptHeader);
+  // Codex /responses/compact is JSON-only: Codex CLI does not send stream=false,
+  // so route shape must override the usual Accept/header fallback.
+  const stream =
+    nativeCodexPassthrough && isCompactResponsesEndpoint(endpointPath)
+      ? false
+      : resolveStreamFlag(body?.stream, acceptHeader);
   const settings = await getCachedSettings();
   setGeminiThoughtSignatureMode(settings.antigravitySignatureCacheMode);
   const semanticCacheEnabled = settings.semanticCacheEnabled !== false;
@@ -1689,7 +1696,36 @@ export async function handleChatCore({
   ) => {
     const preserveToolResultBlocks = options?.preserveToolResultBlocks === true;
     if (!Array.isArray(payload.messages)) return;
-    const messages = payload.messages as ClaudeMessage[];
+    let messages = payload.messages as ClaudeMessage[];
+
+    // Extract system role messages (Issue #1797)
+    const systemMessages = messages.filter((m) => m.role === "system");
+    if (systemMessages.length > 0) {
+      const extraBlocks: ClaudeContentBlock[] = [];
+      for (const sm of systemMessages) {
+        if (typeof sm.content === "string" && sm.content.length > 0) {
+          extraBlocks.push({ type: "text", text: sm.content });
+        } else if (Array.isArray(sm.content)) {
+          for (const block of sm.content as ClaudeContentBlock[]) {
+            if (block?.type === "text" && typeof block.text === "string" && block.text.length > 0) {
+              extraBlocks.push(block);
+            }
+          }
+        }
+      }
+      if (extraBlocks.length > 0) {
+        const existingSystem = payload.system;
+        if (typeof existingSystem === "string" && existingSystem.length > 0) {
+          payload.system = [{ type: "text", text: existingSystem }, ...extraBlocks];
+        } else if (Array.isArray(existingSystem)) {
+          payload.system = [...(existingSystem as ClaudeContentBlock[]), ...extraBlocks];
+        } else {
+          payload.system = extraBlocks;
+        }
+      }
+      messages = messages.filter((m) => m.role !== "system");
+      payload.messages = messages;
+    }
 
     // Anthropic rejects empty text blocks in native Messages payloads.
     for (const msg of messages) {
@@ -1962,6 +1998,28 @@ export async function handleChatCore({
   }
   translatedBody.model = finalModelToUpstream;
 
+  // #1789: Prevent output_config.effort from overriding effort encoded in model name (Codex)
+  if (provider === "codex" || provider?.startsWith("codex")) {
+    const hasEffortSuffix = finalModelToUpstream.match(/-(low|medium|high|xhigh)$/i);
+    if (
+      hasEffortSuffix &&
+      translatedBody.output_config &&
+      typeof translatedBody.output_config === "object"
+    ) {
+      const oc = translatedBody.output_config as Record<string, unknown>;
+      if (oc.effort) {
+        log?.warn?.(
+          "PARAMS",
+          `Stripped output_config.effort="${oc.effort}" because model "${finalModelToUpstream}" already encodes effort`
+        );
+        delete oc.effort;
+        if (Object.keys(oc).length === 0) {
+          delete translatedBody.output_config;
+        }
+      }
+    }
+  }
+
   // Strip unsupported parameters for reasoning models (o1, o3, etc.)
   const unsupported = getUnsupportedParams(provider, model);
   if (unsupported.length > 0) {
@@ -2162,67 +2220,78 @@ export async function handleChatCore({
         accountSemaphoreKey && accountSemaphoreMaxConcurrency != null
           ? await acquireAccountSemaphore(accountSemaphoreKey, {
               maxConcurrency: accountSemaphoreMaxConcurrency,
+              signal: streamController.signal,
             })
           : () => {};
 
       try {
-        const rawResult = await withRateLimit(provider, connectionId, modelToCall, async () => {
-          let attempts = 0;
-          const maxAttempts = provider === "qwen" ? 3 : 1;
+        const rawResult = await withRateLimit(
+          provider,
+          connectionId,
+          modelToCall,
+          async () => {
+            let attempts = 0;
+            const maxAttempts = provider === "qwen" ? 3 : 1;
 
-          while (attempts < maxAttempts) {
-            const res = await executor.execute({
-              model: modelToCall,
-              body: bodyToSend,
-              stream: upstreamStream,
-              credentials: executionCredentials,
-              signal: streamController.signal,
-              log,
-              extendedContext,
-              upstreamExtraHeaders: buildUpstreamHeadersForExecute(modelToCall),
-              clientHeaders: buildExecutorClientHeaders(clientRawRequest?.headers, userAgent),
-              onCredentialsRefreshed,
-            });
+            while (attempts < maxAttempts) {
+              const res = await executor.execute({
+                model: modelToCall,
+                body: bodyToSend,
+                stream: upstreamStream,
+                credentials: executionCredentials,
+                signal: streamController.signal,
+                log,
+                extendedContext,
+                upstreamExtraHeaders: buildUpstreamHeadersForExecute(modelToCall),
+                clientHeaders: buildExecutorClientHeaders(clientRawRequest?.headers, userAgent),
+                onCredentialsRefreshed,
+              });
 
-            // Qwen 429 strict quota backoff (wait 1.5s, 3s and retry)
-            if (provider === "qwen" && res.response.status === 429 && attempts < maxAttempts - 1) {
-              const bodyPeek = await res.response
-                .clone()
-                .text()
-                .catch(() => "");
-              if (bodyPeek.toLowerCase().includes("exceeded your current quota")) {
-                const delay = 1500 * (attempts + 1);
-                log?.warn?.("QWEN_RETRY", `Quota 429 hit. Retrying in ${delay}ms...`);
-                await new Promise((r) => setTimeout(r, delay));
-                attempts++;
-                continue;
+              // Qwen 429 strict quota backoff (wait 1.5s, 3s and retry)
+              if (
+                provider === "qwen" &&
+                res.response.status === 429 &&
+                attempts < maxAttempts - 1
+              ) {
+                const bodyPeek = await res.response
+                  .clone()
+                  .text()
+                  .catch(() => "");
+                if (bodyPeek.toLowerCase().includes("exceeded your current quota")) {
+                  const delay = 1500 * (attempts + 1);
+                  log?.warn?.("QWEN_RETRY", `Quota 429 hit. Retrying in ${delay}ms...`);
+                  await new Promise((r) => setTimeout(r, delay));
+                  attempts++;
+                  continue;
+                }
               }
-            }
 
-            // For streaming: release the semaphore when the client drains or cancels the stream.
-            if (stream) {
-              const originalBody = res.response.body;
-              if (!originalBody) {
-                acquireAccountSemaphoreRelease();
-                return res;
+              // For streaming: release the semaphore when the client drains or cancels the stream.
+              if (stream) {
+                const originalBody = res.response.body;
+                if (!originalBody) {
+                  acquireAccountSemaphoreRelease();
+                  return res;
+                }
+
+                return {
+                  ...res,
+                  response: new Response(
+                    wrapReadableStreamWithFinalize(originalBody, acquireAccountSemaphoreRelease),
+                    {
+                      status: res.response.status,
+                      statusText: res.response.statusText,
+                      headers: res.response.headers,
+                    }
+                  ),
+                };
               }
 
-              return {
-                ...res,
-                response: new Response(
-                  wrapReadableStreamWithFinalize(originalBody, acquireAccountSemaphoreRelease),
-                  {
-                    status: res.response.status,
-                    statusText: res.response.statusText,
-                    headers: res.response.headers,
-                  }
-                ),
-              };
+              return res;
             }
-
-            return res;
-          }
-        });
+          },
+          streamController.signal
+        );
 
         if (stream) {
           return rawResult;
@@ -2877,17 +2946,18 @@ export async function handleChatCore({
     } else {
       try {
         responseBody = rawBody ? JSON.parse(rawBody) : {};
-      } catch {
+      } catch (err) {
         appendRequestLog({
           model,
           provider,
           connectionId,
           status: `FAILED ${HTTP_STATUS.BAD_GATEWAY}`,
         }).catch(() => {});
+        const detailedError = `Invalid JSON response from provider (error: ${err instanceof Error ? err.message : String(err)}): ${rawBody.substring(0, 1000)}`;
         const invalidJsonMessage = "Invalid JSON response from provider";
         persistAttemptLogs({
           status: HTTP_STATUS.BAD_GATEWAY,
-          error: invalidJsonMessage,
+          error: detailedError,
           providerRequest: finalBody || translatedBody,
           providerResponse: normalizedProviderPayload,
           clientResponse: buildErrorBody(HTTP_STATUS.BAD_GATEWAY, invalidJsonMessage),
@@ -3487,6 +3557,7 @@ export async function handleChatCore({
     clientResponseFormat === FORMATS.OPENAI &&
     !isResponsesEndpoint &&
     !isDroidCLI;
+  const streamStateBody = finalBody || body;
 
   if (needsResponsesTranslation) {
     // Provider returns openai-responses, translate to openai (Chat Completions) that clients expect
@@ -3499,7 +3570,7 @@ export async function handleChatCore({
       responseToolNameMap,
       model,
       connectionId,
-      body,
+      streamStateBody,
       onStreamComplete,
       apiKeyInfo,
       handleStreamFailure
@@ -3515,7 +3586,7 @@ export async function handleChatCore({
       responseToolNameMap,
       model,
       connectionId,
-      body,
+      streamStateBody,
       onStreamComplete,
       apiKeyInfo,
       handleStreamFailure
@@ -3528,10 +3599,11 @@ export async function handleChatCore({
       responseToolNameMap,
       model,
       connectionId,
-      body,
+      streamStateBody,
       onStreamComplete,
       apiKeyInfo,
-      handleStreamFailure
+      handleStreamFailure,
+      clientResponseFormat
     );
   }
 

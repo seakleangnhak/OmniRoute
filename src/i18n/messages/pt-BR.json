@@ -1755,6 +1755,7 @@
     "disableCloud": "Desativar Nuvem",
     "enableCloud": "Ativar Nuvem",
     "modelsAcrossEndpoints": "{models} modelos em {endpoints} endpoints",
+    "loadingModels": "Carregando modelos disponíveis...",
     "chatDesc": "Chat streaming e não-streaming com todos os provedores",
     "embeddings": "Incorporações",
     "embeddingsDesc": "Embeddings de texto para busca e pipelines RAG",
