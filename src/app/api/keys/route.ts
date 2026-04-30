@@ -4,7 +4,7 @@ import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { syncToCloud } from "@/lib/cloudSync";
 import { createKeySchema } from "@/shared/validation/schemas";
 import { isValidationFailure, validateBody } from "@/shared/validation/helpers";
-import { isApiKeyRevealEnabled, maskStoredApiKey } from "@/lib/apiKeyExposure";
+import { isApiKeyRevealEnabled, toSafeApiKeyMetadata } from "@/lib/apiKeyExposure";
 import { requireManagementAuth } from "@/lib/api/requireManagementAuth";
 import * as log from "@/sse/utils/logger";
 
@@ -30,10 +30,7 @@ export async function GET(request: Request) {
 
   try {
     const keys = await getApiKeys();
-    const maskedKeys = keys.map((k) => ({
-      ...k,
-      key: maskStoredApiKey(k.key),
-    }));
+    const maskedKeys = keys.map((key) => toSafeApiKeyMetadata(key));
     const { limit, offset } = parsePagination(request);
     const pagedKeys =
       limit === null ? maskedKeys.slice(offset) : maskedKeys.slice(offset, offset + limit);
@@ -75,13 +72,15 @@ export async function POST(request) {
     await syncKeysToCloudIfEnabled();
 
     return NextResponse.json(
-      {
-        key: apiKey.key,
-        name: apiKey.name,
-        id: apiKey.id,
-        machineId: apiKey.machineId,
-        noLog: noLog === true,
-      },
+      toSafeApiKeyMetadata(
+        {
+          ...apiKey,
+          noLog: noLog === true,
+          isActive: true,
+          status: "active",
+        },
+        { includeRawKey: true }
+      ),
       { status: 201 }
     );
   } catch (error) {

@@ -378,6 +378,7 @@ export function migrateUsageJsonToSqlite() {
                     cacheWrite: null,
                     reasoning: null,
                   },
+                  costUsd: null,
                   requestType: log.requestType || null,
                   sourceFormat: log.sourceFormat || null,
                   targetFormat: log.targetFormat || null,

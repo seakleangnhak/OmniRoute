@@ -22,6 +22,7 @@ import { isNoLog } from "../compliance";
 import { sanitizePII } from "../piiSanitizer";
 import { protectPayloadForLog, parseStoredPayload } from "../logPayloads";
 import { getCallLogMaxEntries, getCallLogRetentionDays, getCallLogsTableMaxRows } from "../logEnv";
+import { calculateCost } from "./costCalculator";
 import { pickMaskedDisplayValue } from "@/shared/utils/maskEmail";
 import {
   CALL_LOGS_DIR,
@@ -53,6 +54,7 @@ type CallLogSummaryRow = {
   tokens_cache_read: number | null;
   tokens_cache_creation: number | null;
   tokens_reasoning: number | null;
+  cost_usd: number | null;
   cache_source: string | null;
   request_type: string | null;
   source_format: string | null;
@@ -98,6 +100,16 @@ function toNumber(value: unknown): number {
     return Number.isFinite(parsed) ? parsed : 0;
   }
   return 0;
+}
+
+function toNumberOrNull(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string" && value.trim().length > 0) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+  return null;
 }
 
 function toStringOrNull(value: unknown): string | null {
@@ -286,6 +298,7 @@ function buildArtifact(
     tokensCacheRead: number | null;
     tokensCacheCreation: number | null;
     tokensReasoning: number | null;
+    costUsd: number | null;
     requestType: string | null;
     sourceFormat: string | null;
     targetFormat: string | null;
@@ -321,6 +334,7 @@ function buildArtifact(
         cacheWrite: logEntry.tokensCacheCreation,
         reasoning: logEntry.tokensReasoning,
       },
+      costUsd: logEntry.costUsd,
       requestType: logEntry.requestType,
       sourceFormat: logEntry.sourceFormat,
       targetFormat: logEntry.targetFormat,
@@ -547,6 +561,7 @@ function mapSummaryRow(row: CallLogSummaryRow) {
       cacheWrite: row.tokens_cache_creation != null ? toNumber(row.tokens_cache_creation) : null,
       reasoning: row.tokens_reasoning != null ? toNumber(row.tokens_reasoning) : null,
     },
+    costUsd: row.cost_usd != null ? toNumber(row.cost_usd) : null,
     cacheSource: row.cache_source || "upstream",
     requestType: row.request_type,
     sourceFormat: row.source_format,
@@ -635,6 +650,9 @@ export async function saveCallLog(entry: any) {
       tokensCacheRead: getPromptCacheReadTokensOrNull(entry.tokens),
       tokensCacheCreation: getPromptCacheCreationTokensOrNull(entry.tokens),
       tokensReasoning: getReasoningTokensOrNull(entry.tokens),
+      costUsd:
+        toNumberOrNull(entry.costUsd ?? entry.cost_usd) ??
+        (entry.tokens ? await calculateCost(rawProvider, entry.model || "-", entry.tokens) : 0),
       cacheSource: entry.cacheSource === "semantic" ? "semantic" : "upstream",
       requestType: entry.requestType || null,
       sourceFormat: entry.sourceFormat || null,
@@ -687,7 +705,7 @@ export async function saveCallLog(entry: any) {
       INSERT INTO call_logs (
         id, timestamp, method, path, status, model, requested_model, provider,
         account, connection_id, duration, tokens_in, tokens_out,
-        tokens_cache_read, tokens_cache_creation, tokens_reasoning,
+        tokens_cache_read, tokens_cache_creation, tokens_reasoning, cost_usd,
         cache_source, request_type, source_format, target_format, api_key_id, api_key_name,
         combo_name, combo_step_id, combo_execution_key, error_summary, detail_state,
         artifact_relpath, artifact_size_bytes, artifact_sha256,
@@ -696,7 +714,7 @@ export async function saveCallLog(entry: any) {
       VALUES (
         @id, @timestamp, @method, @path, @status, @model, @requestedModel, @provider,
         @account, @connectionId, @duration, @tokensIn, @tokensOut,
-        @tokensCacheRead, @tokensCacheCreation, @tokensReasoning,
+        @tokensCacheRead, @tokensCacheCreation, @tokensReasoning, @costUsd,
         @cacheSource, @requestType, @sourceFormat, @targetFormat, @apiKeyId, @apiKeyName,
         @comboName, @comboStepId, @comboExecutionKey, @errorSummary, @detailState,
         @artifactRelPath, @artifactSizeBytes, @artifactSha256,
@@ -790,6 +808,13 @@ export async function getCallLogs(filter: any = {}) {
   if (filter.combo) {
     conditions.push("cl.combo_name IS NOT NULL");
   }
+  if (filter.since) {
+    const sinceDate = new Date(filter.since);
+    if (!Number.isNaN(sinceDate.getTime())) {
+      conditions.push("cl.timestamp >= @since");
+      params.since = sinceDate.toISOString();
+    }
+  }
   if (filter.search) {
     conditions.push(`(
       cl.model LIKE @searchQ OR cl.path LIKE @searchQ OR cl.account LIKE @searchQ OR
@@ -806,8 +831,10 @@ export async function getCallLogs(filter: any = {}) {
     sql += " WHERE " + conditions.join(" AND ");
   }
 
-  const limit = filter.limit || 200;
-  sql += ` ORDER BY cl.timestamp DESC LIMIT ${limit}`;
+  const parsedLimit = Number.parseInt(String(filter.limit || ""), 10);
+  const limit = Number.isInteger(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 1000) : 200;
+  sql += " ORDER BY cl.timestamp DESC LIMIT @limit";
+  params.limit = limit;
 
   const rows = db.prepare(sql).all(params) as CallLogSummaryRow[];
   return rows.map(mapSummaryRow);
@@ -823,9 +850,7 @@ export async function getCallLogById(id: string) {
        LEFT JOIN provider_nodes pn ON pn.id = cl.provider
        WHERE cl.id = ?`
     )
-    .get(id) as
-    | CallLogSummaryRow
-    | undefined;
+    .get(id) as CallLogSummaryRow | undefined;
   if (!row) return null;
 
   const entry = mapSummaryRow(row);

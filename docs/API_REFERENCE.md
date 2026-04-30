@@ -176,6 +176,70 @@ Management API routes are protected when login is required. They accept a valid 
 trusted internal backend integrations such as SLAI. The management token should be long,
 random, kept out of logs, and used only over HTTPS or a private network.
 
+### SLAI Backend Integration
+
+SLAI should run OmniRoute with:
+
+```bash
+REQUIRE_API_KEY=true
+ALLOW_API_KEY_REVEAL=false
+OMNIROUTE_MANAGEMENT_TOKEN=<long-random-shared-secret>
+```
+
+`OMNIROUTE_MANAGEMENT_TOKEN` is for trusted server-to-server calls only, such as the SLAI Go
+backend. Generate a long random value, never log it, and send it only over HTTPS or a private
+network.
+
+SLAI management calls use `Authorization: Bearer <OMNIROUTE_MANAGEMENT_TOKEN>`:
+
+| Method | Path             | Purpose                                      |
+| ------ | ---------------- | -------------------------------------------- |
+| POST   | `/api/keys`      | Create an OmniRoute API key for a SLAI user. |
+| GET    | `/api/keys`      | List safe API key metadata.                  |
+| GET    | `/api/keys/[id]` | Read safe API key metadata.                  |
+| PATCH  | `/api/keys/[id]` | Update metadata or disable a key.            |
+| DELETE | `/api/keys/[id]` | Revoke/delete a key.                         |
+
+`POST /api/keys` returns the raw key only in the create response. Later list and detail responses
+return safe metadata only, including stable `id`, `name`, `prefix`/`keyPrefix`, `maskedKey`,
+`createdAt`, `isActive`, and `status`. To suspend a key, call `PATCH /api/keys/[id]` with
+`isActive: false`; disabled keys are rejected for `/v1/*` calls when `REQUIRE_API_KEY=true`.
+
+SLAI syncs usage with:
+
+```http
+GET /api/usage/call-logs?limit=100&since=<timestamp>
+Authorization: Bearer <OMNIROUTE_MANAGEMENT_TOKEN>
+```
+
+Call log entries include stable sync fields and normalized cost:
+
+```ts
+type SlaiCallLog = {
+  id: string;
+  apiKeyId: string | null;
+  timestamp: string;
+  method: string;
+  path: string;
+  status: number;
+  provider: string;
+  model: string;
+  tokens: {
+    in: number;
+    out: number;
+    cacheRead: number | null;
+    cacheWrite: number | null;
+    reasoning: number | null;
+  };
+  costUsd: number | null;
+};
+```
+
+`costUsd` is the USD amount billed by OmniRoute for the event. OmniRoute stores the most accurate
+decimal it can compute from provider/model pricing and token usage, without rounding to SLAI
+credits. SLAI maps `1 USD of OmniRoute usage = 1 SLAI credit` and should round up to whole credits
+after reading `costUsd`.
+
 | Endpoint                      | Method  | Description           |
 | ----------------------------- | ------- | --------------------- |
 | `/api/auth/login`             | POST    | Login                 |

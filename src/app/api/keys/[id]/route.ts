@@ -10,6 +10,7 @@ import { syncToCloud } from "@/lib/cloudSync";
 import { updateKeyPermissionsSchema } from "@/shared/validation/schemas";
 import { isValidationFailure, validateBody } from "@/shared/validation/helpers";
 import { requireManagementAuth } from "@/lib/api/requireManagementAuth";
+import { toSafeApiKeyMetadata } from "@/lib/apiKeyExposure";
 import * as log from "@/sse/utils/logger";
 
 // GET /api/keys/[id] - Get single API key
@@ -25,12 +26,7 @@ export async function GET(request, { params }) {
       return NextResponse.json({ error: "Key not found" }, { status: 404 });
     }
 
-    // Mask the key value
-    const keyValue = typeof key.key === "string" ? key.key : null;
-    return NextResponse.json({
-      ...key,
-      key: keyValue ? keyValue.slice(0, 8) + "****" + keyValue.slice(-4) : null,
-    });
+    return NextResponse.json(toSafeApiKeyMetadata(key));
   } catch (error) {
     log.error("keys", "Error fetching key", error);
     return NextResponse.json({ error: "Failed to fetch key" }, { status: 500 });
@@ -92,8 +88,11 @@ export async function PATCH(request, { params }) {
     // Auto sync to Cloud if enabled
     await syncKeysToCloudIfEnabled();
 
+    const key = await getApiKeyById(id);
+
     return NextResponse.json({
       message: "API key settings updated successfully",
+      ...(key ? toSafeApiKeyMetadata(key) : {}),
       ...(name !== undefined && { name }),
       ...(allowedModels !== undefined && { allowedModels }),
       ...(allowedConnections !== undefined && { allowedConnections }),

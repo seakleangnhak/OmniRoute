@@ -232,6 +232,7 @@ const SCHEMA_SQL = `
     tokens_cache_read INTEGER DEFAULT NULL,
     tokens_cache_creation INTEGER DEFAULT NULL,
     tokens_reasoning INTEGER DEFAULT NULL,
+    cost_usd REAL DEFAULT NULL,
     cache_source TEXT DEFAULT "upstream",
     request_type TEXT,
     source_format TEXT,
@@ -518,6 +519,10 @@ function ensureCallLogsColumns(db: SqliteDatabase) {
     if (!columnNames.has("tokens_reasoning")) {
       db.exec("ALTER TABLE call_logs ADD COLUMN tokens_reasoning INTEGER DEFAULT NULL");
       console.log("[DB] Added call_logs.tokens_reasoning column");
+    }
+    if (!columnNames.has("cost_usd")) {
+      db.exec("ALTER TABLE call_logs ADD COLUMN cost_usd REAL DEFAULT NULL");
+      console.log("[DB] Added call_logs.cost_usd column");
     }
     if (!columnNames.has("cache_source")) {
       db.exec("ALTER TABLE call_logs ADD COLUMN cache_source TEXT DEFAULT 'upstream'");
@@ -837,6 +842,7 @@ function offloadLegacyCallLogDetails(db: SqliteDatabase) {
             cacheWrite: row.tokens_cache_creation ?? null,
             reasoning: row.tokens_reasoning ?? null,
           },
+          costUsd: null,
           requestType: row.request_type || null,
           sourceFormat: row.source_format || null,
           targetFormat: row.target_format || null,
@@ -1233,6 +1239,12 @@ export function getDbInstance(): SqliteDatabase {
     db.prepare("INSERT OR IGNORE INTO _omniroute_migrations (version, name) VALUES (?, ?)").run(
       "026",
       "call_logs_cache_source"
+    );
+  }
+  if (hasColumn(db, "call_logs", "cost_usd")) {
+    db.prepare("INSERT OR IGNORE INTO _omniroute_migrations (version, name) VALUES (?, ?)").run(
+      "034",
+      "call_log_cost_usd"
     );
   }
   if (

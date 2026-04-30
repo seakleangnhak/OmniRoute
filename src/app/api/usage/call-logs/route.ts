@@ -17,6 +17,7 @@ export async function GET(request: Request) {
     if (searchParams.get("apiKey")) filter.apiKey = searchParams.get("apiKey");
     if (searchParams.get("combo")) filter.combo = searchParams.get("combo");
     if (searchParams.get("search")) filter.search = searchParams.get("search");
+    if (searchParams.get("since")) filter.since = searchParams.get("since");
     if (searchParams.get("limit")) filter.limit = parseInt(searchParams.get("limit"));
 
     const logs = await getCallLogs(filter);

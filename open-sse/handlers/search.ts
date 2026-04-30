@@ -1085,6 +1085,7 @@ async function tryProvider(
       duration,
       requestType: "search",
       tokens: { prompt_tokens: 0, completion_tokens: 0 },
+      costUsd: config.costPerQuery,
       requestBody: { query: query.slice(0, 200), search_type: searchType, max_results: maxResults },
       responseBody: { results_count: results.length, cached: false },
     }).catch(() => {
