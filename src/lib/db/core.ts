@@ -346,6 +346,22 @@ const SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_sc_sig ON semantic_cache(signature);
   CREATE INDEX IF NOT EXISTS idx_sc_model ON semantic_cache(model);
+
+  CREATE TABLE IF NOT EXISTS quota_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL,
+    connection_id TEXT NOT NULL,
+    window_key TEXT NOT NULL,
+    remaining_percentage REAL,
+    is_exhausted INTEGER DEFAULT 0,
+    next_reset_at TEXT,
+    window_duration_ms INTEGER,
+    raw_data TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_quota_snapshots_provider_time ON quota_snapshots(provider, created_at);
+  CREATE INDEX IF NOT EXISTS idx_quota_snapshots_connection_time ON quota_snapshots(connection_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_quota_snapshots_created_at ON quota_snapshots(created_at);
 `;
 
 // ──────────────── Column Mapping ────────────────
@@ -616,17 +632,22 @@ function summarizeSkippedTables(tables: SkippedTableSnapshot[]): string {
 function listProbeFailureBackups(sqliteFile: string): string[] {
   const directory = path.dirname(sqliteFile);
   const baseName = path.basename(sqliteFile);
+  const prefix = `${baseName}.probe-failed-`;
   if (!fs.existsSync(directory)) return [];
 
   return fs
     .readdirSync(directory)
-    .filter((name) => name.startsWith(`${baseName}.probe-failed-`))
-    .map((name) => path.join(directory, name))
+    .filter((name) => name.startsWith(prefix))
+    .map((name) => ({
+      path: path.join(directory, name),
+      timestamp: Number(name.slice(prefix.length)),
+    }))
     .sort((left, right) => {
-      const leftMtime = fs.statSync(left).mtimeMs;
-      const rightMtime = fs.statSync(right).mtimeMs;
-      return rightMtime - leftMtime;
-    });
+      const leftTimestamp = Number.isFinite(left.timestamp) ? left.timestamp : 0;
+      const rightTimestamp = Number.isFinite(right.timestamp) ? right.timestamp : 0;
+      return rightTimestamp - leftTimestamp || right.path.localeCompare(left.path);
+    })
+    .map((backup) => backup.path);
 }
 
 function captureCriticalDbState(sqliteFile: string): PreservedCriticalDbState {
@@ -1010,11 +1031,20 @@ export function getDbInstance(): SqliteDatabase {
   const jsonDbFile = JSON_DB_FILE;
   const probeFailureBackups = listProbeFailureBackups(sqliteFile);
   if (!fs.existsSync(sqliteFile) && probeFailureBackups.length > 0) {
-    throw new Error(
-      `[DB] Manual recovery required before startup. ` +
-        `Detected preserved database from a previous probe failure: ${probeFailureBackups[0]}. ` +
-        `Restore the preserved file or another backup to ${sqliteFile} before restarting.`
-    );
+    const latestBackup = probeFailureBackups[0];
+    try {
+      fs.renameSync(latestBackup, sqliteFile);
+      console.log(
+        `[DB] Auto-restored preserved database from previous probe failure: ${path.basename(latestBackup)}`
+      );
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `[DB] Manual recovery required before startup. ` +
+          `Failed to auto-restore preserved database ${latestBackup}: ${msg}. ` +
+          `Restore the preserved file or another backup to ${sqliteFile} before restarting.`
+      );
+    }
   }
 
   let preservedCriticalState: PreservedCriticalDbState = {
@@ -1243,7 +1273,7 @@ export function getDbInstance(): SqliteDatabase {
   }
   if (hasColumn(db, "call_logs", "cost_usd")) {
     db.prepare("INSERT OR IGNORE INTO _omniroute_migrations (version, name) VALUES (?, ?)").run(
-      "034",
+      "040",
       "call_log_cost_usd"
     );
   }

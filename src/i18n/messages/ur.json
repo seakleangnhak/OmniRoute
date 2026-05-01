@@ -826,7 +826,9 @@
     "modelStatusUnavailable": "Unavailable",
     "modelStatusError": "Error",
     "comboHealth": "Combo Health",
-    "comboHealthDescription": "Combo-level quota, usage distribution, and performance metrics"
+    "comboHealthDescription": "Combo-level quota, usage distribution, and performance metrics",
+    "compressionAnalyticsTitle": "Compression",
+    "compressionAnalyticsDescription": "Compression analytics - token savings, mode breakdown, and provider stats."
   },
   "apiManager": {
     "title": "API Keys",
@@ -1832,6 +1834,7 @@
     "disableCloud": "Disable Cloud",
     "enableCloud": "Enable Cloud",
     "modelsAcrossEndpoints": "{models} models across {endpoints} endpoints",
+    "loadingModels": "Loading available models...",
     "chatDesc": "Streaming & non-streaming chat with all providers",
     "embeddings": "Embeddings",
     "embeddingsDesc": "Text embeddings for search & RAG pipelines",
@@ -2322,7 +2325,18 @@
     "clientPayload": "Client Request Payload",
     "upstreamPayload": "Upstream Provider Payload",
     "upstreamNotSentYet": "Not sent to upstream yet",
-    "runningRequestDetailMeta": "Account: {account} — Elapsed: {elapsed}"
+    "runningRequestDetailMeta": "Account: {account} — Elapsed: {elapsed}",
+    "consoleViewer": {
+      "fetchFailed": "Failed to fetch logs",
+      "copyFailed": "Failed to copy log entry",
+      "copyLogEntry": "Copy log entry"
+    },
+    "export": "Export",
+    "exporting": "Exporting...",
+    "exportFailed": "Export failed",
+    "timeRange": "Time Range",
+    "lastNHours": "Last {hours}",
+    "defaultRange": "default"
   },
   "onboarding": {
     "welcome": "Welcome",
@@ -2843,7 +2857,9 @@
     "zedImportNetworkError": "Zed Import Network Error",
     "zedImportNone": "Zed Import None",
     "zedImportSuccess": "Zed Import Success",
-    "zedImporting": "Zed Importing"
+    "zedImporting": "Zed Importing",
+    "expiredBadge": "Expired",
+    "expiringSoonBadge": "Expiring Soon"
   },
   "settings": {
     "title": "Settings",
@@ -3396,7 +3412,33 @@
     "pricingResetProvider": "Pricing reset for {provider}",
     "nextSync": "Next Sync",
     "pricingSyncFailedWithReason": "Pricing sync failed: {reason}",
-    "clearSyncedPricing": "Clear Synced Pricing"
+    "clearSyncedPricing": "Clear Synced Pricing",
+    "compressionTitle": "Prompt Compression",
+    "compressionDesc": "Reduce token usage by compressing prompts before sending to providers",
+    "compressionMode": "Compression Mode",
+    "compressionModeOff": "Off",
+    "compressionModeOffDesc": "No compression applied",
+    "compressionModeLite": "Lite",
+    "compressionModeLiteDesc": "Whitespace and blank line reduction",
+    "compressionModeStandard": "Standard (Caveman)",
+    "compressionModeStandardDesc": "Rule-based compression with 30+ patterns, preserves code blocks and URLs",
+    "compressionGeneral": "General Settings",
+    "compressionAutoTrigger": "Auto-Trigger Threshold",
+    "compressionCacheTTL": "Cache TTL",
+    "compressionPreserveSystem": "Preserve System Prompt",
+    "compressionCavemanConfig": "Caveman Engine Configuration",
+    "compressionCavemanConfigDesc": "Fine-tune the rule-based compression engine",
+    "compressionRoles": "Compress Message Roles",
+    "compressionRoleUser": "User",
+    "compressionRoleAssistant": "Assistant",
+    "compressionRoleSystem": "System",
+    "compressionMinLength": "Minimum Message Length",
+    "compressionSkipRules": "Skip Compression Rules",
+    "compressionSkipRulesDesc": "Click rules to skip them during compression",
+    "compressionPreservePatterns": "Preserve Patterns",
+    "compressionPreservePatternsDesc": "Regex patterns that are never compressed (one per line)",
+    "compressionLogTitle": "Compression Log",
+    "compressionLogEmpty": "No compressed requests yet. Compression stats will appear here when requests are processed with compression enabled."
   },
   "translator": {
     "title": "Translator",
@@ -4190,7 +4232,9 @@
     "protocolAcpDesc": "Register and manage agents via the ACP registry for inter-agent communication and tool sharing.",
     "protocolAcpStep1": "Navigate to Dashboard → Agents to view registered ACP agents.",
     "protocolAcpStep2": "Register new agents with capabilities and endpoint configuration.",
-    "protocolAcpStep3": "Use CLI Tools to configure agent communication channels."
+    "protocolAcpStep3": "Use CLI Tools to configure agent communication channels.",
+    "deployTermuxTitle": "Termux (Android)",
+    "deployTermuxText": "Run OmniRoute headless on Android via Termux. Access the dashboard from your mobile browser."
   },
   "legal": {
     "privacyPolicy": "Privacy Policy",
@@ -4686,7 +4730,20 @@
     "loadingLogs": "Loading logs...",
     "noLogs": "No logs yet. Make some API calls to see them here.",
     "noMatchingLogs": "No logs matching current filters.",
-    "callLogsInfo": "Call logs are also saved as JSON files to {dataDir} and rotated based on {retentionDays} and {maxEntries}."
+    "callLogsInfo": "Call logs are also saved as JSON files to {dataDir} and rotated based on {retentionDays} and {maxEntries}.",
+    "updatePipelineFailed": "Failed to update pipeline logging",
+    "capturePipeline": "Capture pipeline payloads for new requests",
+    "sortLogs": "Sort logs",
+    "refresh": "Refresh",
+    "columnsLabel": "Columns",
+    "cacheSem": "SEM",
+    "cacheUp": "UP",
+    "semantic": "Semantic",
+    "upstream": "Upstream",
+    "semanticCacheHit": "Semantic cache hit (served by OmniRoute)",
+    "upstreamResponse": "Upstream provider response",
+    "noApiKey": "No API key",
+    "requestedRoutedTitle": "Requested {requested}, routed as {routed}"
   },
   "endpointOptions": {
     "speech": "Speech",
@@ -4707,5 +4764,42 @@
     "codex": "Codex",
     "claude": "Claude",
     "kilo": "Kilo"
+  },
+  "proxyLogger": {
+    "filterAll": "All",
+    "filterErrors": "Errors",
+    "filterSuccess": "Success",
+    "filterTimeout": "Timeout",
+    "colStatus": "Status",
+    "colProxy": "Proxy",
+    "colTls": "TLS",
+    "colType": "Type",
+    "colLevel": "Level",
+    "colProvider": "Provider",
+    "colTarget": "Target",
+    "colLatency": "Latency",
+    "colPublicIp": "Public IP",
+    "colTime": "Time",
+    "recording": "Recording",
+    "paused": "Paused",
+    "searchPlaceholder": "Search host, provider, target, IP...",
+    "allTypes": "All Types",
+    "allLevels": "All Levels",
+    "allProviders": "All Providers",
+    "total": "total",
+    "ok": "OK",
+    "err": "ERR",
+    "timeoutShort": "TMO",
+    "direct": "direct",
+    "newest": "Newest",
+    "oldest": "Oldest",
+    "latencyDesc": "Latency ↓",
+    "latencyAsc": "Latency ↑",
+    "refresh": "Refresh",
+    "columns": "Columns",
+    "loadingProxyLogs": "Loading proxy logs...",
+    "noProxyLogs": "No proxy logs yet. Configure proxies and make API calls to see them here.",
+    "noMatchingLogs": "No logs match the current filters.",
+    "tlsFingerprint": "Chrome 124 TLS Fingerprint"
   }
 }

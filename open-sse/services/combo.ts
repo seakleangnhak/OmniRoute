@@ -8,6 +8,8 @@ import {
   checkFallbackError,
   formatRetryAfter,
   getRuntimeProviderProfile,
+  recordProviderFailure,
+  isProviderFailureCode,
 } from "./accountFallback.ts";
 import { errorResponse, unavailableResponse } from "../utils/error.ts";
 import { recordComboIntent, recordComboRequest, getComboMetrics } from "./comboMetrics.ts";
@@ -127,7 +129,7 @@ function toTrimmedString(value): string | null {
  * 1. Body is valid JSON
  * 2. Has at least one choice with non-empty content or tool_calls
  */
-async function validateResponseQuality(
+export async function validateResponseQuality(
   response: Response,
   isStreaming: boolean,
   log: { warn?: (...args: unknown[]) => void }
@@ -161,7 +163,7 @@ async function validateResponseQuality(
   try {
     json = JSON.parse(text);
   } catch {
-    if (text.startsWith("data:")) return { valid: true };
+    if (text.startsWith("data:") || text.startsWith("event:")) return { valid: true };
     return { valid: false, reason: "response is not valid JSON" };
   }
 
@@ -1673,6 +1675,11 @@ export async function handleComboChat({
         result.headers,
         profile
       );
+
+      // Trigger shared provider circuit breaker for 5xx errors and connection failures
+      if (isProviderFailureCode(result.status)) {
+        recordProviderFailure(provider, log);
+      }
 
       // Check if this is a transient error worth retrying on same model
       const isTransient =

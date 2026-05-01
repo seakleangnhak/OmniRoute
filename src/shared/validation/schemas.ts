@@ -81,6 +81,15 @@ function validateProviderSpecificData(
     });
   }
 
+  const disableStreamOptions = data.disableStreamOptions;
+  if (disableStreamOptions !== undefined && typeof disableStreamOptions !== "boolean") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "providerSpecificData.disableStreamOptions must be a boolean",
+      path: ["disableStreamOptions"],
+    });
+  }
+
   const requestDefaults = data.requestDefaults;
   if (requestDefaults !== undefined) {
     if (!requestDefaults || typeof requestDefaults !== "object" || Array.isArray(requestDefaults)) {
@@ -360,6 +369,9 @@ const compositeTiersSchema = z
   })
   .strict();
 
+const compressionModeSchema = z.enum(["off", "lite", "standard", "aggressive", "ultra"]);
+const comboCompressionOverrideSchema = z.union([z.literal(""), compressionModeSchema]);
+
 const comboRuntimeConfigSchema = z
   .object({
     strategy: comboStrategySchema.optional(),
@@ -376,6 +388,7 @@ const comboRuntimeConfigSchema = z
     maxMessagesForSummary: z.coerce.number().int().min(5).max(100).optional(),
     maxComboDepth: z.coerce.number().int().min(1).max(10).optional(),
     trackMetrics: z.boolean().optional(),
+    compressionMode: compressionModeSchema.optional(),
     // Auto-Combo / LKGP Extensions
     candidatePool: z.array(z.string().min(1)).optional(),
     weights: scoringWeightsSchema.optional(),
@@ -436,6 +449,9 @@ export const updateSettingsSchema = z.object({
   setupComplete: z.boolean().optional(),
   blockedProviders: z.array(z.string().max(100)).optional(),
   hideHealthCheckLogs: z.boolean().optional(),
+  hideEndpointCloudflaredTunnel: z.boolean().optional(),
+  hideEndpointTailscaleFunnel: z.boolean().optional(),
+  hideEndpointNgrokTunnel: z.boolean().optional(),
   bruteForceProtection: z.boolean().optional(),
   hiddenSidebarItems: z.array(z.enum(HIDEABLE_SIDEBAR_ITEM_IDS)).optional(),
   comboConfigMode: z.enum(COMBO_CONFIG_MODES).optional(),
@@ -1209,20 +1225,8 @@ const nonEmptyJsonRecordSchema = jsonRecordSchema.refine(
   "Body must be a non-empty object"
 );
 
-const translatorLogFileSchema = z.enum([
-  "1_req_client.json",
-  "3_req_openai.json",
-  "4_req_target.json",
-  "5_res_provider.txt",
-]);
-
 export const translatorDetectSchema = z.object({
   body: nonEmptyJsonRecordSchema,
-});
-
-export const translatorSaveSchema = z.object({
-  file: translatorLogFileSchema,
-  content: z.string().min(1, "Content is required").max(1_000_000, "Content is too large"),
 });
 
 export const translatorSendSchema = z.object({
@@ -1330,6 +1334,7 @@ export const updateComboSchema = z
     tool_filter_regex: z.string().max(1000).optional(),
     context_cache_protection: z.boolean().optional(),
     context_length: z.number().int().min(1000).max(2000000).optional(),
+    compressionOverride: comboCompressionOverrideSchema.optional(),
   })
   .superRefine((value, ctx) => {
     if (
@@ -1342,7 +1347,8 @@ export const updateComboSchema = z
       value.system_message === undefined &&
       value.tool_filter_regex === undefined &&
       value.context_cache_protection === undefined &&
-      value.context_length === undefined
+      value.context_length === undefined &&
+      value.compressionOverride === undefined
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -1589,6 +1595,8 @@ export const providersBatchTestSchema = z
       "web-cookie",
       "search",
       "audio",
+      "local",
+      "upstream-proxy",
     ]),
     // Frontend may send null when mode != 'provider' — accept and treat as missing
     providerId: z.string().trim().min(1).nullable().optional(),
