@@ -133,9 +133,8 @@ const KIMI_CODING_SHARED = {
     "Anthropic-Beta": ANTHROPIC_BETA_API_KEY,
   },
   models: [
-    { id: "kimi-k2.5", name: "Kimi K2.5" },
-    { id: "kimi-k2.5-thinking", name: "Kimi K2.5 Thinking" },
-    { id: "kimi-latest", name: "Kimi Latest" },
+    { id: "kimi-k2.6", name: "Kimi K2.6" },
+    { id: "kimi-k2.6-thinking", name: "Kimi K2.6 Thinking" },
   ] as RegistryModel[],
 } as const;
 
@@ -384,11 +383,9 @@ export const REGISTRY: Record<string, RegistryEntry> = {
       tokenUrl: "https://auth.openai.com/oauth/token",
     },
     models: [
-      { id: "codex-auto-review", name: "Codex Auto Review", targetFormat: "openai-responses" },
       { id: "gpt-5.5-xhigh", name: "GPT 5.5 (xHigh)", ...GPT_5_5_CODEX_CAPABILITIES },
       { id: "gpt-5.5-high", name: "GPT 5.5 (High)", ...GPT_5_5_CODEX_CAPABILITIES },
       { id: "gpt-5.5-medium", name: "GPT 5.5 (Medium)", ...GPT_5_5_CODEX_CAPABILITIES },
-      { id: "gpt-5.5", name: "GPT 5.5", ...GPT_5_5_CODEX_CAPABILITIES },
       { id: "gpt-5.5-low", name: "GPT 5.5 (Low)", ...GPT_5_5_CODEX_CAPABILITIES },
       { id: "gpt-5.4", name: "GPT 5.4", targetFormat: "openai-responses" },
       { id: "gpt-5.4-mini", name: "GPT 5.4 Mini", targetFormat: "openai-responses" },
@@ -493,10 +490,7 @@ export const REGISTRY: Record<string, RegistryEntry> = {
     models: [
       { id: "gpt-4.1", name: "GPT-4.1" },
       { id: "gpt-5-mini", name: "GPT-5 Mini" },
-      { id: "gpt-5.2", name: "GPT-5.2" },
-      { id: "gpt-5.2-codex", name: "GPT-5.2 Codex", targetFormat: "openai-responses" },
       { id: "gpt-5.3-codex", name: "GPT-5.3 Codex", targetFormat: "openai-responses" },
-      { id: "gpt-5.4-nano", name: "GPT-5.4 Nano", targetFormat: "openai-responses" },
       { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", targetFormat: "openai-responses" },
       { id: "gpt-5.4", name: "GPT-5.4", targetFormat: "openai-responses" },
       { id: "gpt-5.5", name: "GPT-5.5", ...GPT_5_5_CODEX_CAPABILITIES },
@@ -510,7 +504,7 @@ export const REGISTRY: Record<string, RegistryEntry> = {
       { id: "gemini-3-flash-preview", name: "Gemini 3 Flash" },
       { id: "grok-code-fast-1", name: "Grok Code Fast 1" },
       { id: "oswe-vscode-prime", name: "Raptor Mini" },
-      //{id: "?", name: "Goldeneye" },
+      //{ id: "?", name: "Goldeneye" },
     ],
   },
 
@@ -672,17 +666,39 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   agentrouter: {
     id: "agentrouter",
     alias: "agentrouter",
-    format: "openai",
+    format: "claude",
     executor: "default",
-    baseUrl: "https://agentrouter.org/v1/chat/completions",
+    baseUrl: "https://agentrouter.org/v1/messages",
     authType: "apikey",
-    authHeader: "bearer",
+    authHeader: "x-api-key",
     defaultContextLength: 128000,
     headers: {
-      "HTTP-Referer": "https://endpoint-proxy.local",
-      "X-Title": "OmniRoute",
+      "Anthropic-Version": ANTHROPIC_VERSION_HEADER,
+      "Anthropic-Beta": ANTHROPIC_BETA_CLAUDE_OAUTH,
+      "Anthropic-Dangerous-Direct-Browser-Access": "true",
+      "User-Agent": CLAUDE_CLI_USER_AGENT,
+      "X-App": "cli",
+      "X-Stainless-Helper-Method": "stream",
+      "X-Stainless-Retry-Count": "0",
+      "X-Stainless-Runtime-Version": CLAUDE_CLI_STAINLESS_RUNTIME_VERSION,
+      "X-Stainless-Package-Version": CLAUDE_CLI_STAINLESS_PACKAGE_VERSION,
+      "X-Stainless-Runtime": "node",
+      "X-Stainless-Lang": "js",
+      "X-Stainless-Arch": mapStainlessArch(),
+      "X-Stainless-Os": mapStainlessOs(),
+      "X-Stainless-Timeout": "600",
     },
-    models: [{ id: "auto", name: "Auto (Best Available)" }],
+    models: [
+      { id: "claude-haiku-4-5-20251001", name: "Claude 4.5 Haiku" },
+      { id: "claude-opus-4-6", name: "Claude 4.6 Opus" },
+      { id: "deepseek-r1-0528", name: "DeepSeek R1 0528" },
+      { id: "deepseek-v3.1", name: "DeepSeek V3.1" },
+      { id: "deepseek-v3.2", name: "DeepSeek V3.2" },
+      { id: "glm-4.5", name: "GLM 4.5" },
+      { id: "glm-4.6", name: "GLM 4.6" },
+      { id: "glm-5.1", name: "GLM 5.1" },
+    ],
+    passthroughModels: true,
   },
 
   openrouter: {
@@ -1105,10 +1121,11 @@ export const REGISTRY: Record<string, RegistryEntry> = {
     models: [
       { id: "gpt-5.5-pro", name: "GPT-5.5 Pro" }, //pro tier only
       { id: "gpt-5.5-thinking", name: "GPT-5.5 Thinking" }, //plus, pro tier
+      { id: "gpt-5.5", name: "GPT-5.5 Instant" }, //free, plus, pro tier
       { id: "gpt-5.4-pro", name: "GPT-5.4 Pro" }, //pro tier only
       { id: "gpt-5.4-thinking", name: "GPT-5.4 Thinking" }, //plus, pro tier
       { id: "gpt-5.4-thinking-mini", name: "GPT-5.4 Thinking Mini" }, //free-login only
-      { id: "gpt-5.3", name: "GPT-5.3" }, //free, free-login, plus, pro tier
+      { id: "gpt-5.3", name: "GPT-5.3 Instant" }, //free, free-login, plus, pro tier
       { id: "gpt-5.3-mini", name: "GPT-5.3 Mini" }, //limit fallback
       { id: "gpt-5.2-pro", name: "GPT-5.2 Pro" }, //pro tier only
       { id: "gpt-5.2-thinking", name: "GPT-5.2 Thinking" }, //plus ~ tier
@@ -2059,6 +2076,20 @@ export const REGISTRY: Record<string, RegistryEntry> = {
     models: [
       { id: "Hermes-4-405B", name: "Hermes 4 7B (Nous Research)" },
       { id: "Hermes-4-70B", name: "Hermes 4 70B (Nous Research)" },
+    ],
+  },
+
+  reka: {
+    id: "reka",
+    alias: "reka",
+    format: "openai",
+    executor: "default",
+    baseUrl: "https://api.reka.ai/v1/chat/completions",
+    authType: "apikey",
+    authHeader: "bearer",
+    models: [
+      { id: "reka-flash-3", name: "Reka Flash 3" },
+      { id: "reka-edge-2603", name: "Reka Edge 2603" },
     ],
   },
 };

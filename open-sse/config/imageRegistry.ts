@@ -131,11 +131,7 @@ export const IMAGE_PROVIDERS: Record<string, ImageProviderConfig> = {
     authType: "oauth",
     authHeader: "bearer",
     format: "codex-responses",
-    models: [
-      { id: "gpt-5.5", name: "GPT 5.5 (Codex Image)" },
-      { id: "gpt-5.4", name: "GPT 5.4 (Codex Image)" },
-      { id: "gpt-5.3-codex", name: "GPT 5.3 Codex (Image)" },
-    ],
+    models: [{ id: "gpt-5.5", name: "GPT 5.5 (Codex Image)" }],
     supportedSizes: ["1024x1024", "1024x1536", "1536x1024"],
   },
 
@@ -156,7 +152,10 @@ export const IMAGE_PROVIDERS: Record<string, ImageProviderConfig> = {
     authType: "apikey",
     authHeader: "bearer",
     format: "openai",
-    models: [{ id: "grok-imagine-image", name: "Grok Imagine Image" }],
+    models: [
+      { id: "grok-imagine-image-pro", name: "Grok Imagine Image Pro" },
+      { id: "grok-imagine-image", name: "Grok Imagine Image" },
+    ],
     supportedSizes: ["1024x1024"],
   },
 
@@ -436,6 +435,20 @@ export const IMAGE_PROVIDERS: Record<string, ImageProviderConfig> = {
     format: "topaz",
     models: [{ id: "topaz-enhance", name: "topaz-enhance", inputModalities: ["image"] }],
     supportedSizes: ["1024x1024"],
+  },
+  nanogpt: {
+    id: "nanogpt",
+    baseUrl: "https://nano-gpt.com/api/v1/images/generations",
+    authType: "apikey",
+    authHeader: "bearer",
+    format: "openai",
+    models: [
+      { id: "qwen-image", name: "Qwen Image", inputModalities: ["text", "image"] },
+      { id: "z-image-turbo", name: "Z Image Turbo" },
+      { id: "chroma", name: "Chroma" },
+      { id: "hidream", name: "Hidream I1 Full" },
+    ],
+    supportedSizes: ["1024x1024", "1024x1280", "1280x1024"],
   },
 };
 

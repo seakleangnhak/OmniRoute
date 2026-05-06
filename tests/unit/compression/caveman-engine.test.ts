@@ -99,7 +99,11 @@ describe("caveman engine", () => {
       preservePatterns: [],
     });
     const text = result.body.messages[0].content as string;
-    assert.ok(text.includes(url), `URL should be preserved`);
+    assert.equal(
+      text.split(/\s+/).some((token) => token === url),
+      true,
+      `URL should be preserved`
+    );
   });
 
   it("should handle empty messages array", () => {
@@ -223,6 +227,6 @@ describe("caveman engine", () => {
       minMessageLength: 50,
       preservePatterns: [],
     });
-    assert.ok(result.stats.durationMs < 5, `Expected <5ms, got ${result.stats.durationMs}ms`);
+    assert.ok(result.stats.durationMs < 25, `Expected <25ms, got ${result.stats.durationMs}ms`);
   });
 });

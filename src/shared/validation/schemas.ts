@@ -1,5 +1,10 @@
 import { z } from "zod";
+import {
+  ACCOUNT_FALLBACK_STRATEGY_VALUES,
+  ROUTING_STRATEGY_VALUES,
+} from "@/shared/constants/routingStrategies";
 import { SUPPORTED_BATCH_ENDPOINTS } from "@/shared/constants/batchEndpoints";
+import { MAX_REQUEST_BODY_LIMIT_MB, MIN_REQUEST_BODY_LIMIT_MB } from "@/shared/constants/bodySize";
 import { COMBO_CONFIG_MODES } from "@/shared/constants/comboConfigMode";
 import { isLocalProvider } from "@/shared/constants/providers";
 import { HIDEABLE_SIDEBAR_ITEM_IDS } from "@/shared/constants/sidebarVisibility";
@@ -324,22 +329,7 @@ const comboModelEntry = z.union([
   comboRefStepInputSchema,
 ]);
 
-export const comboStrategySchema = z.enum([
-  "priority",
-  "weighted",
-  "round-robin",
-  "context-relay",
-  "random",
-  "least-used",
-  "cost-optimized",
-  "strict-random",
-  "auto",
-  "fill-first",
-  // #729 schema fixes for combo edit/save
-  "p2c",
-  "lkgp",
-  "context-optimized",
-]);
+export const comboStrategySchema = z.enum(ROUTING_STRATEGY_VALUES);
 
 const scoringWeightsSchema = z
   .object({
@@ -369,7 +359,15 @@ const compositeTiersSchema = z
   })
   .strict();
 
-const compressionModeSchema = z.enum(["off", "lite", "standard", "aggressive", "ultra"]);
+const compressionModeSchema = z.enum([
+  "off",
+  "lite",
+  "standard",
+  "aggressive",
+  "ultra",
+  "rtk",
+  "stacked",
+]);
 const comboCompressionOverrideSchema = z.union([z.literal(""), compressionModeSchema]);
 
 const comboRuntimeConfigSchema = z
@@ -419,21 +417,7 @@ export const createComboSchema = z.object({
 // ──── Settings Schemas ────
 // FASE-01: Removed .passthrough() — only explicitly listed fields are accepted
 
-const settingsFallbackStrategySchema = z.enum([
-  "priority",
-  "weighted",
-  "round-robin",
-  "context-relay",
-  "fill-first",
-  "p2c",
-  "random",
-  "least-used",
-  "cost-optimized",
-  "strict-random",
-  "auto",
-  "context-optimized",
-  "lkgp",
-]);
+const settingsFallbackStrategySchema = z.enum(ACCOUNT_FALLBACK_STRATEGY_VALUES);
 
 export const updateSettingsSchema = z.object({
   newPassword: z.string().min(1).max(200).optional(),
@@ -461,6 +445,12 @@ export const updateSettingsSchema = z.object({
   stickyRoundRobinLimit: z.number().int().min(0).max(1000).optional(),
   requestRetry: z.number().int().min(0).max(10).optional(),
   maxRetryIntervalSec: z.number().int().min(0).max(300).optional(),
+  maxBodySizeMb: z
+    .number()
+    .int()
+    .min(MIN_REQUEST_BODY_LIMIT_MB)
+    .max(MAX_REQUEST_BODY_LIMIT_MB)
+    .optional(),
   // Auto intent classifier settings (multilingual routing)
   intentDetectionEnabled: z.boolean().optional(),
   intentSimpleMaxWords: z.number().int().min(1).max(500).optional(),
@@ -699,6 +689,7 @@ export const providerModelMutationSchema = z.object({
       "chat-completions",
       "responses",
       "embeddings",
+      "rerank",
       "audio-transcriptions",
       "audio-speech",
       "images-generations",
@@ -709,6 +700,7 @@ export const providerModelMutationSchema = z.object({
       z.enum([
         "chat",
         "embeddings",
+        "rerank",
         "images",
         "audio",
         "audio-transcriptions",

@@ -7,7 +7,7 @@ import {
 import { createErrorResponse } from "@/lib/api/errorResponse";
 
 export async function requireManagementAuth(request: Request): Promise<Response | null> {
-  if (!(await isAuthRequired())) {
+  if (!(await isAuthRequired(request))) {
     return null;
   }
 

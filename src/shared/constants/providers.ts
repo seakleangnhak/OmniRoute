@@ -19,9 +19,8 @@ export const FREE_PROVIDERS = {
     name: "Gemini CLI",
     icon: "terminal",
     color: "#4285F4",
-    deprecated: true,
-    deprecationReason:
-      "Google restricts third-party OAuth usage for Gemini CLI (Mar 2026). Pro models require paid plans. Use 'gemini' (API key) provider instead.",
+    authHint:
+      "Uses Gemini CLI OAuth / Cloud Code credentials. Pro models require an eligible Google account or paid plan.",
   },
   kiro: { id: "kiro", alias: "kr", name: "Kiro AI", icon: "psychology_alt", color: "#FF6B35" },
   "amazon-q": {
@@ -409,7 +408,6 @@ export const APIKEY_PROVIDERS = {
       "Reka Chat is OpenAI-compatible on /v1. OmniRoute probes /v1/models and routes chat traffic to /v1/chat/completions.",
     hasFree: true,
     freeNote: "$10/month recurring free API credits",
-    passthroughModels: true,
   },
   nlpcloud: {
     id: "nlpcloud",

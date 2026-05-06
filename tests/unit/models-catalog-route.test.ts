@@ -14,6 +14,7 @@ const modelsDb = await import("../../src/lib/db/models.ts");
 const combosDb = await import("../../src/lib/db/combos.ts");
 const settingsDb = await import("../../src/lib/db/settings.ts");
 const apiKeysDb = await import("../../src/lib/db/apiKeys.ts");
+const modelsDevSync = await import("../../src/lib/modelsDevSync.ts");
 const v1ModelsCatalog = await import("../../src/app/api/v1/models/catalog.ts");
 
 async function resetStorage() {
@@ -473,6 +474,103 @@ test("v1 models catalog includes media, moderation, rerank, video, and music mod
   assert.equal((byId.get("comfyui/stable-audio-open") as any).type, "music");
 });
 
+test("v1 models catalog does not duplicate imported Jina specialty models", async () => {
+  const connection = await seedConnection("jina-ai", {
+    name: "jina-synced",
+    apiKey: "jina-key",
+  });
+
+  await modelsDb.replaceSyncedAvailableModelsForConnection("jina-ai", (connection as any).id, [
+    {
+      id: "jina-embeddings-v5-text-small",
+      name: "Jina Embeddings v5 Text Small",
+      source: "imported",
+      apiFormat: "embeddings",
+      supportedEndpoints: ["embeddings"],
+    },
+    {
+      id: "jina-reranker-v3",
+      name: "Jina Reranker v3",
+      source: "imported",
+      apiFormat: "rerank",
+      supportedEndpoints: ["rerank"],
+    },
+  ]);
+
+  const response = await v1ModelsCatalog.getUnifiedModelsResponse(
+    new Request("http://localhost/api/v1/models")
+  );
+  const body = (await response.json()) as any;
+  const visibleJinaEmbeddingRows = body.data.filter(
+    (item) =>
+      item.owned_by === "jina-ai" &&
+      item.root === "jina-embeddings-v5-text-small" &&
+      item.type === "embedding" &&
+      !item.parent
+  );
+  const visibleJinaRerankRows = body.data.filter(
+    (item) =>
+      item.owned_by === "jina-ai" &&
+      item.root === "jina-reranker-v3" &&
+      item.type === "rerank" &&
+      !item.parent
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(visibleJinaEmbeddingRows.length, 1);
+  assert.equal(visibleJinaEmbeddingRows[0].id, "jina/jina-embeddings-v5-text-small");
+  assert.equal(visibleJinaRerankRows.length, 1);
+  assert.equal(visibleJinaRerankRows[0].id, "jina/jina-reranker-v3");
+});
+
+test("v1 models catalog does not duplicate custom Jina specialty models", async () => {
+  await seedConnection("jina-ai", {
+    name: "jina-custom",
+    apiKey: "jina-key",
+  });
+  await modelsDb.addCustomModel(
+    "jina-ai",
+    "jina-embeddings-v5-text-small",
+    "Jina Embeddings v5 Text Small",
+    "imported",
+    "embeddings",
+    ["embeddings"]
+  );
+  await modelsDb.addCustomModel(
+    "jina-ai",
+    "jina-reranker-v3",
+    "Jina Reranker v3",
+    "imported",
+    "rerank",
+    ["rerank"]
+  );
+
+  const response = await v1ModelsCatalog.getUnifiedModelsResponse(
+    new Request("http://localhost/api/v1/models")
+  );
+  const body = (await response.json()) as any;
+  const visibleJinaEmbeddingRows = body.data.filter(
+    (item) =>
+      item.owned_by === "jina-ai" &&
+      item.root === "jina-embeddings-v5-text-small" &&
+      item.type === "embedding" &&
+      !item.parent
+  );
+  const visibleJinaRerankRows = body.data.filter(
+    (item) =>
+      item.owned_by === "jina-ai" &&
+      item.root === "jina-reranker-v3" &&
+      item.type === "rerank" &&
+      !item.parent
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(visibleJinaEmbeddingRows.length, 1);
+  assert.equal(visibleJinaEmbeddingRows[0].id, "jina-ai/jina-embeddings-v5-text-small");
+  assert.equal(visibleJinaRerankRows.length, 1);
+  assert.equal(visibleJinaRerankRows[0].id, "jina-ai/jina-reranker-v3");
+});
+
 test("v1 models catalog exposes image model input and output modalities for advanced image providers", async () => {
   await seedConnection("together", { name: "together-images" });
   await seedConnection("topaz", { name: "topaz-images" });
@@ -590,6 +688,99 @@ test("v1 models catalog exposes provider-prefixed custom models, filters by raw 
   assert.deepEqual(shortAlias.supported_endpoints, ["images"]);
   assert.equal(shortAlias.context_length, 1234);
   assert.equal(providerAlias.parent, "cl/demo-custom");
+});
+
+test("v1 models catalog uses synced models.dev limits instead of provider defaults", async () => {
+  await seedConnection("openai", { name: "openai-models-dev" });
+
+  try {
+    modelsDevSync.saveModelsDevCapabilities({
+      openai: {
+        "gpt-5.5": {
+          tool_call: true,
+          reasoning: true,
+          attachment: true,
+          structured_output: true,
+          temperature: true,
+          modalities_input: JSON.stringify(["text", "image"]),
+          modalities_output: JSON.stringify(["text"]),
+          knowledge_cutoff: null,
+          release_date: null,
+          last_updated: null,
+          status: null,
+          family: "gpt-5",
+          open_weights: false,
+          limit_context: 1050000,
+          limit_input: 1050000,
+          limit_output: 128000,
+          interleaved_field: null,
+        },
+      },
+    });
+
+    const response = await v1ModelsCatalog.getUnifiedModelsResponse(
+      new Request("http://localhost/api/v1/models")
+    );
+    const body = (await response.json()) as any;
+    const model = body.data.find((item) => item.id === "openai/gpt-5.5");
+
+    assert.equal(response.status, 200);
+    assert.ok(model);
+    assert.equal(model.context_length, 1050000);
+    assert.equal(model.max_input_tokens, 1050000);
+    assert.equal(model.max_output_tokens, 128000);
+  } finally {
+    modelsDevSync.saveModelsDevCapabilities({});
+  }
+});
+
+test("v1 models catalog lets provider-specific synced limits beat global static specs", async () => {
+  await seedConnection("github", {
+    authType: "oauth",
+    name: "github-copilot-models-dev",
+    apiKey: null,
+    accessToken: "github-access",
+  });
+
+  try {
+    modelsDevSync.saveModelsDevCapabilities({
+      github: {
+        "gpt-5.5": {
+          tool_call: true,
+          reasoning: true,
+          attachment: true,
+          structured_output: true,
+          temperature: true,
+          modalities_input: JSON.stringify(["text", "image"]),
+          modalities_output: JSON.stringify(["text"]),
+          knowledge_cutoff: null,
+          release_date: null,
+          last_updated: null,
+          status: null,
+          family: "gpt-5",
+          open_weights: false,
+          limit_context: 400000,
+          limit_input: 272000,
+          limit_output: 128000,
+          interleaved_field: null,
+        },
+      },
+    });
+
+    const response = await v1ModelsCatalog.getUnifiedModelsResponse(
+      new Request("http://localhost/api/v1/models")
+    );
+    const body = (await response.json()) as any;
+    const model = body.data.find((item) => item.id === "gh/gpt-5.5");
+
+    assert.equal(response.status, 200);
+    assert.ok(model);
+    assert.equal(model.context_length, 400000);
+    assert.equal(model.max_input_tokens, 272000);
+    assert.equal(model.max_output_tokens, 128000);
+  } finally {
+    modelsDevSync.saveModelsDevCapabilities({});
+  }
 });
 
 test("v1 models catalog returns 500 when model compatibility lookup crashes", async () => {

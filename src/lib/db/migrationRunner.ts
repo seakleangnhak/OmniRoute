@@ -18,6 +18,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import type Database from "better-sqlite3";
+import { DEFAULT_DATABASE_SETTINGS } from "@/types/databaseSettings";
 
 /**
  * Resolve the migrations directory path safely across platforms.
@@ -268,6 +269,24 @@ function isSchemaAlreadyApplied(
       return hasColumn(db, "provider_connections", "max_concurrent");
     case "040":
       return hasColumn(db, "proxy_registry", "source");
+    case "041":
+      return (
+        hasColumn(db, "compression_analytics", "actual_prompt_tokens") &&
+        hasColumn(db, "compression_analytics", "actual_completion_tokens") &&
+        hasColumn(db, "compression_analytics", "actual_total_tokens") &&
+        hasColumn(db, "compression_analytics", "receipt_source") &&
+        hasColumn(db, "compression_analytics", "validation_fallback") &&
+        hasColumn(db, "compression_analytics", "output_mode")
+      );
+    case "042":
+      return (
+        hasTable(db, "compression_combos") &&
+        hasTable(db, "compression_combo_assignments") &&
+        hasColumn(db, "compression_analytics", "compression_combo_id") &&
+        hasColumn(db, "compression_analytics", "engine")
+      );
+    case "045":
+      return hasColumn(db, "call_logs", "tokens_compressed");
     default:
       return false;
   }
@@ -299,6 +318,103 @@ function applySearchRequestTypeMigration(db: Database.Database): void {
     "ALTER TABLE call_logs ADD COLUMN request_type TEXT DEFAULT NULL"
   );
   db.exec("CREATE INDEX IF NOT EXISTS idx_call_logs_request_type ON call_logs(request_type);");
+}
+
+function applyCompressionReceiptsMigration(db: Database.Database): void {
+  ensureColumn(
+    db,
+    "compression_analytics",
+    "actual_prompt_tokens",
+    "ALTER TABLE compression_analytics ADD COLUMN actual_prompt_tokens INTEGER"
+  );
+  ensureColumn(
+    db,
+    "compression_analytics",
+    "actual_completion_tokens",
+    "ALTER TABLE compression_analytics ADD COLUMN actual_completion_tokens INTEGER"
+  );
+  ensureColumn(
+    db,
+    "compression_analytics",
+    "actual_total_tokens",
+    "ALTER TABLE compression_analytics ADD COLUMN actual_total_tokens INTEGER"
+  );
+  ensureColumn(
+    db,
+    "compression_analytics",
+    "actual_cache_read_tokens",
+    "ALTER TABLE compression_analytics ADD COLUMN actual_cache_read_tokens INTEGER"
+  );
+  ensureColumn(
+    db,
+    "compression_analytics",
+    "actual_cache_write_tokens",
+    "ALTER TABLE compression_analytics ADD COLUMN actual_cache_write_tokens INTEGER"
+  );
+  ensureColumn(
+    db,
+    "compression_analytics",
+    "estimated_usd_saved",
+    "ALTER TABLE compression_analytics ADD COLUMN estimated_usd_saved REAL"
+  );
+  ensureColumn(
+    db,
+    "compression_analytics",
+    "mcp_description_tokens_saved",
+    "ALTER TABLE compression_analytics ADD COLUMN mcp_description_tokens_saved INTEGER DEFAULT 0"
+  );
+  ensureColumn(
+    db,
+    "compression_analytics",
+    "multimodal_skip_count",
+    "ALTER TABLE compression_analytics ADD COLUMN multimodal_skip_count INTEGER DEFAULT 0"
+  );
+  ensureColumn(
+    db,
+    "compression_analytics",
+    "receipt_source",
+    "ALTER TABLE compression_analytics ADD COLUMN receipt_source TEXT"
+  );
+  ensureColumn(
+    db,
+    "compression_analytics",
+    "validation_fallback",
+    "ALTER TABLE compression_analytics ADD COLUMN validation_fallback INTEGER DEFAULT 0"
+  );
+  ensureColumn(
+    db,
+    "compression_analytics",
+    "output_mode",
+    "ALTER TABLE compression_analytics ADD COLUMN output_mode TEXT"
+  );
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_compression_analytics_request_id
+      ON compression_analytics(request_id);
+    CREATE INDEX IF NOT EXISTS idx_compression_analytics_receipt_source
+      ON compression_analytics(receipt_source);
+  `);
+}
+
+function applyCompressionCombosMigration(db: Database.Database, migrationPath: string): void {
+  const sql = fs.readFileSync(migrationPath, "utf-8");
+  db.exec(sql);
+  ensureColumn(
+    db,
+    "compression_analytics",
+    "compression_combo_id",
+    "ALTER TABLE compression_analytics ADD COLUMN compression_combo_id TEXT"
+  );
+  ensureColumn(
+    db,
+    "compression_analytics",
+    "engine",
+    "ALTER TABLE compression_analytics ADD COLUMN engine TEXT"
+  );
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_compression_analytics_combo_engine
+      ON compression_analytics(compression_combo_id, engine);
+  `);
 }
 
 function inferPhysicalSchemaBaseline(db: Database.Database): {
@@ -562,7 +678,10 @@ export function runMigrations(db: Database.Database, options?: { isNewDb?: boole
   // Do not rely on any highest-version-applied heuristic. We must explicitly
   // iterate through all missing files on disk and apply them if they are missing
   // from the _omniroute_migrations table.
-  const highestApplied = applied.size > 0 ? Math.max(...Array.from(applied).map(Number)) : 0;
+  const numericApplied = Array.from(applied)
+    .map((v) => Number.parseInt(v, 10))
+    .filter((n) => !Number.isNaN(n));
+  const highestApplied = numericApplied.length > 0 ? Math.max(...numericApplied) : 0;
   const pending = files.filter((f) => {
     const isMissing = !applied.has(f.version);
     if (isMissing && Number(f.version) < highestApplied) {
@@ -640,6 +759,10 @@ export function runMigrations(db: Database.Database, options?: { isNewDb?: boole
         );
       } else if (migration.version === "032") {
         applyApiKeyLifecycleMigration(db);
+      } else if (migration.version === "041") {
+        applyCompressionReceiptsMigration(db);
+      } else if (migration.version === "042") {
+        applyCompressionCombosMigration(db, migration.path);
       } else {
         const sql = fs.readFileSync(migration.path, "utf-8");
         db.exec(sql);
@@ -656,8 +779,22 @@ export function runMigrations(db: Database.Database, options?: { isNewDb?: boole
       console.log(`[Migration] Applied: ${migration.version}_${migration.name}`);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`[Migration] FAILED: ${migration.version}_${migration.name} — ${message}`);
-      throw err; // Re-throw to prevent DB from starting in inconsistent state
+      // "duplicate column name" means the column already exists — end state achieved, mark applied.
+      if (message.includes("duplicate column name")) {
+        const applyMarkerOnly = db.transaction(() => {
+          db.prepare(
+            "INSERT OR IGNORE INTO _omniroute_migrations (version, name) VALUES (?, ?)"
+          ).run(migration.version, migration.name);
+        });
+        applyMarkerOnly();
+        count++;
+        console.log(
+          `[Migration] Applied (column pre-exists): ${migration.version}_${migration.name}`
+        );
+      } else {
+        console.error(`[Migration] FAILED: ${migration.version}_${migration.name} — ${message}`);
+        throw err; // Re-throw to prevent DB from starting in inconsistent state
+      }
     }
   }
 
@@ -665,7 +802,42 @@ export function runMigrations(db: Database.Database, options?: { isNewDb?: boole
     console.log(`[Migration] ${count} migration(s) applied successfully.`);
   }
 
+  // After applying all migrations, insert default settings if we just ran migration 46
+  try {
+    if (appliedRecords.some((m) => m.name.startsWith("046_"))) {
+      insertDefaultDatabaseSettings(db);
+    }
+  } catch (error) {
+    console.error("Error inserting default database settings:", error);
+  }
+
   return count;
+}
+
+function insertDefaultDatabaseSettings(db: Database.Database) {
+  const tx = db.transaction(() => {
+    // Insert all default settings
+    for (const [section, values] of Object.entries(DEFAULT_DATABASE_SETTINGS)) {
+      for (const [key, value] of Object.entries(values as Record<string, unknown>)) {
+        db.prepare("INSERT OR IGNORE INTO key_value (namespace, key, value) VALUES (?, ?, ?)").run(
+          "databaseSettings",
+          `${section}.${key}`,
+          JSON.stringify(value)
+        );
+      }
+    }
+  });
+
+  // Run in an immediate transaction to avoid nested transactions
+  try {
+    // @ts-expect-error - Better-SQLite3 transaction types
+    db.immediate(() => {
+      tx();
+    });
+  } catch (error) {
+    console.error("Transaction error inserting default settings:", error);
+    throw error;
+  }
 }
 
 /**

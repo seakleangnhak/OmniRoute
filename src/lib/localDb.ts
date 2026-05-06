@@ -80,6 +80,7 @@ export {
 } from "./db/combos";
 
 export * from "./db/compressionCacheStats";
+export * from "./db/compressionCombos";
 
 export {
   // API Keys
@@ -144,6 +145,14 @@ export {
 } from "./db/settings";
 
 export type { PricingSource, PricingSourceMap } from "./db/settings";
+
+export {
+  getDatabaseSettings,
+  getUserDatabaseSettings,
+  updateDatabaseSettings,
+} from "./db/databaseSettings";
+
+export type { UserDatabaseSettings } from "./db/databaseSettings";
 
 export {
   // Proxy Registry
@@ -276,6 +285,8 @@ export {
   cleanupOldSnapshots,
 } from "./db/quotaSnapshots";
 
+export * from "./db/sessionAccountAffinity";
+
 export type { QuotaSnapshotRow, ProviderUtilizationPoint } from "@/shared/types/utilization";
 
 export {
@@ -340,9 +351,6 @@ export {
   setReasoningCache,
   getReasoningCache,
   deleteReasoningCache,
-  cleanupExpiredReasoning,
-  getReasoningCacheStats,
-  getReasoningCacheEntries,
   clearAllReasoningCache,
 } from "./db/reasoningCache";
 

@@ -239,6 +239,7 @@ test("call-log sync includes stable apiKeyId, event id, token fields, and costUs
     cacheRead: 20,
     cacheWrite: 10,
     reasoning: 5,
+    compressed: null,
   });
   assert.ok(Math.abs(recent.costUsd - 0.212) < 1e-12);
   assert.equal(JSON.stringify(logs).includes(created.key), false);
