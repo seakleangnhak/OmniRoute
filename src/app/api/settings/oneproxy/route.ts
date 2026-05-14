@@ -66,7 +66,8 @@ export async function POST(request: Request) {
 
   let rawBody: unknown;
   try {
-    rawBody = await request.json();
+    const text = await request.text();
+    rawBody = text.trim() ? JSON.parse(text) : {};
   } catch {
     return createErrorResponse({
       status: 400,

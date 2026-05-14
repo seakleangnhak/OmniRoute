@@ -36,6 +36,21 @@ type SyncStatus = {
   consecutiveFailures: number;
 };
 
+function getResponseErrorMessage(data: unknown, fallback: string): string {
+  if (!data || typeof data !== "object") return fallback;
+  const record = data as Record<string, unknown>;
+  const error = record.error;
+
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const message = (error as Record<string, unknown>).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+
+  const message = record.message;
+  return typeof message === "string" && message.trim() ? message : fallback;
+}
+
 export default function OneproxyTab() {
   const t = useTranslations("settings");
   const [proxies, setProxies] = useState<OneproxyItem[]>([]);
@@ -86,14 +101,16 @@ export default function OneproxyTab() {
     try {
       const res = await fetch("/api/settings/oneproxy", { method: "POST" });
       const data = await res.json();
-      if (data.success) {
+      if (res.ok && data.success) {
         setSyncResult(`Synced ${data.total} proxies (${data.added} new, ${data.updated} updated)`);
       } else {
-        setSyncResult(`Sync failed: ${data.error}`);
+        setSyncResult(
+          `Sync failed: ${getResponseErrorMessage(data, res.statusText || "Unknown error")}`
+        );
       }
       await loadData();
     } catch (err) {
-      setSyncResult(`Sync failed: ${err}`);
+      setSyncResult(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setSyncing(false);
     }
