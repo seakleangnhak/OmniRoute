@@ -23,7 +23,14 @@ const rotatingProxySchema = z
     countryCode: z.string().trim().max(2).nullable().optional(),
     minQuality: z.number().int().min(0).max(100).nullable().optional(),
     stickyMode: z
-      .enum(["per-request", "per-session", "per-provider", "per-api-key", "time-window"])
+      .enum([
+        "per-request",
+        "per-session",
+        "per-provider",
+        "per-provider-account",
+        "per-api-key",
+        "time-window",
+      ])
       .optional(),
     stickyTtlMinutes: z.number().int().min(1).max(1440).optional(),
   })
@@ -39,7 +46,14 @@ const rotatingProxyPolicyOverrideSchema = z
     countryCode: z.string().trim().max(2).nullable().optional(),
     minQuality: z.number().int().min(0).max(100).nullable().optional(),
     stickyMode: z
-      .enum(["per-request", "per-session", "per-provider", "per-api-key", "time-window"])
+      .enum([
+        "per-request",
+        "per-session",
+        "per-provider",
+        "per-provider-account",
+        "per-api-key",
+        "time-window",
+      ])
       .nullable()
       .optional(),
     stickyTtlMinutes: z.number().int().min(1).max(1440).nullable().optional(),

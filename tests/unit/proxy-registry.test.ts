@@ -235,6 +235,121 @@ test("rotating proxy sticky session reuses proxy and retry exclusion replaces it
   assert.equal(nextCached.proxy.host, afterFailure.proxy.host);
 });
 
+test("rotating proxy sticky session is scoped to provider account", async () => {
+  await resetStorage();
+
+  const connA = await providersDb.createProviderConnection({
+    provider: "openai",
+    authType: "apikey",
+    name: "sticky-session-account-a",
+    apiKey: "sk-sticky-session-a",
+  });
+  const connB = await providersDb.createProviderConnection({
+    provider: "openai",
+    authType: "apikey",
+    name: "sticky-session-account-b",
+    apiKey: "sk-sticky-session-b",
+  });
+
+  const oneproxyDb = await import("../../src/lib/db/oneproxy.ts");
+  await oneproxyDb.upsertOneproxyProxy({
+    ip: "10.0.4.1",
+    port: 8401,
+    protocol: "http",
+    countryCode: "US",
+    qualityScore: 95,
+  });
+  await oneproxyDb.upsertOneproxyProxy({
+    ip: "10.0.4.2",
+    port: 8402,
+    protocol: "http",
+    countryCode: "US",
+    qualityScore: 95,
+  });
+
+  await settingsDb.updateSettings({
+    rotatingProxy: {
+      enabled: true,
+      source: "oneproxy",
+      strategy: "sequential",
+      scope: "global",
+      minQuality: 50,
+      stickyMode: "per-session",
+      stickyTtlMinutes: 30,
+    },
+  });
+
+  const stickyContext = { sessionId: "shared-session" };
+  const firstA = await settingsDb.resolveProxyForConnection((connA as any).id, { stickyContext });
+  const secondA = await settingsDb.resolveProxyForConnection((connA as any).id, { stickyContext });
+  const firstB = await settingsDb.resolveProxyForConnection((connB as any).id, { stickyContext });
+
+  assert.equal(firstA.source, "oneproxy-rotation");
+  assert.equal(secondA.proxy.host, firstA.proxy.host);
+  assert.notEqual(firstB.proxy.host, firstA.proxy.host);
+  assert.ok((firstA as any).rotation.stickyKey.includes((connA as any).id));
+  assert.ok((firstB as any).rotation.stickyKey.includes((connB as any).id));
+});
+
+test("rotating proxy per-provider-account sticky is scoped to provider account", async () => {
+  await resetStorage();
+
+  const connA = await providersDb.createProviderConnection({
+    provider: "openai",
+    authType: "apikey",
+    name: "sticky-provider-account-a",
+    apiKey: "sk-sticky-provider-a",
+  });
+  const connB = await providersDb.createProviderConnection({
+    provider: "openai",
+    authType: "apikey",
+    name: "sticky-provider-account-b",
+    apiKey: "sk-sticky-provider-b",
+  });
+
+  const oneproxyDb = await import("../../src/lib/db/oneproxy.ts");
+  await oneproxyDb.upsertOneproxyProxy({
+    ip: "10.0.5.1",
+    port: 8501,
+    protocol: "http",
+    countryCode: "US",
+    qualityScore: 95,
+  });
+  await oneproxyDb.upsertOneproxyProxy({
+    ip: "10.0.5.2",
+    port: 8502,
+    protocol: "http",
+    countryCode: "US",
+    qualityScore: 95,
+  });
+
+  await settingsDb.updateSettings({
+    rotatingProxy: {
+      enabled: true,
+      source: "oneproxy",
+      strategy: "sequential",
+      scope: "global",
+      minQuality: 50,
+      stickyMode: "per-provider-account",
+      stickyTtlMinutes: 30,
+    },
+  });
+
+  const firstA = await settingsDb.resolveProxyForConnection((connA as any).id);
+  const secondA = await settingsDb.resolveProxyForConnection((connA as any).id);
+  const firstB = await settingsDb.resolveProxyForConnection((connB as any).id);
+  const secondB = await settingsDb.resolveProxyForConnection((connB as any).id);
+
+  assert.equal(firstA.source, "oneproxy-rotation");
+  assert.equal(secondA.proxy.host, firstA.proxy.host);
+  assert.equal(secondB.proxy.host, firstB.proxy.host);
+  assert.notEqual(firstB.proxy.host, firstA.proxy.host);
+  assert.equal((firstA as any).rotation.stickyMode, "per-provider-account");
+  assert.ok((firstA as any).rotation.stickyKey.includes("provider-account"));
+  assert.ok((firstA as any).rotation.stickyKey.includes((connA as any).id));
+  assert.ok((firstB as any).rotation.stickyKey.includes((connB as any).id));
+});
+
 test("oneproxy rotation excludes already failed proxies", async () => {
   await resetStorage();
 

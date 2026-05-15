@@ -584,6 +584,9 @@ export function createSSEStream(options: StreamOptions = {}) {
   let passthroughResponsesId: string | null = null;
   let passthroughResponsesCurrentFunctionCallKey: string | null = null;
   const passthroughResponsesReasoningSummarySeen = new Set<string>();
+  let passthroughResponsesTerminalSeen = false;
+  let passthroughFailure: StreamFailurePayload | null = null;
+  let passthroughFailureReported = false;
   const streamStartedAt = Date.now();
 
   // Guard against duplicate [DONE] events — ensures exactly one per stream
@@ -846,6 +849,57 @@ export function createSSEStream(options: StreamOptions = {}) {
     }
   };
 
+  const buildResponsesUsage = (): Record<string, number> | null => {
+    if (!usage || typeof usage !== "object") return null;
+    const u = usage as Record<string, unknown>;
+    const inputTokens = Number(u.input_tokens ?? u.prompt_tokens ?? 0) || 0;
+    const outputTokens = Number(u.output_tokens ?? u.completion_tokens ?? 0) || 0;
+    const totalTokens = Number(u.total_tokens ?? inputTokens + outputTokens) || 0;
+    return {
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      total_tokens: totalTokens,
+    };
+  };
+
+  const emitSyntheticResponsesCompleted = (controller: TransformStreamDefaultController) => {
+    if (!clientExpectsResponsesStream || passthroughResponsesTerminalSeen) return;
+
+    if (passthroughResponsesPendingFunctionCalls.size > 0) {
+      pushUniqueResponsesOutputItems(passthroughResponsesOutputItems, [
+        ...passthroughResponsesPendingFunctionCalls.values(),
+      ]);
+      passthroughResponsesPendingFunctionCalls.clear();
+      passthroughResponsesCurrentFunctionCallKey = null;
+    }
+
+    const responseId = passthroughResponsesId ?? `resp_omniroute_${Date.now().toString(36)}`;
+    passthroughResponsesId = responseId;
+    passthroughResponsesTerminalSeen = true;
+
+    const response: Record<string, unknown> = {
+      id: responseId,
+      object: "response",
+      created_at: Math.floor(Date.now() / 1000),
+      model: model ?? "unknown",
+      status: "completed",
+      output: passthroughResponsesOutputItems.slice(),
+      error: null,
+      incomplete_details: null,
+    };
+    const responseUsage = buildResponsesUsage();
+    if (responseUsage) response.usage = responseUsage;
+
+    const event = {
+      type: "response.completed",
+      response,
+    };
+    clientPayloadCollector.push(event);
+    const output = `event: response.completed\ndata: ${JSON.stringify(event)}\n\n`;
+    reqLogger?.appendConvertedChunk?.(output);
+    controller.enqueue(encoder.encode(output));
+  };
+
   return new TransformStream(
     {
       start(controller) {
@@ -1003,6 +1057,13 @@ export function createSSEStream(options: StreamOptions = {}) {
                   }
                   if (parsed.type === "response.failed") {
                     failurePayload = normalizeStreamFailurePayload(parsed);
+                  }
+                  if (
+                    parsed.type === "response.completed" ||
+                    parsed.type === "response.failed" ||
+                    parsed.type === "response.incomplete"
+                  ) {
+                    passthroughResponsesTerminalSeen = true;
                   }
                   if (
                     parsed.type === "response.reasoning_summary_text.delta" ||
@@ -1349,10 +1410,15 @@ export function createSSEStream(options: StreamOptions = {}) {
               if (onFailure) {
                 try {
                   void onFailure(failurePayload);
+                  passthroughFailureReported = true;
                 } catch {}
               }
               clearIdleTimer();
               trackPendingRequest(model, provider, connectionId, false);
+              if (clientExpectsResponsesStream) {
+                passthroughFailure = failurePayload;
+                continue;
+              }
               controller.error(
                 markPendingRequestCleared(new Error(failurePayload.message || "Upstream failure"))
               );
@@ -1524,6 +1590,53 @@ export function createSSEStream(options: StreamOptions = {}) {
               if (bufferedPayload) {
                 providerPayloadCollector.push(bufferedPayload);
                 if (
+                  bufferedPayload &&
+                  typeof bufferedPayload === "object" &&
+                  !Array.isArray(bufferedPayload)
+                ) {
+                  const responsePayload = bufferedPayload as JsonRecord;
+                  if (
+                    typeof responsePayload.type === "string" &&
+                    responsePayload.type.startsWith("response.")
+                  ) {
+                    const extracted = extractUsage(responsePayload);
+                    if (extracted) usage = extracted;
+                    if (
+                      responsePayload.type === "response.completed" ||
+                      responsePayload.type === "response.failed" ||
+                      responsePayload.type === "response.incomplete"
+                    ) {
+                      passthroughResponsesTerminalSeen = true;
+                    }
+                    if (responsePayload.type === "response.failed") {
+                      passthroughFailure = normalizeStreamFailurePayload(responsePayload);
+                    }
+                    const response = responsePayload.response;
+                    const responseOutput =
+                      response && typeof response === "object" && !Array.isArray(response)
+                        ? (response as JsonRecord).output
+                        : null;
+                    if (
+                      responsePayload.type === "response.completed" &&
+                      Array.isArray(responseOutput) &&
+                      responseOutput.length > 0
+                    ) {
+                      pushUniqueResponsesOutputItems(
+                        passthroughResponsesOutputItems,
+                        responseOutput
+                      );
+                    }
+                    const stripped = stripResponsesLifecycleEcho(responsePayload);
+                    const backfilled = backfillResponsesCompletedOutput(
+                      responsePayload,
+                      passthroughResponsesOutputItems
+                    );
+                    if (stripped || backfilled) {
+                      output = `data: ${JSON.stringify(responsePayload)}\n`;
+                    }
+                  }
+                }
+                if (
                   shouldInjectClaudeEmptyResponseBeforeCurrentEvent(
                     claudeEmptyResponseLifecycle,
                     bufferedPayload
@@ -1566,6 +1679,56 @@ export function createSSEStream(options: StreamOptions = {}) {
             }
             clearPendingPassthroughEvent();
 
+            if (passthroughFailure) {
+              if (onFailure && !passthroughFailureReported) {
+                try {
+                  void onFailure(passthroughFailure);
+                  passthroughFailureReported = true;
+                } catch {}
+              }
+              const errorBody = buildErrorBody(
+                passthroughFailure.status,
+                passthroughFailure.message || "Upstream failure"
+              );
+              if (onComplete) {
+                try {
+                  onComplete({
+                    status: passthroughFailure.status,
+                    usage,
+                    responseBody: errorBody,
+                    providerPayload: providerPayloadCollector.build(
+                      buildStreamSummaryFromEvents(
+                        providerPayloadCollector.getEvents(),
+                        sourceFormat,
+                        model
+                      ),
+                      { includeEvents: false }
+                    ),
+                    clientPayload: clientPayloadCollector.build(errorBody, {
+                      includeEvents: false,
+                    }),
+                  });
+                } catch {}
+              }
+              if (!clientExpectsResponsesStream) {
+                clearIdleTimer();
+                controller.error(
+                  markPendingRequestCleared(
+                    new Error(passthroughFailure.message || "Upstream failure")
+                  )
+                );
+              }
+              return;
+            }
+
+            // Estimate usage before synthesizing a terminal Responses event so
+            // strict Responses clients always see a final response.completed.
+            if (!hasValidUsage(usage) && totalContentLength > 0) {
+              usage = estimateUsage(body, totalContentLength, sourceFormat || FORMATS.OPENAI);
+            }
+
+            emitSyntheticResponsesCompleted(controller);
+
             if (passthroughResponsesId) {
               const requestInput =
                 body && typeof body === "object" && Array.isArray((body as JsonRecord).input)
@@ -1583,11 +1746,6 @@ export function createSSEStream(options: StreamOptions = {}) {
                 passthroughResponsesId,
                 passthroughResponsesOutputItems
               );
-            }
-
-            // Estimate usage if provider didn't return valid usage
-            if (!hasValidUsage(usage) && totalContentLength > 0) {
-              usage = estimateUsage(body, totalContentLength, sourceFormat || FORMATS.OPENAI);
             }
 
             if (hasValidUsage(usage)) {

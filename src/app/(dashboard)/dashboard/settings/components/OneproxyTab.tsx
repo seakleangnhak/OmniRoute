@@ -97,7 +97,13 @@ type RotatingProxySettings = {
   protocol: "http" | "https" | "socks5" | null;
   countryCode: string | null;
   minQuality: number | null;
-  stickyMode: "per-request" | "per-session" | "per-provider" | "per-api-key" | "time-window";
+  stickyMode:
+    | "per-request"
+    | "per-session"
+    | "per-provider"
+    | "per-provider-account"
+    | "per-api-key"
+    | "time-window";
   stickyTtlMinutes: number;
 };
 
@@ -113,6 +119,7 @@ type RotatingProxyPolicyOverride = {
     | "per-request"
     | "per-session"
     | "per-provider"
+    | "per-provider-account"
     | "per-api-key"
     | "time-window"
     | null;
@@ -1312,8 +1319,9 @@ export default function OneproxyTab() {
             >
               <option value="">Use rotation setting</option>
               <option value="per-request">Per request</option>
-              <option value="per-session">Per session</option>
+              <option value="per-session">Per session + provider account</option>
               <option value="per-provider">Per provider</option>
+              <option value="per-provider-account">Per provider account</option>
               <option value="per-api-key">Per API key</option>
               <option value="time-window">Time window</option>
             </select>
@@ -1484,8 +1492,9 @@ export default function OneproxyTab() {
               className="mt-1 w-full px-3 py-2 rounded-lg bg-black/5 dark:bg-white/5 text-text-main text-sm border border-border"
             >
               <option value="per-request">Per request</option>
-              <option value="per-session">Per session</option>
+              <option value="per-session">Per session + provider account</option>
               <option value="per-provider">Per provider</option>
+              <option value="per-provider-account">Per provider account</option>
               <option value="per-api-key">Per API key</option>
               <option value="time-window">Time window</option>
             </select>
@@ -1511,8 +1520,9 @@ export default function OneproxyTab() {
 
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <p className="text-xs text-text-muted">
-            Sticky modes reuse the same proxy for a session, provider, API key, or fixed time
-            window. Same-request retry still excludes failed proxies.
+            Sticky modes reuse the same proxy for a provider account, API key, or fixed time window.
+            Per-session sticky is account-aware, so different provider accounts do not share the
+            same IP. Same-request retry still excludes failed proxies.
           </p>
           <Button onClick={handleSaveRotation} disabled={rotationSaving} variant="secondary">
             {rotationSaving ? "Saving..." : "Save Rotation"}

@@ -3,12 +3,16 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import net from "node:net";
 
 const TEST_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "omniroute-chat-helpers-"));
 process.env.DATA_DIR = TEST_DATA_DIR;
 
 const core = await import("../../src/lib/db/core.ts");
 const providersDb = await import("../../src/lib/db/providers.ts");
+const settingsDb = await import("../../src/lib/db/settings.ts");
+const oneproxyDb = await import("../../src/lib/db/oneproxy.ts");
+const rotatingProxy = await import("../../src/lib/rotatingProxy.ts");
 const {
   resolveModelOrError,
   checkPipelineGates,
@@ -23,9 +27,21 @@ const { getCircuitBreaker, resetAllCircuitBreakers, STATE } =
 
 async function resetStorage() {
   resetAllCircuitBreakers();
+  rotatingProxy.clearRotatingProxyStickyCacheForTests();
   core.resetDbInstance();
   fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
+}
+
+async function createReachableTcpProxy() {
+  const server = net.createServer((socket) => socket.destroy());
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("Failed to allocate TCP proxy test port");
+  }
+  return { server, port: address.port };
 }
 
 async function seedConnection(provider, overrides = {}) {
@@ -256,6 +272,108 @@ test("executeChatWithBreaker converts proxy fast-fail errors", async () => {
     assert.match(String(proxyResult.result.error || ""), /Proxy unreachable/);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("executeChatWithBreaker retries proxy-blocking upstream errors with next rotating proxy", async () => {
+  await resetStorage();
+
+  const connection = await seedConnection("openai", { apiKey: "sk-openai-proxy-retry" });
+  const proxyA = await createReachableTcpProxy();
+  const proxyB = await createReachableTcpProxy();
+
+  await oneproxyDb.upsertOneproxyProxy({
+    ip: "127.0.0.1",
+    port: proxyA.port,
+    protocol: "http",
+    countryCode: "US",
+    qualityScore: 95,
+  });
+  await oneproxyDb.upsertOneproxyProxy({
+    ip: "127.0.0.1",
+    port: proxyB.port,
+    protocol: "http",
+    countryCode: "US",
+    qualityScore: 95,
+  });
+  await settingsDb.updateSettings({
+    rotatingProxy: {
+      enabled: true,
+      source: "oneproxy",
+      strategy: "sequential",
+      scope: "global",
+      minQuality: 50,
+      stickyMode: "per-session",
+      stickyTtlMinutes: 30,
+    },
+  });
+
+  const stickyContext = { sessionId: "retry-status-session" };
+  const proxyInfo = await safeResolveProxy((connection as any).id, { stickyContext });
+  const firstProxyId = (proxyInfo as any).rotation.proxyId;
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    if (fetchCalls === 1) {
+      return new Response(JSON.stringify({ error: { message: "proxy IP blocked by WAF" } }), {
+        status: 418,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(
+      JSON.stringify({
+        id: "chatcmpl-proxy-retry",
+        object: "chat.completion",
+        choices: [
+          { index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  };
+
+  try {
+    const credentials = {
+      connectionId: (connection as any).id,
+      apiKey: "sk-openai-proxy-retry",
+      providerSpecificData: {},
+    };
+    const breaker = getCircuitBreaker("openai-proxy-retry-status");
+    const proxyResult = await executeChatWithBreaker({
+      bypassCircuitBreaker: false,
+      breaker,
+      body: {
+        model: "openai/gpt-4o-mini",
+        stream: false,
+        messages: [{ role: "user", content: "hi" }],
+      },
+      provider: "openai",
+      model: "gpt-4o-mini",
+      refreshedCredentials: credentials,
+      proxyInfo,
+      stickyContext,
+      log: console,
+      clientRawRequest: { endpoint: "/v1/chat/completions" },
+      credentials,
+      apiKeyInfo: null,
+      userAgent: "",
+      comboName: null,
+      comboStrategy: null,
+      isCombo: false,
+      extendedContext: false,
+      comboStepId: null,
+      comboExecutionKey: null,
+    });
+
+    assert.equal(fetchCalls, 2);
+    assert.notEqual((proxyResult.proxyInfo as any).rotation.proxyId, firstProxyId);
+    assert.equal(proxyResult.result.success, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    proxyA.server.close();
+    proxyB.server.close();
   }
 });
 

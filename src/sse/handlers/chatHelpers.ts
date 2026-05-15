@@ -188,6 +188,89 @@ function getRotatingProxyId(proxyInfo: any): string | null {
   return typeof proxyId === "string" && proxyId.trim().length > 0 ? proxyId : null;
 }
 
+const DEFAULT_ROTATING_PROXY_RETRY_STATUSES = [
+  HTTP_STATUS.FORBIDDEN,
+  HTTP_STATUS.REQUEST_TIMEOUT,
+  HTTP_STATUS.RATE_LIMITED,
+  HTTP_STATUS.BAD_GATEWAY,
+  HTTP_STATUS.SERVICE_UNAVAILABLE,
+  HTTP_STATUS.GATEWAY_TIMEOUT,
+  407,
+  409,
+  421,
+  425,
+  451,
+  521,
+  522,
+  523,
+  524,
+];
+
+const PROXY_BLOCK_ERROR_PATTERN =
+  /\b(ip|proxy|blocked|forbidden|access denied|captcha|cloudflare|akamai|waf|bot|suspicious|unusual traffic|abuse|too many requests|rate limit|temporarily blocked|region|country|geo|egress|connection reset|econnreset|etimedout|econnrefused|socket hang up)\b/i;
+
+const NON_PROXY_ACCOUNT_ERROR_PATTERN =
+  /\b(invalid api key|api key invalid|unauthorized|authentication|billing|quota|insufficient_quota|insufficient quota|credit|payment|required|model not found|invalid request|bad request|context length|prompt too long)\b/i;
+
+function getRotatingProxyRetryStatuses(): Set<number> {
+  const raw =
+    process.env.ONEPROXY_ROTATING_PROXY_RETRY_STATUSES ||
+    DEFAULT_ROTATING_PROXY_RETRY_STATUSES.join(",");
+  const statuses = raw
+    .split(",")
+    .map((status) => Number(status.trim()))
+    .filter((status) => Number.isInteger(status) && status >= 400 && status < 600);
+  return new Set(statuses.length > 0 ? statuses : DEFAULT_ROTATING_PROXY_RETRY_STATUSES);
+}
+
+function collectRotatingProxyErrorText(value: unknown, depth = 0): string {
+  if (value == null || depth > 3) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value instanceof Response) return [value.status, value.statusText].filter(Boolean).join(" ");
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, 8)
+      .map((item) => collectRotatingProxyErrorText(item, depth + 1))
+      .filter(Boolean)
+      .join(" ");
+  }
+  if (typeof value !== "object") return "";
+
+  const record = value as Record<string, unknown>;
+  return [
+    record.error,
+    record.message,
+    record.code,
+    record.type,
+    record.status,
+    record.statusText,
+    record.body,
+    record.detail,
+    record.details,
+    record.response,
+  ]
+    .map((item) => collectRotatingProxyErrorText(item, depth + 1))
+    .filter(Boolean)
+    .join(" ");
+}
+
+function getRotatingProxyRetryReason(result: any): string | null {
+  const status = Number(result?.status ?? result?.response?.status);
+  const hasStatus = Number.isInteger(status);
+  const errorText = collectRotatingProxyErrorText(result);
+  if (errorText && NON_PROXY_ACCOUNT_ERROR_PATTERN.test(errorText)) return null;
+  if (hasStatus && getRotatingProxyRetryStatuses().has(status)) {
+    return `Upstream returned ${status}; retrying with next rotating proxy`;
+  }
+  if (errorText && PROXY_BLOCK_ERROR_PATTERN.test(errorText)) {
+    return hasStatus
+      ? `Upstream returned ${status} with proxy-blocking error; retrying with next rotating proxy`
+      : "Upstream returned proxy-blocking error; retrying with next rotating proxy";
+  }
+  return null;
+}
+
 export async function executeChatWithBreaker({
   bypassCircuitBreaker,
   breaker,
@@ -286,6 +369,31 @@ export async function executeChatWithBreaker({
     const attemptStartedAt = Date.now();
     try {
       const execution = await executeOnce();
+      const retryReason = getRotatingProxyRetryReason(execution.result);
+      if (retryReason && activeProxyInfo?.source === "oneproxy-rotation") {
+        log.warn("PROXY", retryReason);
+        const failedProxyId = getRotatingProxyId(activeProxyInfo);
+        if (failedProxyId) excludedRotatingProxyIds.add(failedProxyId);
+        await markRotatingProxyFailed(activeProxyInfo.proxy, new Error(retryReason));
+
+        if (credentials.connectionId && rotatingProxyAttempt < maxRotatingProxyAttempts) {
+          const nextProxyInfo = await safeResolveProxy(credentials.connectionId, {
+            excludeRotatingProxyIds: Array.from(excludedRotatingProxyIds),
+            stickyContext,
+          });
+
+          if (nextProxyInfo?.source === "oneproxy-rotation" && nextProxyInfo.proxy) {
+            rotatingProxyAttempt += 1;
+            activeProxyInfo = nextProxyInfo;
+            log.warn(
+              "PROXY",
+              `Retrying with next rotating proxy (${rotatingProxyAttempt}/${maxRotatingProxyAttempts})`
+            );
+            continue;
+          }
+        }
+      }
+
       if (activeProxyInfo?.source === "oneproxy-rotation" && execution.result?.success !== false) {
         await markRotatingProxySucceeded(activeProxyInfo.proxy, {
           latencyMs: Date.now() - attemptStartedAt,

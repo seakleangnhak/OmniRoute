@@ -91,6 +91,61 @@ test("createPassthroughStreamWithLogger omits [DONE] for Responses clients", asy
   assert.doesNotMatch(result, /data: \[DONE\]/);
 });
 
+test("createPassthroughStreamWithLogger synthesizes response.completed when Responses upstream closes without terminal event", async () => {
+  const transform = createPassthroughStreamWithLogger(
+    "codex",
+    null,
+    null,
+    "gpt-5.5-low",
+    null,
+    { input: "hello" },
+    null,
+    null,
+    null,
+    "openai-responses"
+  );
+
+  const writer = transform.writable.getWriter();
+  await writer.write(
+    new TextEncoder().encode(
+      [
+        "event: response.created",
+        '{"type":"response.created","response":{"id":"resp_synthetic_done","model":"gpt-5.5-low","status":"in_progress","output":[]}}'.replace(
+          /^/,
+          "data: "
+        ),
+        "event: response.output_text.delta",
+        '{"type":"response.output_text.delta","response_id":"resp_synthetic_done","output_index":0,"delta":"hello"}'.replace(
+          /^/,
+          "data: "
+        ),
+        "",
+      ].join("\n")
+    )
+  );
+  await writer.close();
+
+  const reader = transform.readable.getReader();
+  const decoder = new TextDecoder();
+  let result = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    result += decoder.decode(value);
+  }
+
+  const completedPayload = result
+    .split("\n")
+    .filter((line) => line.startsWith("data: "))
+    .map((line) => JSON.parse(line.slice(6)) as { type?: string; response?: { status?: string } })
+    .find((payload) => payload.type === "response.completed");
+
+  assert.ok(completedPayload, "missing synthetic response.completed event");
+  assert.equal(completedPayload.response?.status, "completed");
+  assert.doesNotMatch(result, /data: \[DONE\]/);
+});
+
 test("createPassthroughStreamWithLogger synthesizes reasoning summary events from reasoning output items", async () => {
   const transform = createPassthroughStreamWithLogger(
     "codex",

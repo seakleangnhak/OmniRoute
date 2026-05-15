@@ -7,6 +7,7 @@ type RotatingProxyStickyMode =
   | "per-request"
   | "per-session"
   | "per-provider"
+  | "per-provider-account"
   | "per-api-key"
   | "time-window";
 
@@ -94,6 +95,7 @@ function clamp(value: number, min: number, max: number): number {
 function normalizeStickyMode(value: unknown): RotatingProxyStickyMode {
   return value === "per-session" ||
     value === "per-provider" ||
+    value === "per-provider-account" ||
     value === "per-api-key" ||
     value === "time-window"
     ? value
@@ -310,17 +312,29 @@ function getStickyCacheKey(
   const ttlMs = Math.max(1, settings.stickyTtlMinutes || 30) * 60 * 1000;
   const now = Date.now();
   const provider = nonEmptyString(context.provider) || nonEmptyString(connection?.provider);
+  const accountId = nonEmptyString(context.connectionId) || nonEmptyString(connection?.id);
   const filter = getFilterSignature(settings);
 
   if (mode === "per-session") {
     const sessionId = nonEmptyString(context.sessionId);
     if (!sessionId) return null;
-    return { key: `session:${filter}:${sessionId}`, expiresAt: now + ttlMs };
+    const accountKey = accountId
+      ? `${provider || "unknown-provider"}:${accountId}`
+      : provider || "global";
+    return { key: `session:${filter}:${sessionId}:${accountKey}`, expiresAt: now + ttlMs };
   }
 
   if (mode === "per-provider") {
     if (!provider) return null;
     return { key: `provider:${filter}:${provider}`, expiresAt: now + ttlMs };
+  }
+
+  if (mode === "per-provider-account") {
+    if (!accountId) return null;
+    return {
+      key: `provider-account:${filter}:${provider || "unknown-provider"}:${accountId}`,
+      expiresAt: now + ttlMs,
+    };
   }
 
   if (mode === "per-api-key") {
