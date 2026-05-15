@@ -287,6 +287,11 @@ function isSchemaAlreadyApplied(
       );
     case "045":
       return hasColumn(db, "call_logs", "tokens_compressed");
+    case "051":
+      return (
+        hasColumn(db, "proxy_registry", "last_used_at") &&
+        hasColumn(db, "proxy_registry", "failure_count")
+      );
     default:
       return false;
   }

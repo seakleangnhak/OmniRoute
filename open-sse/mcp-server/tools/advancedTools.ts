@@ -1022,12 +1022,56 @@ export async function handleOneproxyFetch(
       host: toString(r.host, ""),
       port: toNumber(r.port, 0),
       type: toString(r.type, "http"),
-      countryCode: typeof r.country_code === "string" ? r.country_code : null,
-      qualityScore: r.quality_score != null ? toNumber(r.quality_score) : null,
-      latencyMs: r.latency_ms != null ? toNumber(r.latency_ms) : null,
+      countryCode: toString(r.countryCode || r.country_code, "") || null,
+      qualityScore:
+        r.qualityScore != null
+          ? toNumber(r.qualityScore)
+          : r.quality_score != null
+            ? toNumber(r.quality_score)
+            : null,
+      latencyMs:
+        r.latencyMs != null
+          ? toNumber(r.latencyMs)
+          : r.latency_ms != null
+            ? toNumber(r.latency_ms)
+            : null,
+      effectiveScore:
+        r.effectiveScore != null
+          ? toNumber(r.effectiveScore)
+          : r.effective_score != null
+            ? toNumber(r.effective_score)
+            : 0,
       anonymity: typeof r.anonymity === "string" ? r.anonymity : null,
-      googleAccess: r.google_access === 1 || r.google_access === true,
+      googleAccess: r.googleAccess === true || r.google_access === 1 || r.google_access === true,
       status: toString(r.status, "active"),
+      quarantinedUntil: toString(r.quarantinedUntil || r.quarantined_until, "") || null,
+      lastError: toString(r.lastError || r.last_error, "") || null,
+      lastErrorType: toString(r.lastErrorType || r.last_error_type, "") || null,
+      failureCount: toNumber(r.failureCount ?? r.failure_count, 0),
+      failureStreak: toNumber(r.failureStreak ?? r.failure_streak, 0),
+      successCount: toNumber(r.successCount ?? r.success_count, 0),
+      lastUsedAt: toString(r.lastUsedAt || r.last_used_at, "") || null,
+      requestCount: toNumber(r.requestCount ?? r.request_count, 0),
+      runtimeSuccessCount: toNumber(r.runtimeSuccessCount ?? r.runtime_success_count, 0),
+      runtimeFailureCount: toNumber(r.runtimeFailureCount ?? r.runtime_failure_count, 0),
+      avgLatencyMs:
+        r.avgLatencyMs != null
+          ? toNumber(r.avgLatencyMs)
+          : r.avg_latency_ms != null
+            ? toNumber(r.avg_latency_ms)
+            : null,
+      lastSuccessAt: toString(r.lastSuccessAt || r.last_success_at, "") || null,
+      lastFailureAt: toString(r.lastFailureAt || r.last_failure_at, "") || null,
+      successRate:
+        r.successRate != null
+          ? toNumber(r.successRate)
+          : r.success_rate != null
+            ? toNumber(r.success_rate)
+            : null,
+      successRate1h: r.successRate1h != null ? toNumber(r.successRate1h) : null,
+      successRate24h: r.successRate24h != null ? toNumber(r.successRate24h) : null,
+      p95LatencyMs1h: r.p95LatencyMs1h != null ? toNumber(r.p95LatencyMs1h) : null,
+      p95LatencyMs24h: r.p95LatencyMs24h != null ? toNumber(r.p95LatencyMs24h) : null,
     }));
 
     const result = { items, total: toNumber(raw.total, items.length) };
@@ -1041,12 +1085,20 @@ export async function handleOneproxyFetch(
 }
 
 export async function handleOneproxyRotate(
-  args: { strategy?: "random" | "quality" | "sequential" } = {}
+  args: {
+    strategy?: "random" | "quality" | "sequential";
+    protocol?: string;
+    countryCode?: string;
+    minQuality?: number;
+  } = {}
 ) {
   const start = Date.now();
   try {
     const body: Record<string, unknown> = {};
     if (args.strategy) body.strategy = args.strategy;
+    if (args.protocol) body.protocol = args.protocol;
+    if (args.countryCode) body.countryCode = args.countryCode;
+    if (args.minQuality != null) body.minQuality = args.minQuality;
 
     const raw = toRecord(
       await apiFetch("/api/settings/oneproxy/rotate", {
@@ -1060,9 +1112,53 @@ export async function handleOneproxyRotate(
       host: toString(raw.host, ""),
       port: toNumber(raw.port, 0),
       type: toString(raw.type, "http"),
-      countryCode: typeof raw.country_code === "string" ? raw.country_code : null,
-      qualityScore: raw.quality_score != null ? toNumber(raw.quality_score) : null,
-      latencyMs: raw.latency_ms != null ? toNumber(raw.latency_ms) : null,
+      countryCode: toString(raw.countryCode || raw.country_code, "") || null,
+      qualityScore:
+        raw.qualityScore != null
+          ? toNumber(raw.qualityScore)
+          : raw.quality_score != null
+            ? toNumber(raw.quality_score)
+            : null,
+      latencyMs:
+        raw.latencyMs != null
+          ? toNumber(raw.latencyMs)
+          : raw.latency_ms != null
+            ? toNumber(raw.latency_ms)
+            : null,
+      effectiveScore:
+        raw.effectiveScore != null
+          ? toNumber(raw.effectiveScore)
+          : raw.effective_score != null
+            ? toNumber(raw.effective_score)
+            : 0,
+      quarantinedUntil: toString(raw.quarantinedUntil || raw.quarantined_until, "") || null,
+      lastError: toString(raw.lastError || raw.last_error, "") || null,
+      lastErrorType: toString(raw.lastErrorType || raw.last_error_type, "") || null,
+      failureCount: toNumber(raw.failureCount ?? raw.failure_count, 0),
+      failureStreak: toNumber(raw.failureStreak ?? raw.failure_streak, 0),
+      successCount: toNumber(raw.successCount ?? raw.success_count, 0),
+      lastUsedAt: toString(raw.lastUsedAt || raw.last_used_at, "") || null,
+      requestCount: toNumber(raw.requestCount ?? raw.request_count, 0),
+      runtimeSuccessCount: toNumber(raw.runtimeSuccessCount ?? raw.runtime_success_count, 0),
+      runtimeFailureCount: toNumber(raw.runtimeFailureCount ?? raw.runtime_failure_count, 0),
+      avgLatencyMs:
+        raw.avgLatencyMs != null
+          ? toNumber(raw.avgLatencyMs)
+          : raw.avg_latency_ms != null
+            ? toNumber(raw.avg_latency_ms)
+            : null,
+      lastSuccessAt: toString(raw.lastSuccessAt || raw.last_success_at, "") || null,
+      lastFailureAt: toString(raw.lastFailureAt || raw.last_failure_at, "") || null,
+      successRate:
+        raw.successRate != null
+          ? toNumber(raw.successRate)
+          : raw.success_rate != null
+            ? toNumber(raw.success_rate)
+            : null,
+      successRate1h: raw.successRate1h != null ? toNumber(raw.successRate1h) : null,
+      successRate24h: raw.successRate24h != null ? toNumber(raw.successRate24h) : null,
+      p95LatencyMs1h: raw.p95LatencyMs1h != null ? toNumber(raw.p95LatencyMs1h) : null,
+      p95LatencyMs24h: raw.p95LatencyMs24h != null ? toNumber(raw.p95LatencyMs24h) : null,
     };
 
     await logToolCall("omniroute_oneproxy_rotate", args, result, Date.now() - start, true);
@@ -1081,12 +1177,55 @@ export async function handleOneproxyStats(args: Record<string, never> = {}) {
 
     const statsRaw = toRecord(raw.stats);
     const statusRaw = toRecord(raw.status);
+    const healthValidatorRaw = toRecord(raw.healthValidator);
+    const observabilityRaw = toRecord(raw.observability);
 
     const stats = {
       total: toNumber(statsRaw.total, 0),
       active: toNumber(statsRaw.active, 0),
-      avgQuality: statsRaw.avg_quality != null ? toNumber(statsRaw.avg_quality) : null,
-      lastValidated: typeof statsRaw.last_validated === "string" ? statsRaw.last_validated : null,
+      quarantined: toNumber(statsRaw.quarantined, 0),
+      avgQuality:
+        statsRaw.avgQuality != null
+          ? toNumber(statsRaw.avgQuality)
+          : statsRaw.avg_quality != null
+            ? toNumber(statsRaw.avg_quality)
+            : null,
+      avgEffectiveScore:
+        statsRaw.avgEffectiveScore != null
+          ? toNumber(statsRaw.avgEffectiveScore)
+          : statsRaw.avg_effective_score != null
+            ? toNumber(statsRaw.avg_effective_score)
+            : null,
+      lastValidated:
+        typeof statsRaw.lastValidated === "string"
+          ? statsRaw.lastValidated
+          : typeof statsRaw.last_validated === "string"
+            ? statsRaw.last_validated
+            : null,
+      requestCount: toNumber(statsRaw.requestCount ?? statsRaw.request_count, 0),
+      runtimeSuccessCount: toNumber(
+        statsRaw.runtimeSuccessCount ?? statsRaw.runtime_success_count,
+        0
+      ),
+      runtimeFailureCount: toNumber(
+        statsRaw.runtimeFailureCount ?? statsRaw.runtime_failure_count,
+        0
+      ),
+      successRate:
+        statsRaw.successRate != null
+          ? toNumber(statsRaw.successRate)
+          : statsRaw.success_rate != null
+            ? toNumber(statsRaw.success_rate)
+            : null,
+      avgLatencyMs:
+        statsRaw.avgLatencyMs != null
+          ? toNumber(statsRaw.avgLatencyMs)
+          : statsRaw.avg_latency_ms != null
+            ? toNumber(statsRaw.avg_latency_ms)
+            : null,
+      lastUsedAt: toString(statsRaw.lastUsedAt || statsRaw.last_used_at, "") || null,
+      lastSuccessAt: toString(statsRaw.lastSuccessAt || statsRaw.last_success_at, "") || null,
+      lastFailureAt: toString(statsRaw.lastFailureAt || statsRaw.last_failure_at, "") || null,
       byProtocol: toArrayOfRecords(statsRaw.by_protocol || statsRaw.byProtocol).map((r) => ({
         protocol: toString(r.protocol, ""),
         count: toNumber(r.count, 0),
@@ -1106,7 +1245,53 @@ export async function handleOneproxyStats(args: Record<string, never> = {}) {
       consecutiveFailures: toNumber(statusRaw.consecutive_failures, 0),
     };
 
-    const result = { stats, status };
+    const healthValidator = {
+      configured: toBoolean(healthValidatorRaw.configured, false),
+      active: toBoolean(healthValidatorRaw.active, false),
+      running: toBoolean(healthValidatorRaw.running, false),
+      intervalMinutes: toNumber(healthValidatorRaw.intervalMinutes, 0),
+      batchSize: toNumber(healthValidatorRaw.batchSize, 0),
+      timeoutMs: toNumber(healthValidatorRaw.timeoutMs, 0),
+      testUrl: toString(healthValidatorRaw.testUrl, ""),
+      revalidateOlderThanMinutes: toNumber(healthValidatorRaw.revalidateOlderThanMinutes, 0),
+      maxFailures: toNumber(healthValidatorRaw.maxFailures, 0),
+      nextRunAt:
+        typeof healthValidatorRaw.nextRunAt === "string" ? healthValidatorRaw.nextRunAt : null,
+      lastRunAt:
+        typeof healthValidatorRaw.lastRunAt === "string" ? healthValidatorRaw.lastRunAt : null,
+      lastChecked: toNumber(healthValidatorRaw.lastChecked, 0),
+      lastHealthy: toNumber(healthValidatorRaw.lastHealthy, 0),
+      lastUnhealthy: toNumber(healthValidatorRaw.lastUnhealthy, 0),
+      lastSkippedProxies: toNumber(healthValidatorRaw.lastSkippedProxies, 0),
+    };
+
+    const observability = {
+      active: toBoolean(observabilityRaw.active, false),
+      running: toBoolean(observabilityRaw.running, false),
+      retentionDays: toNumber(observabilityRaw.retentionDays, 0),
+      cleanupIntervalMinutes: toNumber(observabilityRaw.cleanupIntervalMinutes, 0),
+      cleanupOnStartup: toBoolean(observabilityRaw.cleanupOnStartup, false),
+      alertsEnabled: toBoolean(observabilityRaw.alertsEnabled, false),
+      minActiveProxies: toNumber(observabilityRaw.minActiveProxies, 0),
+      minSuccessRate: toNumber(observabilityRaw.minSuccessRate, 0),
+      maxQuarantineRate: toNumber(observabilityRaw.maxQuarantineRate, 0),
+      nextRunAt: typeof observabilityRaw.nextRunAt === "string" ? observabilityRaw.nextRunAt : null,
+      lastRunAt: typeof observabilityRaw.lastRunAt === "string" ? observabilityRaw.lastRunAt : null,
+      lastSuccess: toBoolean(observabilityRaw.lastSuccess, false),
+      lastError: typeof observabilityRaw.lastError === "string" ? observabilityRaw.lastError : null,
+      lastDeleted: toNumber(observabilityRaw.lastDeleted, 0),
+    };
+
+    const alerts = toArrayOfRecords(raw.alerts).map((alert) => ({
+      code: toString(alert.code, "low_active_pool"),
+      severity: toString(alert.severity, "warning"),
+      message: toString(alert.message, ""),
+      value: toNumber(alert.value, 0),
+      threshold: toNumber(alert.threshold, 0),
+      generatedAt: toString(alert.generatedAt, ""),
+    }));
+
+    const result = { stats, status, healthValidator, observability, alerts };
     await logToolCall("omniroute_oneproxy_stats", args, result, Date.now() - start, true);
     return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
   } catch (err) {

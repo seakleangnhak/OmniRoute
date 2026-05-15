@@ -32,6 +32,9 @@ export default function ActiveRequestsPanel() {
   const [loading, setLoading] = useState(true);
   const [selectedRow, setSelectedRow] = useState<ActiveRequestRow | null>(null);
 
+  const tr = (key: string, fallback: string) =>
+    typeof t.has === "function" && t.has(key) ? t(key) : fallback;
+
   useEffect(() => {
     let cancelled = false;
 
@@ -63,7 +66,7 @@ export default function ActiveRequestsPanel() {
   }, []);
 
   const handleClearAll = async () => {
-    if (!window.confirm(t("confirmClearActiveRequests") || "Clear all active requests?")) return;
+    if (!window.confirm(tr("confirmClearActiveRequests", "Clear all active requests?"))) return;
     try {
       const res = await fetch("/api/logs/active", { method: "DELETE" });
       if (res.ok) {
@@ -98,7 +101,7 @@ export default function ActiveRequestsPanel() {
               onClick={handleClearAll}
               className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-1 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/20 hover:text-red-300"
             >
-              {t("clearAll") || "Clear All"}
+              {tr("clearAll", "Clear All")}
             </button>
           )}
         </div>

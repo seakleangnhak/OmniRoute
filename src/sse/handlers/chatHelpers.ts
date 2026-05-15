@@ -24,6 +24,11 @@ import {
   isTlsFingerprintActive,
 } from "@omniroute/open-sse/utils/proxyFetch.ts";
 import { resolveProxyForConnection } from "@/lib/localDb";
+import {
+  isRotatingProxyRequiredError,
+  markRotatingProxyFailed,
+  markRotatingProxySucceeded,
+} from "@/lib/rotatingProxy";
 import { CircuitBreakerOpenError, getCircuitBreaker } from "../../shared/utils/circuitBreaker";
 import { logProxyEvent } from "../../lib/proxyLogger";
 import { logTranslationEvent } from "../../lib/translatorEvents";
@@ -153,6 +158,7 @@ export async function checkPipelineGates(
     resetTimeout: providerProfile.resetTimeoutMs ?? providerProfile.circuitBreakerReset,
     onStateChange: (name: string, from: string, to: string) =>
       log.info("CIRCUIT", `${name}: ${from} → ${to}`),
+    isFailure: (error: unknown) => !isProxyUnreachableError(error),
   });
   if (options.ignoreCircuitBreaker && !breaker.canExecute()) {
     log.info("CIRCUIT", `Bypassing OPEN circuit breaker for ${provider} (${bypassReason})`);
@@ -166,6 +172,22 @@ export async function checkPipelineGates(
   return null;
 }
 
+function isProxyUnreachableError(error: any): boolean {
+  return error?.code === "PROXY_UNREACHABLE" || /proxy unreachable/i.test(error?.message || "");
+}
+
+function getRotatingProxyMaxAttempts(proxyInfo?: any): number {
+  const configured = proxyInfo?.rotation?.maxProxyRetries;
+  const parsed = Number(configured ?? process.env.ONEPROXY_ROTATING_PROXY_MAX_ATTEMPTS ?? 3);
+  if (!Number.isFinite(parsed)) return 3;
+  return Math.max(1, Math.min(5, Math.trunc(parsed)));
+}
+
+function getRotatingProxyId(proxyInfo: any): string | null {
+  const proxyId = proxyInfo?.rotation?.proxyId;
+  return typeof proxyId === "string" && proxyId.trim().length > 0 ? proxyId : null;
+}
+
 export async function executeChatWithBreaker({
   bypassCircuitBreaker,
   breaker,
@@ -174,6 +196,7 @@ export async function executeChatWithBreaker({
   model,
   refreshedCredentials,
   proxyInfo,
+  stickyContext,
   log: handlerLog,
   clientRawRequest,
   credentials,
@@ -186,12 +209,15 @@ export async function executeChatWithBreaker({
   comboExecutionKey,
   extendedContext,
   providerProfile,
-}: any): Promise<{ result: any; tlsFingerprintUsed: boolean }> {
-  let tlsFingerprintUsed = false;
+}: any): Promise<{ result: any; tlsFingerprintUsed: boolean; proxyInfo: any }> {
+  let activeProxyInfo = proxyInfo;
+  const excludedRotatingProxyIds = new Set<string>();
+  const maxRotatingProxyAttempts = getRotatingProxyMaxAttempts(activeProxyInfo);
+  let rotatingProxyAttempt = 1;
 
-  try {
+  const executeOnce = async () => {
     const chatFn = () =>
-      runWithProxyContext(proxyInfo?.proxy || null, () =>
+      runWithProxyContext(activeProxyInfo?.proxy || null, () =>
         (handleChatCore as any)({
           body: { ...body, model: `${provider}/${model}` },
           modelInfo: { provider, model, extendedContext },
@@ -238,7 +264,7 @@ export async function executeChatWithBreaker({
       );
 
     if (bypassCircuitBreaker) {
-      if (!proxyInfo?.proxy && isTlsFingerprintActive()) {
+      if (!activeProxyInfo?.proxy && isTlsFingerprintActive()) {
         const tracked = await runWithTlsTracking(chatFn);
         return { result: tracked.result, tlsFingerprintUsed: tracked.tlsFingerprintUsed };
       }
@@ -247,41 +273,118 @@ export async function executeChatWithBreaker({
       return { result, tlsFingerprintUsed: false };
     }
 
-    if (!proxyInfo?.proxy && isTlsFingerprintActive()) {
+    if (!activeProxyInfo?.proxy && isTlsFingerprintActive()) {
       const tracked = await breaker.execute(async () => runWithTlsTracking(chatFn));
       return { result: tracked.result, tlsFingerprintUsed: tracked.tlsFingerprintUsed };
     }
 
     const result = await breaker.execute(chatFn);
     return { result, tlsFingerprintUsed: false };
-  } catch (cbErr: any) {
-    if (cbErr instanceof CircuitBreakerOpenError) {
-      log.warn("CIRCUIT", `${provider} circuit open during retry: ${cbErr.message}`);
-      return {
-        result: {
-          success: false,
-          response: providerCircuitOpenResponse(provider, Math.ceil(cbErr.retryAfterMs / 1000)),
-          status: HTTP_STATUS.SERVICE_UNAVAILABLE,
-        },
-        tlsFingerprintUsed: false,
-      };
-    }
+  };
 
-    if (cbErr?.code === "PROXY_UNREACHABLE" || /proxy unreachable/i.test(cbErr?.message || "")) {
+  while (true) {
+    const attemptStartedAt = Date.now();
+    try {
+      const execution = await executeOnce();
+      if (activeProxyInfo?.source === "oneproxy-rotation" && execution.result?.success !== false) {
+        await markRotatingProxySucceeded(activeProxyInfo.proxy, {
+          latencyMs: Date.now() - attemptStartedAt,
+        });
+      }
+      return { ...execution, proxyInfo: activeProxyInfo };
+    } catch (cbErr: any) {
+      if (cbErr instanceof CircuitBreakerOpenError) {
+        log.warn("CIRCUIT", `${provider} circuit open during retry: ${cbErr.message}`);
+        return {
+          result: {
+            success: false,
+            response: providerCircuitOpenResponse(provider, Math.ceil(cbErr.retryAfterMs / 1000)),
+            status: HTTP_STATUS.SERVICE_UNAVAILABLE,
+          },
+          tlsFingerprintUsed: false,
+          proxyInfo: activeProxyInfo,
+        };
+      }
+
+      if (!isProxyUnreachableError(cbErr)) {
+        throw cbErr;
+      }
+
       const detail = cbErr?.message || "Proxy unreachable";
       log.warn("PROXY", detail);
-      return {
-        result: {
-          success: false,
-          response: unavailableResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, detail, 2),
-          status: HTTP_STATUS.SERVICE_UNAVAILABLE,
-          error: detail,
-        },
-        tlsFingerprintUsed: false,
-      };
-    }
 
-    throw cbErr;
+      if (activeProxyInfo?.source !== "oneproxy-rotation") {
+        return {
+          result: {
+            success: false,
+            response: unavailableResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, detail, 2),
+            status: HTTP_STATUS.SERVICE_UNAVAILABLE,
+            error: detail,
+          },
+          tlsFingerprintUsed: false,
+          proxyInfo: activeProxyInfo,
+        };
+      }
+
+      const failedProxyId = getRotatingProxyId(activeProxyInfo);
+      if (failedProxyId) excludedRotatingProxyIds.add(failedProxyId);
+      await markRotatingProxyFailed(activeProxyInfo.proxy, cbErr);
+
+      if (!credentials.connectionId || rotatingProxyAttempt >= maxRotatingProxyAttempts) {
+        return {
+          result: {
+            success: false,
+            response: unavailableResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, detail, 2),
+            status: HTTP_STATUS.SERVICE_UNAVAILABLE,
+            error: detail,
+          },
+          tlsFingerprintUsed: false,
+          proxyInfo: activeProxyInfo,
+        };
+      }
+
+      const nextProxyInfo = await safeResolveProxy(credentials.connectionId, {
+        excludeRotatingProxyIds: Array.from(excludedRotatingProxyIds),
+        stickyContext,
+      });
+
+      if (nextProxyInfo?.source === "proxy-policy" && nextProxyInfo.error) {
+        return {
+          result: {
+            success: false,
+            response: unavailableResponse(
+              nextProxyInfo.status || HTTP_STATUS.SERVICE_UNAVAILABLE,
+              nextProxyInfo.error,
+              2
+            ),
+            status: nextProxyInfo.status || HTTP_STATUS.SERVICE_UNAVAILABLE,
+            error: nextProxyInfo.error,
+          },
+          tlsFingerprintUsed: false,
+          proxyInfo: activeProxyInfo,
+        };
+      }
+
+      if (nextProxyInfo?.source !== "oneproxy-rotation" || !nextProxyInfo.proxy) {
+        return {
+          result: {
+            success: false,
+            response: unavailableResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, detail, 2),
+            status: HTTP_STATUS.SERVICE_UNAVAILABLE,
+            error: detail,
+          },
+          tlsFingerprintUsed: false,
+          proxyInfo: activeProxyInfo,
+        };
+      }
+
+      rotatingProxyAttempt += 1;
+      activeProxyInfo = nextProxyInfo;
+      log.warn(
+        "PROXY",
+        `Retrying with next rotating proxy (${rotatingProxyAttempt}/${maxRotatingProxyAttempts})`
+      );
+    }
   }
 }
 
@@ -342,10 +445,33 @@ export function handleNoCredentials(
   );
 }
 
-export async function safeResolveProxy(connectionId: string) {
+export async function safeResolveProxy(
+  connectionId: string,
+  options: {
+    excludeRotatingProxyIds?: string[];
+    stickyContext?: {
+      sessionId?: string | null;
+      apiKeyId?: string | null;
+      provider?: string | null;
+      connectionId?: string | null;
+    };
+  } = {}
+) {
   try {
-    return await resolveProxyForConnection(connectionId);
+    return await resolveProxyForConnection(connectionId, options);
   } catch (proxyErr: any) {
+    if (isRotatingProxyRequiredError(proxyErr)) {
+      log.warn("PROXY", proxyErr.message);
+      return {
+        proxy: null,
+        level: "rotating-required",
+        levelId: connectionId,
+        source: "proxy-policy",
+        status: proxyErr.status || HTTP_STATUS.SERVICE_UNAVAILABLE,
+        error: proxyErr.message,
+        policy: proxyErr.policy || null,
+      };
+    }
     log.debug("PROXY", `Failed to resolve proxy: ${proxyErr.message}`);
     return null;
   }

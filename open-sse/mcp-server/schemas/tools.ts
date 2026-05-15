@@ -1177,9 +1177,28 @@ export const oneproxyFetchOutput = z.object({
       countryCode: z.string().nullable(),
       qualityScore: z.number().nullable(),
       latencyMs: z.number().nullable(),
+      effectiveScore: z.number(),
       anonymity: z.string().nullable(),
       googleAccess: z.boolean(),
       status: z.string(),
+      lastUsedAt: z.string().nullable(),
+      quarantinedUntil: z.string().nullable(),
+      lastError: z.string().nullable(),
+      lastErrorType: z.string().nullable(),
+      failureCount: z.number(),
+      failureStreak: z.number(),
+      successCount: z.number(),
+      requestCount: z.number(),
+      runtimeSuccessCount: z.number(),
+      runtimeFailureCount: z.number(),
+      avgLatencyMs: z.number().nullable(),
+      lastSuccessAt: z.string().nullable(),
+      lastFailureAt: z.string().nullable(),
+      successRate: z.number().nullable(),
+      successRate1h: z.number().nullable(),
+      successRate24h: z.number().nullable(),
+      p95LatencyMs1h: z.number().nullable(),
+      p95LatencyMs24h: z.number().nullable(),
     })
   ),
   total: z.number(),
@@ -1205,6 +1224,9 @@ export const oneproxyRotateInput = z.object({
     .enum(["random", "quality", "sequential"])
     .optional()
     .describe("Rotation strategy: quality (best first), random, or sequential"),
+  protocol: z.string().optional().describe("Filter by protocol: http, https, socks4, socks5"),
+  countryCode: z.string().optional().describe("Filter by country code (e.g. US, DE)"),
+  minQuality: z.number().optional().describe("Minimum quality score (0-100)"),
 });
 
 export const oneproxyRotateOutput = z.object({
@@ -1215,6 +1237,25 @@ export const oneproxyRotateOutput = z.object({
   countryCode: z.string().nullable(),
   qualityScore: z.number().nullable(),
   latencyMs: z.number().nullable(),
+  effectiveScore: z.number(),
+  lastUsedAt: z.string().nullable(),
+  quarantinedUntil: z.string().nullable(),
+  lastError: z.string().nullable(),
+  lastErrorType: z.string().nullable(),
+  failureCount: z.number(),
+  failureStreak: z.number(),
+  successCount: z.number(),
+  requestCount: z.number(),
+  runtimeSuccessCount: z.number(),
+  runtimeFailureCount: z.number(),
+  avgLatencyMs: z.number().nullable(),
+  lastSuccessAt: z.string().nullable(),
+  lastFailureAt: z.string().nullable(),
+  successRate: z.number().nullable(),
+  successRate1h: z.number().nullable(),
+  successRate24h: z.number().nullable(),
+  p95LatencyMs1h: z.number().nullable(),
+  p95LatencyMs24h: z.number().nullable(),
 });
 
 export const oneproxyRotateTool: McpToolDefinition<
@@ -1238,8 +1279,18 @@ export const oneproxyStatsOutput = z.object({
   stats: z.object({
     total: z.number(),
     active: z.number(),
+    quarantined: z.number(),
     avgQuality: z.number().nullable(),
+    avgEffectiveScore: z.number().nullable(),
     lastValidated: z.string().nullable(),
+    requestCount: z.number(),
+    runtimeSuccessCount: z.number(),
+    runtimeFailureCount: z.number(),
+    successRate: z.number().nullable(),
+    avgLatencyMs: z.number().nullable(),
+    lastUsedAt: z.string().nullable(),
+    lastSuccessAt: z.string().nullable(),
+    lastFailureAt: z.string().nullable(),
     byProtocol: z.array(z.object({ protocol: z.string(), count: z.number() })),
     byCountry: z.array(z.object({ countryCode: z.string(), count: z.number() })),
   }),
@@ -1250,6 +1301,55 @@ export const oneproxyStatsOutput = z.object({
     lastSyncCount: z.number(),
     consecutiveFailures: z.number(),
   }),
+  healthValidator: z
+    .object({
+      configured: z.boolean(),
+      active: z.boolean(),
+      running: z.boolean(),
+      intervalMinutes: z.number(),
+      batchSize: z.number(),
+      timeoutMs: z.number(),
+      testUrl: z.string(),
+      revalidateOlderThanMinutes: z.number(),
+      maxFailures: z.number(),
+      nextRunAt: z.string().nullable(),
+      lastRunAt: z.string().nullable(),
+      lastChecked: z.number(),
+      lastHealthy: z.number(),
+      lastUnhealthy: z.number(),
+      lastSkippedProxies: z.number(),
+    })
+    .optional(),
+  observability: z
+    .object({
+      active: z.boolean(),
+      running: z.boolean(),
+      retentionDays: z.number(),
+      cleanupIntervalMinutes: z.number(),
+      cleanupOnStartup: z.boolean(),
+      alertsEnabled: z.boolean(),
+      minActiveProxies: z.number(),
+      minSuccessRate: z.number(),
+      maxQuarantineRate: z.number(),
+      nextRunAt: z.string().nullable(),
+      lastRunAt: z.string().nullable(),
+      lastSuccess: z.boolean(),
+      lastError: z.string().nullable(),
+      lastDeleted: z.number(),
+    })
+    .optional(),
+  alerts: z
+    .array(
+      z.object({
+        code: z.enum(["low_active_pool", "low_success_rate", "high_quarantine_rate"]),
+        severity: z.enum(["warning", "critical"]),
+        message: z.string(),
+        value: z.number(),
+        threshold: z.number(),
+        generatedAt: z.string(),
+      })
+    )
+    .optional(),
 });
 
 export const oneproxyStatsTool: McpToolDefinition<
@@ -1258,7 +1358,7 @@ export const oneproxyStatsTool: McpToolDefinition<
 > = {
   name: "omniroute_oneproxy_stats",
   description:
-    "Returns 1proxy sync status and statistics: total proxies, average quality, sync history, and distribution by protocol and country.",
+    "Returns 1proxy sync status, observability alerts, cleanup state, pool statistics, and distribution by protocol and country.",
   inputSchema: oneproxyStatsInput,
   outputSchema: oneproxyStatsOutput,
   scopes: ["read:proxies"],

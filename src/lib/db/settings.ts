@@ -7,6 +7,7 @@ import { backupDbFile } from "./backup";
 import { PROVIDER_ID_TO_ALIAS } from "@omniroute/open-sse/config/providerModels.ts";
 import { invalidateDbCache } from "./readCache";
 import { resolveProxyForConnectionFromRegistry } from "./proxies";
+import { resolveRotatingProxyForConnection } from "../rotatingProxy";
 import { getComboModelProvider as getComboEntryProvider } from "@/lib/combos/steps";
 import { requestBodyLimitMbFromEnv } from "@/shared/constants/bodySize";
 
@@ -63,6 +64,54 @@ export async function getSettings() {
     comboConfigMode: "guided",
     alwaysPreserveClientCache: "auto",
     idempotencyWindowMs: 5000,
+    rotatingProxy: {
+      enabled: false,
+      source: "oneproxy",
+      strategy: "random",
+      scope: "global",
+      protocol: null,
+      minQuality: 50,
+      stickyMode: "per-request",
+      stickyTtlMinutes: 30,
+    },
+    rotatingProxyPolicy: {
+      defaultMode: "optional",
+      failBehavior: "fail-open",
+      protocol: null,
+      countryCode: null,
+      minQuality: null,
+      stickyMode: null,
+      stickyTtlMinutes: null,
+      maxProxyRetries: 3,
+      providerOverrides: {},
+      accountOverrides: {},
+    },
+    oneproxySync: {
+      enabled: false,
+      intervalMinutes: 360,
+      maxProxies: 500,
+      minQuality: 50,
+      syncOnStartup: true,
+    },
+    oneproxyHealth: {
+      enabled: false,
+      intervalMinutes: 30,
+      batchSize: 25,
+      timeoutMs: 8000,
+      testUrl: "https://www.google.com/generate_204",
+      revalidateOlderThanMinutes: 60,
+      maxFailures: 3,
+      validateOnStartup: true,
+    },
+    oneproxyObservability: {
+      retentionDays: 30,
+      cleanupIntervalMinutes: 360,
+      cleanupOnStartup: true,
+      alertsEnabled: true,
+      minActiveProxies: 10,
+      minSuccessRate: 80,
+      maxQuarantineRate: 25,
+    },
     wsAuth: false,
     maxBodySizeMb: requestBodyLimitMbFromEnv(process.env.MAX_BODY_SIZE_BYTES),
   };
@@ -494,7 +543,44 @@ export async function deleteProxyForLevel(level: string, id: string | null) {
   return setProxyForLevel(level, id, null);
 }
 
-export async function resolveProxyForConnection(connectionId: string) {
+export async function resolveProxyForConnection(
+  connectionId: string,
+  options: {
+    excludeRotatingProxyIds?: string[];
+    stickyContext?: {
+      sessionId?: string | null;
+      apiKeyId?: string | null;
+      provider?: string | null;
+      connectionId?: string | null;
+    };
+  } = {}
+) {
+  const db = getDbInstance();
+  const connection = db
+    .prepare("SELECT id, provider FROM provider_connections WHERE id = ?")
+    .get(connectionId);
+  const connectionRecord = toRecord(connection);
+  const settings = await getSettings();
+  const rotatingProxyResolved = await resolveRotatingProxyForConnection(
+    settings,
+    {
+      id: connectionId,
+      provider:
+        typeof connectionRecord.provider === "string" ? connectionRecord.provider : undefined,
+    },
+    {
+      excludeProxyIds: options.excludeRotatingProxyIds,
+      stickyContext: {
+        ...options.stickyContext,
+        provider:
+          options.stickyContext?.provider ||
+          (typeof connectionRecord.provider === "string" ? connectionRecord.provider : null),
+        connectionId,
+      },
+    }
+  );
+  if (rotatingProxyResolved?.proxy) return rotatingProxyResolved;
+
   const registryResolved = await resolveProxyForConnectionFromRegistry(connectionId);
   if (registryResolved?.proxy) {
     return registryResolved;
@@ -506,13 +592,7 @@ export async function resolveProxyForConnection(connectionId: string) {
     return { proxy: config.keys[connectionId], level: "key", levelId: connectionId };
   }
 
-  const db = getDbInstance();
-  const connection = db
-    .prepare("SELECT provider FROM provider_connections WHERE id = ?")
-    .get(connectionId);
-
   if (connection) {
-    const connectionRecord = toRecord(connection);
     const provider =
       typeof connectionRecord.provider === "string" ? connectionRecord.provider : null;
     if (config.combos && Object.keys(config.combos).length > 0) {

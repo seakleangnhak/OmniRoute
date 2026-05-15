@@ -1,5 +1,6 @@
 import type { CompressionResult, CompressionMode } from "./types.ts";
 import { createCompressionStats } from "./stats.ts";
+import { mapTextContent } from "./messageContent.ts";
 
 interface Message {
   role: string;
@@ -74,10 +75,11 @@ export function collapseWhitespace(
   let applied = false;
   const messages = body.messages.map((msg) => {
     if (options.preserveSystemPrompt === true && msg.role === "system") return msg;
-    if (typeof msg.content !== "string") return msg;
-    const normalized = normalizeMessageWhitespace(msg.content);
-    if (normalized !== msg.content) applied = true;
-    return { ...msg, content: normalized };
+    return mapTextContent(msg, (text) => {
+      const normalized = normalizeMessageWhitespace(text);
+      if (normalized !== text) applied = true;
+      return normalized;
+    }) as Message;
   });
   return { body: { ...body, messages }, applied };
 }

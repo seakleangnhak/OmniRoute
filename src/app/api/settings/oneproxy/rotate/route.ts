@@ -27,6 +27,9 @@ export async function POST(request: Request) {
 
     const proxy = await rotateOneproxyProxy({
       strategy: validation.data.strategy,
+      protocol: validation.data.protocol,
+      countryCode: validation.data.countryCode,
+      minQuality: validation.data.minQuality,
     });
 
     if (!proxy) {

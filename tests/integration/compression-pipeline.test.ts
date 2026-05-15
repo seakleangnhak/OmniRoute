@@ -145,4 +145,41 @@ describe("Full Compression Pipeline", () => {
     const objTokens = estimateCompressionTokens(obj);
     assert.equal(objTokens, Math.ceil(JSON.stringify(obj).length / 4));
   });
+
+  it("compresses native Responses API input before Codex passthrough", () => {
+    const body = {
+      model: "codex/gpt-5.4",
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: "please please please inspect this output\n\n\n\nline one   \nline two   ",
+            },
+          ],
+        },
+        {
+          type: "function_call_output",
+          call_id: "call_1",
+          output: "x".repeat(3000),
+        },
+      ],
+    };
+
+    const result = applyCompression(body, "lite");
+
+    assert.equal(result.compressed, true);
+    const resultBody = result.body as {
+      input?: Array<{ content?: Array<{ type?: string; text?: string }>; output?: string }>;
+      messages?: unknown;
+    };
+    assert.ok(Array.isArray(resultBody.input));
+    assert.equal(resultBody.messages, undefined);
+    const input = resultBody.input;
+    assert.equal(input[0]?.content?.[0]?.type, "input_text");
+    assert.equal(input[0]?.content?.[0]?.text?.includes("\n\n\n"), false);
+    assert.equal(input[1]?.output?.endsWith("...[truncated]"), true);
+  });
 });

@@ -69,6 +69,54 @@ test("getSettings exposes defaults and updateSettings persists typed values", as
   assert.equal(defaults.requestRetry, 3);
   assert.equal(defaults.maxRetryIntervalSec, 30);
   assert.equal(defaults.antigravitySignatureCacheMode, "enabled");
+  assert.deepEqual(defaults.rotatingProxy, {
+    enabled: false,
+    source: "oneproxy",
+    strategy: "random",
+    scope: "global",
+    protocol: null,
+    minQuality: 50,
+    stickyMode: "per-request",
+    stickyTtlMinutes: 30,
+  });
+  assert.deepEqual(defaults.rotatingProxyPolicy, {
+    defaultMode: "optional",
+    failBehavior: "fail-open",
+    protocol: null,
+    countryCode: null,
+    minQuality: null,
+    stickyMode: null,
+    stickyTtlMinutes: null,
+    maxProxyRetries: 3,
+    providerOverrides: {},
+    accountOverrides: {},
+  });
+  assert.deepEqual(defaults.oneproxySync, {
+    enabled: false,
+    intervalMinutes: 360,
+    maxProxies: 500,
+    minQuality: 50,
+    syncOnStartup: true,
+  });
+  assert.deepEqual(defaults.oneproxyHealth, {
+    enabled: false,
+    intervalMinutes: 30,
+    batchSize: 25,
+    timeoutMs: 8000,
+    testUrl: "https://www.google.com/generate_204",
+    revalidateOlderThanMinutes: 60,
+    maxFailures: 3,
+    validateOnStartup: true,
+  });
+  assert.deepEqual(defaults.oneproxyObservability, {
+    retentionDays: 30,
+    cleanupIntervalMinutes: 360,
+    cleanupOnStartup: true,
+    alertsEnabled: true,
+    minActiveProxies: 10,
+    minSuccessRate: 80,
+    maxQuarantineRate: 25,
+  });
   assert.equal(defaults.comboConfigMode, "guided");
   assert.equal(defaults.mcpEnabled, false);
   assert.equal(defaults.a2aEnabled, false);

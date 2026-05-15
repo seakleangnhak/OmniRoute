@@ -12,6 +12,9 @@ export type RuntimeReloadSection =
   | "healthCheckLogs"
   | "thoughtSignature"
   | "modelsDevSync"
+  | "oneproxyAutoSync"
+  | "oneproxyHealthValidator"
+  | "oneproxyObservability"
   | "corsOrigins";
 
 export interface RuntimeReloadChange {
@@ -30,6 +33,26 @@ interface RuntimeSettingsSnapshot {
   hideHealthCheckLogs: boolean;
   modelsDevSyncEnabled: boolean;
   modelsDevSyncInterval: number | null;
+  oneproxyAutoSyncEnabled: boolean;
+  oneproxyAutoSyncIntervalMinutes: number;
+  oneproxyAutoSyncMaxProxies: number;
+  oneproxyAutoSyncMinQuality: number;
+  oneproxyAutoSyncOnStartup: boolean;
+  oneproxyHealthEnabled: boolean;
+  oneproxyHealthIntervalMinutes: number;
+  oneproxyHealthBatchSize: number;
+  oneproxyHealthTimeoutMs: number;
+  oneproxyHealthTestUrl: string;
+  oneproxyHealthRevalidateOlderThanMinutes: number;
+  oneproxyHealthMaxFailures: number;
+  oneproxyHealthValidateOnStartup: boolean;
+  oneproxyObservabilityRetentionDays: number;
+  oneproxyObservabilityCleanupIntervalMinutes: number;
+  oneproxyObservabilityCleanupOnStartup: boolean;
+  oneproxyObservabilityAlertsEnabled: boolean;
+  oneproxyObservabilityMinActiveProxies: number;
+  oneproxyObservabilityMinSuccessRate: number;
+  oneproxyObservabilityMaxQuarantineRate: number;
   corsOrigins: string;
 }
 
@@ -44,6 +67,26 @@ const DEFAULT_RUNTIME_SETTINGS_SNAPSHOT: RuntimeSettingsSnapshot = {
   hideHealthCheckLogs: false,
   modelsDevSyncEnabled: false,
   modelsDevSyncInterval: null,
+  oneproxyAutoSyncEnabled: false,
+  oneproxyAutoSyncIntervalMinutes: 360,
+  oneproxyAutoSyncMaxProxies: 500,
+  oneproxyAutoSyncMinQuality: 50,
+  oneproxyAutoSyncOnStartup: true,
+  oneproxyHealthEnabled: false,
+  oneproxyHealthIntervalMinutes: 30,
+  oneproxyHealthBatchSize: 25,
+  oneproxyHealthTimeoutMs: 8000,
+  oneproxyHealthTestUrl: "https://www.google.com/generate_204",
+  oneproxyHealthRevalidateOlderThanMinutes: 60,
+  oneproxyHealthMaxFailures: 3,
+  oneproxyHealthValidateOnStartup: true,
+  oneproxyObservabilityRetentionDays: 30,
+  oneproxyObservabilityCleanupIntervalMinutes: 360,
+  oneproxyObservabilityCleanupOnStartup: true,
+  oneproxyObservabilityAlertsEnabled: true,
+  oneproxyObservabilityMinActiveProxies: 10,
+  oneproxyObservabilityMinSuccessRate: 80,
+  oneproxyObservabilityMaxQuarantineRate: 25,
   corsOrigins: "",
 };
 
@@ -155,6 +198,15 @@ function normalizeNumber(value: unknown): number | null {
   return null;
 }
 
+function normalizeInteger(value: unknown, fallback: number): number {
+  const normalized = normalizeNumber(value);
+  return normalized === null ? fallback : Math.trunc(normalized);
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
 function normalizePayloadRules(value: unknown): unknown {
   return parseStoredJson(value, "payloadRules");
 }
@@ -179,6 +231,83 @@ export function buildRuntimeSettingsSnapshot(
     hideHealthCheckLogs: settings.hideHealthCheckLogs === true,
     modelsDevSyncEnabled: settings.modelsDevSyncEnabled === true,
     modelsDevSyncInterval: normalizeNumber(settings.modelsDevSyncInterval),
+    oneproxyAutoSyncEnabled: toRecord(settings.oneproxySync).enabled === true,
+    oneproxyAutoSyncIntervalMinutes: clampNumber(
+      normalizeInteger(toRecord(settings.oneproxySync).intervalMinutes, 360),
+      5,
+      10080
+    ),
+    oneproxyAutoSyncMaxProxies: clampNumber(
+      normalizeInteger(toRecord(settings.oneproxySync).maxProxies, 500),
+      1,
+      1000
+    ),
+    oneproxyAutoSyncMinQuality: clampNumber(
+      normalizeInteger(toRecord(settings.oneproxySync).minQuality, 50),
+      0,
+      100
+    ),
+    oneproxyAutoSyncOnStartup: toRecord(settings.oneproxySync).syncOnStartup !== false,
+    oneproxyHealthEnabled: toRecord(settings.oneproxyHealth).enabled === true,
+    oneproxyHealthIntervalMinutes: clampNumber(
+      normalizeInteger(toRecord(settings.oneproxyHealth).intervalMinutes, 30),
+      5,
+      10080
+    ),
+    oneproxyHealthBatchSize: clampNumber(
+      normalizeInteger(toRecord(settings.oneproxyHealth).batchSize, 25),
+      1,
+      200
+    ),
+    oneproxyHealthTimeoutMs: clampNumber(
+      normalizeInteger(toRecord(settings.oneproxyHealth).timeoutMs, 8000),
+      1000,
+      30000
+    ),
+    oneproxyHealthTestUrl:
+      typeof toRecord(settings.oneproxyHealth).testUrl === "string"
+        ? String(toRecord(settings.oneproxyHealth).testUrl)
+        : DEFAULT_RUNTIME_SETTINGS_SNAPSHOT.oneproxyHealthTestUrl,
+    oneproxyHealthRevalidateOlderThanMinutes: clampNumber(
+      normalizeInteger(toRecord(settings.oneproxyHealth).revalidateOlderThanMinutes, 60),
+      5,
+      43200
+    ),
+    oneproxyHealthMaxFailures: clampNumber(
+      normalizeInteger(toRecord(settings.oneproxyHealth).maxFailures, 3),
+      1,
+      10
+    ),
+    oneproxyHealthValidateOnStartup: toRecord(settings.oneproxyHealth).validateOnStartup !== false,
+    oneproxyObservabilityRetentionDays: clampNumber(
+      normalizeInteger(toRecord(settings.oneproxyObservability).retentionDays, 30),
+      1,
+      365
+    ),
+    oneproxyObservabilityCleanupIntervalMinutes: clampNumber(
+      normalizeInteger(toRecord(settings.oneproxyObservability).cleanupIntervalMinutes, 360),
+      5,
+      10080
+    ),
+    oneproxyObservabilityCleanupOnStartup:
+      toRecord(settings.oneproxyObservability).cleanupOnStartup !== false,
+    oneproxyObservabilityAlertsEnabled:
+      toRecord(settings.oneproxyObservability).alertsEnabled !== false,
+    oneproxyObservabilityMinActiveProxies: clampNumber(
+      normalizeInteger(toRecord(settings.oneproxyObservability).minActiveProxies, 10),
+      0,
+      100000
+    ),
+    oneproxyObservabilityMinSuccessRate: clampNumber(
+      normalizeInteger(toRecord(settings.oneproxyObservability).minSuccessRate, 80),
+      0,
+      100
+    ),
+    oneproxyObservabilityMaxQuarantineRate: clampNumber(
+      normalizeInteger(toRecord(settings.oneproxyObservability).maxQuarantineRate, 25),
+      0,
+      100
+    ),
     corsOrigins: typeof settings.corsOrigins === "string" ? settings.corsOrigins : "",
   };
 }
@@ -257,6 +386,144 @@ async function applyCorsOriginsSection(corsOrigins: string) {
   setRuntimeAllowedOrigins(corsOrigins);
 }
 
+async function applyOneproxyAutoSyncSection(
+  previousSnapshot: RuntimeSettingsSnapshot,
+  currentSnapshot: RuntimeSettingsSnapshot,
+  force: boolean
+) {
+  const { startOneproxyAutoSyncScheduler, stopOneproxyAutoSyncScheduler } =
+    await import("@/lib/oneproxyAutoSync");
+  const skipBackgroundSyncInTests =
+    (isAutomatedTestProcess() && process.env.OMNIROUTE_ENABLE_RUNTIME_BACKGROUND_TASKS !== "1") ||
+    isTruthyEnvFlag(process.env.OMNIROUTE_DISABLE_BACKGROUND_SERVICES);
+
+  if (skipBackgroundSyncInTests) {
+    stopOneproxyAutoSyncScheduler();
+    return;
+  }
+
+  const wasEnabled = previousSnapshot.oneproxyAutoSyncEnabled === true;
+  const isEnabled = currentSnapshot.oneproxyAutoSyncEnabled === true;
+  const configChanged =
+    previousSnapshot.oneproxyAutoSyncIntervalMinutes !==
+      currentSnapshot.oneproxyAutoSyncIntervalMinutes ||
+    previousSnapshot.oneproxyAutoSyncMaxProxies !== currentSnapshot.oneproxyAutoSyncMaxProxies ||
+    previousSnapshot.oneproxyAutoSyncMinQuality !== currentSnapshot.oneproxyAutoSyncMinQuality ||
+    previousSnapshot.oneproxyAutoSyncOnStartup !== currentSnapshot.oneproxyAutoSyncOnStartup;
+
+  if (!isEnabled) {
+    if (wasEnabled || force) {
+      stopOneproxyAutoSyncScheduler();
+    }
+    return;
+  }
+
+  if (force || !wasEnabled || configChanged) {
+    startOneproxyAutoSyncScheduler({
+      enabled: true,
+      intervalMinutes: currentSnapshot.oneproxyAutoSyncIntervalMinutes,
+      maxProxies: currentSnapshot.oneproxyAutoSyncMaxProxies,
+      minQuality: currentSnapshot.oneproxyAutoSyncMinQuality,
+      syncOnStartup: currentSnapshot.oneproxyAutoSyncOnStartup,
+    });
+  }
+}
+
+async function applyOneproxyHealthValidatorSection(
+  previousSnapshot: RuntimeSettingsSnapshot,
+  currentSnapshot: RuntimeSettingsSnapshot,
+  force: boolean
+) {
+  const { startOneproxyHealthValidatorScheduler, stopOneproxyHealthValidatorScheduler } =
+    await import("@/lib/oneproxyHealthValidator");
+  const skipBackgroundSyncInTests =
+    (isAutomatedTestProcess() && process.env.OMNIROUTE_ENABLE_RUNTIME_BACKGROUND_TASKS !== "1") ||
+    isTruthyEnvFlag(process.env.OMNIROUTE_DISABLE_BACKGROUND_SERVICES);
+
+  if (skipBackgroundSyncInTests) {
+    stopOneproxyHealthValidatorScheduler();
+    return;
+  }
+
+  const wasEnabled = previousSnapshot.oneproxyHealthEnabled === true;
+  const isEnabled = currentSnapshot.oneproxyHealthEnabled === true;
+  const configChanged =
+    previousSnapshot.oneproxyHealthIntervalMinutes !==
+      currentSnapshot.oneproxyHealthIntervalMinutes ||
+    previousSnapshot.oneproxyHealthBatchSize !== currentSnapshot.oneproxyHealthBatchSize ||
+    previousSnapshot.oneproxyHealthTimeoutMs !== currentSnapshot.oneproxyHealthTimeoutMs ||
+    previousSnapshot.oneproxyHealthTestUrl !== currentSnapshot.oneproxyHealthTestUrl ||
+    previousSnapshot.oneproxyHealthRevalidateOlderThanMinutes !==
+      currentSnapshot.oneproxyHealthRevalidateOlderThanMinutes ||
+    previousSnapshot.oneproxyHealthMaxFailures !== currentSnapshot.oneproxyHealthMaxFailures ||
+    previousSnapshot.oneproxyHealthValidateOnStartup !==
+      currentSnapshot.oneproxyHealthValidateOnStartup;
+
+  if (!isEnabled) {
+    if (wasEnabled || force) {
+      stopOneproxyHealthValidatorScheduler();
+    }
+    return;
+  }
+
+  if (force || !wasEnabled || configChanged) {
+    startOneproxyHealthValidatorScheduler({
+      enabled: true,
+      intervalMinutes: currentSnapshot.oneproxyHealthIntervalMinutes,
+      batchSize: currentSnapshot.oneproxyHealthBatchSize,
+      timeoutMs: currentSnapshot.oneproxyHealthTimeoutMs,
+      testUrl: currentSnapshot.oneproxyHealthTestUrl,
+      revalidateOlderThanMinutes: currentSnapshot.oneproxyHealthRevalidateOlderThanMinutes,
+      maxFailures: currentSnapshot.oneproxyHealthMaxFailures,
+      validateOnStartup: currentSnapshot.oneproxyHealthValidateOnStartup,
+    });
+  }
+}
+
+async function applyOneproxyObservabilitySection(
+  previousSnapshot: RuntimeSettingsSnapshot,
+  currentSnapshot: RuntimeSettingsSnapshot,
+  force: boolean
+) {
+  const { startOneproxyObservabilityScheduler, stopOneproxyObservabilityScheduler } =
+    await import("@/lib/oneproxyObservability");
+  const skipBackgroundSyncInTests =
+    (isAutomatedTestProcess() && process.env.OMNIROUTE_ENABLE_RUNTIME_BACKGROUND_TASKS !== "1") ||
+    isTruthyEnvFlag(process.env.OMNIROUTE_DISABLE_BACKGROUND_SERVICES);
+
+  if (skipBackgroundSyncInTests) {
+    stopOneproxyObservabilityScheduler();
+    return;
+  }
+
+  const configChanged =
+    previousSnapshot.oneproxyObservabilityRetentionDays !==
+      currentSnapshot.oneproxyObservabilityRetentionDays ||
+    previousSnapshot.oneproxyObservabilityCleanupIntervalMinutes !==
+      currentSnapshot.oneproxyObservabilityCleanupIntervalMinutes ||
+    previousSnapshot.oneproxyObservabilityCleanupOnStartup !==
+      currentSnapshot.oneproxyObservabilityCleanupOnStartup ||
+    previousSnapshot.oneproxyObservabilityAlertsEnabled !==
+      currentSnapshot.oneproxyObservabilityAlertsEnabled ||
+    previousSnapshot.oneproxyObservabilityMinActiveProxies !==
+      currentSnapshot.oneproxyObservabilityMinActiveProxies ||
+    previousSnapshot.oneproxyObservabilityMinSuccessRate !==
+      currentSnapshot.oneproxyObservabilityMinSuccessRate ||
+    previousSnapshot.oneproxyObservabilityMaxQuarantineRate !==
+      currentSnapshot.oneproxyObservabilityMaxQuarantineRate;
+
+  if (force || configChanged) {
+    startOneproxyObservabilityScheduler({
+      retentionDays: currentSnapshot.oneproxyObservabilityRetentionDays,
+      cleanupIntervalMinutes: currentSnapshot.oneproxyObservabilityCleanupIntervalMinutes,
+      cleanupOnStartup: currentSnapshot.oneproxyObservabilityCleanupOnStartup,
+      alertsEnabled: currentSnapshot.oneproxyObservabilityAlertsEnabled,
+      minActiveProxies: currentSnapshot.oneproxyObservabilityMinActiveProxies,
+      minSuccessRate: currentSnapshot.oneproxyObservabilityMinSuccessRate,
+      maxQuarantineRate: currentSnapshot.oneproxyObservabilityMaxQuarantineRate,
+    });
+  }
+}
 async function applyModelsDevSyncSection(
   previousSnapshot: RuntimeSettingsSnapshot,
   currentSnapshot: RuntimeSettingsSnapshot,
@@ -385,6 +652,62 @@ export async function applyRuntimeSettings(
   ) {
     await applyModelsDevSyncSection(previousSnapshot, currentSnapshot, force);
     markChanged("modelsDevSync");
+  }
+
+  if (
+    force ||
+    (hasBootstrappedSnapshot &&
+      (currentSnapshot.oneproxyAutoSyncEnabled !== previousSnapshot.oneproxyAutoSyncEnabled ||
+        currentSnapshot.oneproxyAutoSyncIntervalMinutes !==
+          previousSnapshot.oneproxyAutoSyncIntervalMinutes ||
+        currentSnapshot.oneproxyAutoSyncMaxProxies !==
+          previousSnapshot.oneproxyAutoSyncMaxProxies ||
+        currentSnapshot.oneproxyAutoSyncMinQuality !==
+          previousSnapshot.oneproxyAutoSyncMinQuality ||
+        currentSnapshot.oneproxyAutoSyncOnStartup !== previousSnapshot.oneproxyAutoSyncOnStartup))
+  ) {
+    await applyOneproxyAutoSyncSection(previousSnapshot, currentSnapshot, force);
+    markChanged("oneproxyAutoSync");
+  }
+
+  if (
+    force ||
+    (hasBootstrappedSnapshot &&
+      (currentSnapshot.oneproxyHealthEnabled !== previousSnapshot.oneproxyHealthEnabled ||
+        currentSnapshot.oneproxyHealthIntervalMinutes !==
+          previousSnapshot.oneproxyHealthIntervalMinutes ||
+        currentSnapshot.oneproxyHealthBatchSize !== previousSnapshot.oneproxyHealthBatchSize ||
+        currentSnapshot.oneproxyHealthTimeoutMs !== previousSnapshot.oneproxyHealthTimeoutMs ||
+        currentSnapshot.oneproxyHealthTestUrl !== previousSnapshot.oneproxyHealthTestUrl ||
+        currentSnapshot.oneproxyHealthRevalidateOlderThanMinutes !==
+          previousSnapshot.oneproxyHealthRevalidateOlderThanMinutes ||
+        currentSnapshot.oneproxyHealthMaxFailures !== previousSnapshot.oneproxyHealthMaxFailures ||
+        currentSnapshot.oneproxyHealthValidateOnStartup !==
+          previousSnapshot.oneproxyHealthValidateOnStartup))
+  ) {
+    await applyOneproxyHealthValidatorSection(previousSnapshot, currentSnapshot, force);
+    markChanged("oneproxyHealthValidator");
+  }
+  if (
+    force ||
+    (hasBootstrappedSnapshot &&
+      (currentSnapshot.oneproxyObservabilityRetentionDays !==
+        previousSnapshot.oneproxyObservabilityRetentionDays ||
+        currentSnapshot.oneproxyObservabilityCleanupIntervalMinutes !==
+          previousSnapshot.oneproxyObservabilityCleanupIntervalMinutes ||
+        currentSnapshot.oneproxyObservabilityCleanupOnStartup !==
+          previousSnapshot.oneproxyObservabilityCleanupOnStartup ||
+        currentSnapshot.oneproxyObservabilityAlertsEnabled !==
+          previousSnapshot.oneproxyObservabilityAlertsEnabled ||
+        currentSnapshot.oneproxyObservabilityMinActiveProxies !==
+          previousSnapshot.oneproxyObservabilityMinActiveProxies ||
+        currentSnapshot.oneproxyObservabilityMinSuccessRate !==
+          previousSnapshot.oneproxyObservabilityMinSuccessRate ||
+        currentSnapshot.oneproxyObservabilityMaxQuarantineRate !==
+          previousSnapshot.oneproxyObservabilityMaxQuarantineRate))
+  ) {
+    await applyOneproxyObservabilitySection(previousSnapshot, currentSnapshot, force);
+    markChanged("oneproxyObservability");
   }
 
   if (force || hasChanged(currentSnapshot.corsOrigins, previousSnapshot.corsOrigins)) {

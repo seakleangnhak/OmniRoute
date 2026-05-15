@@ -1606,7 +1606,9 @@ export async function handleChatCore({
   // Check if context exceeds 70% of limit and compress proactively before sending to provider.
   // This prevents "prompt too long" errors for large-but-not-full contexts.
   const allMessages =
-    body?.messages || body?.input || body?.contents || body?.request?.contents || [];
+    Array.isArray(body?.messages) && body.messages.length > 0
+      ? body.messages
+      : body?.input || body?.contents || body?.request?.contents || [];
   let cavemanOutputModeApplied = false;
   let cavemanOutputModeIntensity: string | null = null;
   if (body && Array.isArray(allMessages) && allMessages.length > 0) {

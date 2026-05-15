@@ -6,13 +6,29 @@ import {
   getOneproxyStats,
   deleteOneproxyProxy,
   clearAllOneproxyProxies,
+  getSettings,
+  listOneproxyProxyEvents,
+  getOneproxyPoolAlerts,
 } from "@/lib/localDb";
 import {
   syncOneproxyProxies,
   getOneproxySyncStatus,
   resetOneproxyCircuitBreaker,
 } from "@/lib/oneproxySync";
-import { oneproxyFilterSchema, oneproxySyncSchema } from "@/shared/validation/oneproxySchemas";
+import { getOneproxyAutoSyncStatus } from "@/lib/oneproxyAutoSync";
+import {
+  getOneproxyObservabilityStatus,
+  runOneproxyObservabilityCleanupCycle,
+} from "@/lib/oneproxyObservability";
+import {
+  getOneproxyHealthValidatorStatus,
+  runOneproxyHealthValidationCycle,
+} from "@/lib/oneproxyHealthValidator";
+import {
+  oneproxyFilterSchema,
+  oneproxySyncSchema,
+  oneproxyValidateSchema,
+} from "@/shared/validation/oneproxySchemas";
 
 export async function GET(request: Request) {
   const authError = await requireManagementAuth(request);
@@ -21,15 +37,37 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const action = searchParams.get("action");
+    if (action === "events") {
+      const events = await listOneproxyProxyEvents({
+        proxyId: searchParams.get("proxyId") || undefined,
+        eventType: searchParams.get("eventType") || undefined,
+        limit: searchParams.get("limit") ? Number(searchParams.get("limit")) : undefined,
+      });
+      return Response.json({ items: events, total: events.length });
+    }
 
     if (action === "stats") {
       const stats = await getOneproxyStats();
+      const settings = await getSettings();
       const status = getOneproxySyncStatus();
-      return Response.json({ stats, status });
+      const autoSync = getOneproxyAutoSyncStatus();
+      const healthValidator = getOneproxyHealthValidatorStatus();
+      const observability = getOneproxyObservabilityStatus();
+      const alerts = await getOneproxyPoolAlerts(
+        settings.oneproxyObservability && typeof settings.oneproxyObservability === "object"
+          ? (settings.oneproxyObservability as Record<string, unknown>)
+          : undefined
+      );
+      return Response.json({ stats, status, autoSync, healthValidator, observability, alerts });
     }
 
     if (action === "status") {
-      return Response.json(getOneproxySyncStatus());
+      return Response.json({
+        ...getOneproxySyncStatus(),
+        autoSync: getOneproxyAutoSyncStatus(),
+        healthValidator: getOneproxyHealthValidatorStatus(),
+        observability: getOneproxyObservabilityStatus(),
+      });
     }
 
     const filterValidation = validateBody(oneproxyFilterSchema, {
@@ -77,6 +115,45 @@ export async function POST(request: Request) {
   }
 
   try {
+    const { searchParams } = new URL(request.url);
+    const action = searchParams.get("action");
+
+    if (action === "cleanup-events") {
+      const settings = await getSettings();
+      const result = await runOneproxyObservabilityCleanupCycle(
+        settings.oneproxyObservability && typeof settings.oneproxyObservability === "object"
+          ? (settings.oneproxyObservability as Record<string, unknown>)
+          : undefined,
+        { force: true }
+      );
+      return Response.json(result);
+    }
+    if (action === "validate") {
+      const validation = validateBody(oneproxyValidateSchema, rawBody);
+      if (isValidationFailure(validation)) {
+        return createErrorResponse({
+          status: 400,
+          message: validation.error.message,
+          type: "invalid_request",
+        });
+      }
+
+      const settings = await getSettings();
+      const currentHealthSettings =
+        settings.oneproxyHealth && typeof settings.oneproxyHealth === "object"
+          ? (settings.oneproxyHealth as Record<string, unknown>)
+          : {};
+      const result = await runOneproxyHealthValidationCycle(
+        {
+          ...currentHealthSettings,
+          ...validation.data,
+          enabled: true,
+        },
+        { force: true }
+      );
+      return Response.json(result);
+    }
+
     const validation = validateBody(oneproxySyncSchema, rawBody);
     if (isValidationFailure(validation)) {
       return createErrorResponse({

@@ -19,6 +19,163 @@ import {
   type CachingDetectionContext,
 } from "./cachingAware.ts";
 
+type JsonRecord = Record<string, unknown>;
+
+type ResponsesInputMapping =
+  | { kind: "input-string" }
+  | { kind: "message"; index: number }
+  | { kind: "tool-output"; index: number };
+
+type ResponsesInputCompressionAdapter = {
+  body: Record<string, unknown>;
+  restore: (compressedBody: Record<string, unknown>) => Record<string, unknown>;
+};
+
+function isRecord(value: unknown): value is JsonRecord {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function toTextContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return String(content ?? "");
+  return content
+    .map((part) => {
+      if (isRecord(part) && typeof part.text === "string") return part.text;
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function restoreTextContentShape(originalContent: unknown, compressedContent: unknown): unknown {
+  if (typeof originalContent === "string") return toTextContent(compressedContent);
+  if (!Array.isArray(originalContent) || !Array.isArray(compressedContent))
+    return compressedContent;
+
+  let textIndex = 0;
+  return originalContent.map((part) => {
+    if (!isRecord(part) || typeof part.text !== "string") return part;
+
+    while (
+      textIndex < compressedContent.length &&
+      (!isRecord(compressedContent[textIndex]) ||
+        typeof compressedContent[textIndex].text !== "string")
+    ) {
+      textIndex += 1;
+    }
+
+    const compressedPart = compressedContent[textIndex];
+    textIndex += 1;
+    return isRecord(compressedPart) && typeof compressedPart.text === "string"
+      ? { ...part, text: compressedPart.text }
+      : part;
+  });
+}
+
+function getMessageRole(value: unknown, fallback = "user"): string {
+  return typeof value === "string" && value.trim().length > 0 ? value : fallback;
+}
+
+function createResponsesInputCompressionAdapter(
+  body: Record<string, unknown>
+): ResponsesInputCompressionAdapter | null {
+  if (Array.isArray(body.messages) && body.messages.length > 0) return null;
+  if (body.input === undefined) return null;
+
+  const input = body.input;
+  const messages: JsonRecord[] = [];
+  const mappings: ResponsesInputMapping[] = [];
+
+  if (typeof input === "string") {
+    messages.push({ role: "user", content: input });
+    mappings.push({ kind: "input-string" });
+  } else if (Array.isArray(input)) {
+    input.forEach((item, index) => {
+      if (!isRecord(item)) return;
+      const itemType = typeof item.type === "string" ? item.type : item.role ? "message" : "";
+      if (itemType === "message") {
+        messages.push({
+          role: getMessageRole(item.role),
+          content: item.content,
+        });
+        mappings.push({ kind: "message", index });
+        return;
+      }
+
+      if (itemType === "function_call_output") {
+        messages.push({
+          role: "tool",
+          tool_call_id: item.call_id,
+          content: typeof item.output === "string" ? item.output : JSON.stringify(item.output),
+        });
+        mappings.push({ kind: "tool-output", index });
+      }
+    });
+  }
+
+  if (messages.length === 0) return null;
+
+  return {
+    body: { ...body, messages },
+    restore(compressedBody) {
+      const compressedMessages = Array.isArray(compressedBody.messages)
+        ? (compressedBody.messages as JsonRecord[])
+        : messages;
+      const restored: JsonRecord = { ...compressedBody };
+
+      if (typeof input === "string") {
+        const firstMessage = compressedMessages[0];
+        restored.input = toTextContent(firstMessage?.content);
+      } else if (Array.isArray(input)) {
+        const nextInput = [...input];
+        mappings.forEach((mapping, messageIndex) => {
+          const message = compressedMessages[messageIndex];
+          if (!message) return;
+          const originalItem = nextInput[mapping.index];
+          if (!isRecord(originalItem)) return;
+
+          if (mapping.kind === "message") {
+            nextInput[mapping.index] = {
+              ...originalItem,
+              content: restoreTextContentShape(originalItem.content, message.content),
+            };
+          } else if (mapping.kind === "tool-output") {
+            nextInput[mapping.index] = {
+              ...originalItem,
+              output: toTextContent(message.content),
+            };
+          }
+        });
+        restored.input = nextInput;
+      }
+
+      delete restored.messages;
+      return restored;
+    },
+  };
+}
+
+function rebaseCompressionStats(
+  originalBody: Record<string, unknown>,
+  compressedBody: Record<string, unknown>,
+  stats: CompressionStats
+): CompressionStats {
+  const rebased = createCompressionStats(
+    originalBody,
+    compressedBody,
+    stats.mode,
+    stats.techniquesUsed,
+    stats.rulesApplied,
+    stats.durationMs
+  );
+  return {
+    ...stats,
+    originalTokens: rebased.originalTokens,
+    compressedTokens: rebased.compressedTokens,
+    savingsPercent: rebased.savingsPercent,
+  };
+}
+
 export function checkComboOverride(
   config: CompressionConfig,
   comboId: string | null
@@ -73,6 +230,22 @@ export function applyCompression(
   if (mode === "off") {
     return { body, compressed: false, stats: null };
   }
+
+  const responsesInputAdapter = createResponsesInputCompressionAdapter(body);
+  if (responsesInputAdapter) {
+    const adaptedResult = applyCompression(responsesInputAdapter.body, mode, options);
+    if (!adaptedResult.stats) return { body, compressed: false, stats: null };
+
+    const restoredBody = adaptedResult.compressed
+      ? responsesInputAdapter.restore(adaptedResult.body)
+      : body;
+    return {
+      body: restoredBody,
+      compressed: adaptedResult.compressed,
+      stats: rebaseCompressionStats(body, restoredBody, adaptedResult.stats),
+    };
+  }
+
   if (mode === "lite") {
     return applyLiteCompression(body, {
       ...options,

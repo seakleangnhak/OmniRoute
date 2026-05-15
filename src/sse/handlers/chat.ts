@@ -684,12 +684,30 @@ async function handleSingleModelChat(
           refreshedCredentials
         );
       }
-      const proxyInfo = await safeResolveProxy(credentials.connectionId);
+      const stickyProxyContext = {
+        sessionId: runtimeOptions.sessionId ?? null,
+        apiKeyId: apiKeyInfo?.id != null ? String(apiKeyInfo.id) : null,
+        provider,
+        connectionId: credentials.connectionId,
+      };
+      const proxyInfo = await safeResolveProxy(credentials.connectionId, {
+        stickyContext: stickyProxyContext,
+      });
+      if ((proxyInfo as any)?.source === "proxy-policy" && (proxyInfo as any)?.error) {
+        return errorResponse(
+          Number((proxyInfo as any).status || HTTP_STATUS.SERVICE_UNAVAILABLE),
+          String((proxyInfo as any).error)
+        );
+      }
       const proxyStartTime = Date.now();
 
       // 4. Execute chat via core after breaker gate checks (with optional TLS tracking)
       if (telemetry) telemetry.startPhase("connect");
-      const { result, tlsFingerprintUsed } = await executeChatWithBreaker({
+      const {
+        result,
+        tlsFingerprintUsed,
+        proxyInfo: finalProxyInfo,
+      } = await executeChatWithBreaker({
         bypassCircuitBreaker: forceLiveComboTest || hasForcedConnection,
         breaker,
         body: requestBody,
@@ -697,6 +715,7 @@ async function handleSingleModelChat(
         model,
         refreshedCredentials,
         proxyInfo,
+        stickyContext: stickyProxyContext,
         log,
         clientRawRequest,
         credentials,
@@ -722,7 +741,7 @@ async function handleSingleModelChat(
       // 5. Log proxy + translation events
       safeLogEvents({
         result,
-        proxyInfo,
+        proxyInfo: finalProxyInfo || proxyInfo,
         proxyLatency,
         provider,
         model,

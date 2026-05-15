@@ -13,6 +13,85 @@ import { ACCOUNT_FALLBACK_STRATEGY_VALUES } from "@/shared/constants/routingStra
 
 const signatureCacheModeValues = ["enabled", "bypass", "bypass-strict"] as const;
 
+const rotatingProxySchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    source: z.enum(["oneproxy"]).optional(),
+    strategy: z.enum(["random", "quality", "sequential"]).optional(),
+    scope: z.enum(["global", "provider"]).optional(),
+    protocol: z.enum(["http", "https", "socks5"]).nullable().optional(),
+    countryCode: z.string().trim().max(2).nullable().optional(),
+    minQuality: z.number().int().min(0).max(100).nullable().optional(),
+    stickyMode: z
+      .enum(["per-request", "per-session", "per-provider", "per-api-key", "time-window"])
+      .optional(),
+    stickyTtlMinutes: z.number().int().min(1).max(1440).optional(),
+  })
+  .strict();
+
+const rotatingProxyPolicyModeSchema = z.enum(["disabled", "optional", "required"]);
+const rotatingProxyFailBehaviorSchema = z.enum(["fail-open", "fail-closed"]);
+const rotatingProxyPolicyOverrideSchema = z
+  .object({
+    mode: rotatingProxyPolicyModeSchema.optional(),
+    failBehavior: rotatingProxyFailBehaviorSchema.optional(),
+    protocol: z.enum(["http", "https", "socks5"]).nullable().optional(),
+    countryCode: z.string().trim().max(2).nullable().optional(),
+    minQuality: z.number().int().min(0).max(100).nullable().optional(),
+    stickyMode: z
+      .enum(["per-request", "per-session", "per-provider", "per-api-key", "time-window"])
+      .nullable()
+      .optional(),
+    stickyTtlMinutes: z.number().int().min(1).max(1440).nullable().optional(),
+    maxProxyRetries: z.number().int().min(1).max(5).optional(),
+  })
+  .strict();
+
+const rotatingProxyPolicySchema = rotatingProxyPolicyOverrideSchema.extend({
+  defaultMode: rotatingProxyPolicyModeSchema.optional(),
+  providerOverrides: z
+    .record(z.string().trim().min(1).max(100), rotatingProxyPolicyOverrideSchema)
+    .optional(),
+  accountOverrides: z
+    .record(z.string().trim().min(1).max(100), rotatingProxyPolicyOverrideSchema)
+    .optional(),
+});
+
+const oneproxySyncSettingsSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    intervalMinutes: z.number().int().min(5).max(10080).optional(),
+    maxProxies: z.number().int().min(1).max(1000).optional(),
+    minQuality: z.number().int().min(0).max(100).optional(),
+    syncOnStartup: z.boolean().optional(),
+  })
+  .strict();
+
+const oneproxyHealthSettingsSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    intervalMinutes: z.number().int().min(5).max(10080).optional(),
+    batchSize: z.number().int().min(1).max(200).optional(),
+    timeoutMs: z.number().int().min(1000).max(30000).optional(),
+    testUrl: z.string().url().max(500).optional(),
+    revalidateOlderThanMinutes: z.number().int().min(5).max(43200).optional(),
+    maxFailures: z.number().int().min(1).max(10).optional(),
+    validateOnStartup: z.boolean().optional(),
+  })
+  .strict();
+
+const oneproxyObservabilitySettingsSchema = z
+  .object({
+    retentionDays: z.number().int().min(1).max(365).optional(),
+    cleanupIntervalMinutes: z.number().int().min(5).max(10080).optional(),
+    cleanupOnStartup: z.boolean().optional(),
+    alertsEnabled: z.boolean().optional(),
+    minActiveProxies: z.number().int().min(0).max(100000).optional(),
+    minSuccessRate: z.number().int().min(0).max(100).optional(),
+    maxQuarantineRate: z.number().int().min(0).max(100).optional(),
+  })
+  .strict();
+
 export const updateSettingsSchema = z.object({
   newPassword: z.string().min(1).max(200).optional(),
   currentPassword: z.string().max(200).optional(),
@@ -67,6 +146,11 @@ export const updateSettingsSchema = z.object({
   // Cache control preservation mode
   alwaysPreserveClientCache: z.enum(["auto", "always", "never"]).optional(),
   antigravitySignatureCacheMode: z.enum(signatureCacheModeValues).optional(),
+  rotatingProxy: rotatingProxySchema.optional(),
+  rotatingProxyPolicy: rotatingProxyPolicySchema.optional(),
+  oneproxySync: oneproxySyncSettingsSchema.optional(),
+  oneproxyHealth: oneproxyHealthSettingsSchema.optional(),
+  oneproxyObservability: oneproxyObservabilitySettingsSchema.optional(),
   // Adaptive Volume Routing
   adaptiveVolumeRouting: z.boolean().optional(),
   // Usage token buffer — safety margin added to reported prompt/input token counts.

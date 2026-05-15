@@ -1,5 +1,4 @@
 import { upsertOneproxyProxy } from "./db/oneproxy";
-import { getSettings } from "./db/settings";
 
 type OneProxyApiResponse = {
   total: number;
@@ -49,7 +48,6 @@ export async function syncOneproxyProxies(options?: {
   total: number;
   error: string | null;
 }> {
-  const settings = await getSettings();
   const enabled = process.env.ONEPROXY_ENABLED !== "false";
   if (!enabled) {
     return {
