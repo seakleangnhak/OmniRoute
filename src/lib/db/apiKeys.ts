@@ -158,6 +158,77 @@ function isConfiguredEnvApiKey(key: string): boolean {
   return Boolean(envKey && key === envKey);
 }
 
+function getSlaiProvisionConfig(): { baseUrl: string; token: string } | null {
+  const baseUrl = (process.env.SLAI_API_BASE_URL || process.env.SLAI_API_URL || "").trim();
+  const token = (process.env.OMNIROUTE_MANAGEMENT_TOKEN || "").trim();
+  if (!baseUrl || !token) return null;
+  return { baseUrl: baseUrl.replace(/\/+$/, ""), token };
+}
+
+function isLegacySLAIKeyCandidate(key: string): boolean {
+  return (
+    key.startsWith("sk_slai_") ||
+    key.startsWith("sk-") ||
+    key.startsWith("sk_") ||
+    key.startsWith("omni_")
+  );
+}
+
+async function provisionSLAIManagedKey(rawKey: string): Promise<boolean> {
+  if (!isLegacySLAIKeyCandidate(rawKey)) return false;
+  const config = getSlaiProvisionConfig();
+  if (!config) return false;
+
+  try {
+    const response = await fetch(`${config.baseUrl}/v1/internal/omniroute/api-keys/provision`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${config.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ raw_api_key: rawKey }),
+    });
+    if (response.status === 404 || response.status === 401 || response.status === 403) {
+      return false;
+    }
+    if (!response.ok) {
+      console.warn(`[API_KEYS] SLAI key provision failed with status ${response.status}`);
+      return false;
+    }
+
+    const payload = (await response.json()) as { api_key?: Record<string, unknown> };
+    const apiKey = payload.api_key;
+    const omniRouteKeyID =
+      typeof apiKey?.omniroute_key_id === "string" ? apiKey.omniroute_key_id : "";
+    const name = typeof apiKey?.name === "string" ? apiKey.name : "SLAI managed key";
+    const noLog = apiKey?.no_log === true;
+    if (!omniRouteKeyID) return false;
+
+    try {
+      await createImportedApiKey({
+        id: omniRouteKeyID,
+        name,
+        key: rawKey,
+        machineId: typeof apiKey?.user_id === "string" ? apiKey.user_id : "slai",
+        noLog,
+      });
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/UNIQUE constraint failed/i.test(message)) {
+        invalidateCaches();
+        return true;
+      }
+      console.warn(`[API_KEYS] Failed to import SLAI-managed key: ${message}`);
+      return false;
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[API_KEYS] SLAI key provision request failed: ${message}`);
+    return false;
+  }
+}
+
 function markApiKeyUsed(db: ApiKeysDbLike, id: unknown, now: number): void {
   if (typeof id !== "string" || id.trim() === "") return;
 
@@ -452,6 +523,51 @@ export async function createApiKey(name: string, machineId: string) {
   return apiKey;
 }
 
+export async function createImportedApiKey(input: {
+  id?: string;
+  name: string;
+  key: string;
+  machineId?: string | null;
+  noLog?: boolean;
+}) {
+  const key = typeof input.key === "string" ? input.key.trim() : "";
+  const name =
+    typeof input.name === "string" && input.name.trim() ? input.name.trim() : "Imported key";
+  if (!key) {
+    throw new Error("key is required");
+  }
+
+  const db = getDbInstance() as ApiKeysDbLike;
+  const now = new Date().toISOString();
+  const apiKey = {
+    id: input.id && input.id.trim() ? input.id.trim() : uuidv4(),
+    name,
+    key,
+    machineId: input.machineId ?? null,
+    allowedModels: [],
+    allowedConnections: [],
+    noLog: input.noLog === true,
+    createdAt: now,
+  };
+
+  const stmt = getPreparedStatements(db);
+  stmt.insertKey.run(
+    apiKey.id,
+    apiKey.name,
+    apiKey.key,
+    apiKey.machineId,
+    "[]",
+    apiKey.noLog ? 1 : 0,
+    apiKey.createdAt,
+    apiKey.key.slice(0, 12)
+  );
+  setNoLog(apiKey.id, apiKey.noLog);
+
+  invalidateCaches();
+  backupDbFile("pre-write");
+  return apiKey;
+}
+
 export async function updateApiKeyPermissions(
   id: string,
   update:
@@ -676,7 +792,12 @@ export async function validateApiKey(key: string | null | undefined) {
   const stmt = getPreparedStatements(db);
   const row = stmt.validateKey.get(key) as JsonRecord | undefined;
 
-  if (!row) return false;
+  if (!row) {
+    if (await provisionSLAIManagedKey(key)) {
+      return validateApiKey(key);
+    }
+    return false;
+  }
 
   const isActive = parseIsActive(row.is_active ?? row.isActive);
   if (!isActive) return false;
@@ -739,7 +860,12 @@ export async function getApiKeyMetadata(
   const stmt = getPreparedStatements(db);
   const row = stmt.getKeyMetadata.get(key);
 
-  if (!row) return null;
+  if (!row) {
+    if (await provisionSLAIManagedKey(key)) {
+      return getApiKeyMetadata(key);
+    }
+    return null;
+  }
 
   const record = toRecord(row) as ApiKeyRow;
   const metadataId = typeof record.id === "string" ? record.id : "";

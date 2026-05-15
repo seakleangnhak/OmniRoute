@@ -13,6 +13,9 @@ const apiKeysDb = await import("../../src/lib/db/apiKeys.ts");
 
 const ORIGINAL_OMNIROUTE_API_KEY = process.env.OMNIROUTE_API_KEY;
 const ORIGINAL_ROUTER_API_KEY = process.env.ROUTER_API_KEY;
+const ORIGINAL_OMNIROUTE_MANAGEMENT_TOKEN = process.env.OMNIROUTE_MANAGEMENT_TOKEN;
+const ORIGINAL_SLAI_API_BASE_URL = process.env.SLAI_API_BASE_URL;
+const ORIGINAL_SLAI_API_URL = process.env.SLAI_API_URL;
 
 function reset() {
   core.resetDbInstance();
@@ -21,6 +24,9 @@ function reset() {
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
   delete process.env.OMNIROUTE_API_KEY;
   delete process.env.ROUTER_API_KEY;
+  delete process.env.OMNIROUTE_MANAGEMENT_TOKEN;
+  delete process.env.SLAI_API_BASE_URL;
+  delete process.env.SLAI_API_URL;
 }
 
 test.beforeEach(() => {
@@ -33,6 +39,13 @@ test.after(() => {
   else process.env.OMNIROUTE_API_KEY = ORIGINAL_OMNIROUTE_API_KEY;
   if (ORIGINAL_ROUTER_API_KEY === undefined) delete process.env.ROUTER_API_KEY;
   else process.env.ROUTER_API_KEY = ORIGINAL_ROUTER_API_KEY;
+  if (ORIGINAL_OMNIROUTE_MANAGEMENT_TOKEN === undefined)
+    delete process.env.OMNIROUTE_MANAGEMENT_TOKEN;
+  else process.env.OMNIROUTE_MANAGEMENT_TOKEN = ORIGINAL_OMNIROUTE_MANAGEMENT_TOKEN;
+  if (ORIGINAL_SLAI_API_BASE_URL === undefined) delete process.env.SLAI_API_BASE_URL;
+  else process.env.SLAI_API_BASE_URL = ORIGINAL_SLAI_API_BASE_URL;
+  if (ORIGINAL_SLAI_API_URL === undefined) delete process.env.SLAI_API_URL;
+  else process.env.SLAI_API_URL = ORIGINAL_SLAI_API_URL;
 });
 
 async function makeKey(name = "lifecycle-test", machineId = "machine-lifecycle") {
@@ -116,4 +129,82 @@ test("validateApiKey updates last_used_at for persisted keys", async () => {
 
   assert.ok(row?.last_used_at, "last_used_at should be set on successful validation");
   assert.ok(Date.parse(row.last_used_at) > 0, "last_used_at should be an ISO timestamp");
+});
+
+test("validateApiKey imports a missing SLAI-managed key after SLAI confirms it", async () => {
+  const rawKey = "sk_slai_legacy_key_abcdefghijklmnopqrstuvwxyz";
+  process.env.OMNIROUTE_MANAGEMENT_TOKEN = "slai-management-token";
+  const server = await new Promise<import("node:http").Server>((resolve) => {
+    import("node:http").then(({ createServer }) => {
+      const instance = createServer((request, response) => {
+        assert.equal(request.url, "/v1/internal/omniroute/api-keys/provision");
+        assert.equal(request.headers.authorization, "Bearer slai-management-token");
+        let body = "";
+        request.on("data", (chunk) => {
+          body += chunk;
+        });
+        request.on("end", () => {
+          assert.equal(JSON.parse(body).raw_api_key, rawKey);
+          response.setHeader("content-type", "application/json");
+          response.end(
+            JSON.stringify({
+              api_key: {
+                slai_api_key_id: "slai-key-1",
+                omniroute_key_id: "slai-slai-key-1",
+                name: "Legacy SLAI Key",
+                user_id: "user-1",
+                user_email: "user@example.com",
+                no_log: true,
+              },
+            })
+          );
+        });
+      });
+      instance.listen(0, () => resolve(instance));
+    });
+  });
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    process.env.SLAI_API_BASE_URL = `http://127.0.0.1:${address.port}`;
+
+    assert.equal(await apiKeysDb.validateApiKey(rawKey), true);
+
+    const metadata = await apiKeysDb.getApiKeyMetadata(rawKey);
+    assert.ok(metadata);
+    assert.equal(metadata.id, "slai-slai-key-1");
+    assert.equal(metadata.name, "Legacy SLAI Key");
+    assert.equal(metadata.machineId, "user-1");
+    assert.equal(metadata.noLog, true);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    );
+  }
+});
+
+test("validateApiKey keeps unknown SLAI-looking keys invalid when SLAI rejects them", async () => {
+  process.env.OMNIROUTE_MANAGEMENT_TOKEN = "slai-management-token";
+  const server = await new Promise<import("node:http").Server>((resolve) => {
+    import("node:http").then(({ createServer }) => {
+      const instance = createServer((_request, response) => {
+        response.statusCode = 404;
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ error: "api_key_not_found" }));
+      });
+      instance.listen(0, () => resolve(instance));
+    });
+  });
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    process.env.SLAI_API_BASE_URL = `http://127.0.0.1:${address.port}`;
+    assert.equal(await apiKeysDb.validateApiKey("sk_slai_unknown"), false);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    );
+  }
 });

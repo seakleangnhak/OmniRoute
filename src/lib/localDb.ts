@@ -87,6 +87,7 @@ export {
   getApiKeys,
   getApiKeyById,
   createApiKey,
+  createImportedApiKey,
   deleteApiKey,
   validateApiKey,
   getApiKeyMetadata,
@@ -366,6 +367,15 @@ export {
   clearAllOneproxyProxies,
   getOneproxyProxyForRotation,
   markOneproxyProxyFailed,
+  listOneproxyProxiesForHealthValidation,
+  recordOneproxyProxyHealthResult,
+  listOneproxyProxyEvents,
+  cleanupOneproxyProxyEvents,
+  getOneproxyPoolAlerts,
 } from "./db/oneproxy";
-
-export type { OneproxyProxyRecord, OneproxyStats } from "./db/oneproxy";
+export type {
+  OneproxyPoolAlert,
+  OneproxyProxyEventRecord,
+  OneproxyProxyRecord,
+  OneproxyStats,
+} from "./db/oneproxy";
