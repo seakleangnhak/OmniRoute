@@ -72,7 +72,7 @@ const BULK_IMPORT_TEMPLATE = `# Proxy Bulk Import
 # Format: NAME|HOST|PORT|USERNAME|PASSWORD|TYPE|REGION|STATUS|NOTES
 # Required: NAME, HOST, PORT
 # Optional: USERNAME, PASSWORD, TYPE (http|https|socks5, default: socks5), REGION, STATUS (active|inactive, default: active), NOTES
-# Lines starting with # are ignored. Existing proxies (same host+port) will be updated.
+# Lines starting with # are ignored. Existing proxies with the same NAME will be updated.
 #
 # SOCKS5 examples:
 # proxy-us|138.99.147.218|50101|myuser|mypass|socks5|US-East|active|US production proxy

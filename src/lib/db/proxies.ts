@@ -193,28 +193,34 @@ export async function createProxy(payload: ProxyPayload) {
 }
 
 /**
- * Upsert a proxy by host+port.
- * If a proxy with the same host and port already exists, update it.
- * Otherwise, create a new one. Used by the bulk import feature.
+ * Upsert a proxy by name.
+ * Bulk imports use the user-supplied name as the stable row identity because
+ * gateway proxy providers can expose many proxies behind one host:port.
  */
 export async function upsertProxy(payload: ProxyPayload): Promise<{
   proxy: ProxyRegistryRecord | null;
   action: "created" | "updated";
 }> {
   const db = getDbInstance();
-  const host = (payload.host || "").trim();
-  const port = Number(payload.port);
+  const normalizedPayload = {
+    ...payload,
+    name: (payload.name || "").trim(),
+    type: (payload.type || "http").trim().toLowerCase(),
+    host: (payload.host || "").trim(),
+    port: Number(payload.port),
+    username: (payload.username || "").trim(),
+  };
 
   const existing = db
-    .prepare("SELECT id FROM proxy_registry WHERE host = ? AND port = ? LIMIT 1")
-    .get(host, port) as { id?: string } | undefined;
+    .prepare("SELECT id FROM proxy_registry WHERE name = ? LIMIT 1")
+    .get(normalizedPayload.name) as { id?: string } | undefined;
 
   if (existing?.id) {
-    const updated = await updateProxy(existing.id, payload);
+    const updated = await updateProxy(existing.id, normalizedPayload);
     return { proxy: updated, action: "updated" };
   }
 
-  const created = await createProxy(payload);
+  const created = await createProxy(normalizedPayload);
   return { proxy: created, action: "created" };
 }
 

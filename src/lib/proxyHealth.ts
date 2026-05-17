@@ -21,8 +21,57 @@ interface ProxyHealthEntry {
   ttlMs: number;
 }
 
+export interface ProxyHealthTarget {
+  host: string;
+  port: number;
+}
+
 // In-memory cache: proxyUrl → health entry
 const proxyHealthCache = new Map<string, ProxyHealthEntry>();
+
+/**
+ * Preserve explicit default ports before URL parsing. URL parsing clears
+ * http://host:80 to an empty port, but an explicit proxy :80 must remain 80.
+ */
+function extractExplicitPort(proxyUrl: string): string | null {
+  try {
+    const schemeIndex = proxyUrl.indexOf("://");
+    if (schemeIndex === -1) return null;
+    const authorityStart = schemeIndex + 3;
+    const authorityEnd = proxyUrl.indexOf("/", authorityStart);
+    const authority =
+      authorityEnd === -1
+        ? proxyUrl.slice(authorityStart)
+        : proxyUrl.slice(authorityStart, authorityEnd);
+    const lastColon = authority.lastIndexOf(":");
+    const atSign = authority.lastIndexOf("@");
+    if (lastColon !== -1 && lastColon > atSign) {
+      const portStr = authority.slice(lastColon + 1);
+      if (/^\d+$/.test(portStr)) {
+        const port = Number(portStr);
+        if (Number.isInteger(port) && port >= 1 && port <= 65535) return String(port);
+      }
+    }
+  } catch {}
+  return null;
+}
+
+export function resolveProxyHealthTarget(proxyUrl: string): ProxyHealthTarget | null {
+  const explicitPort = extractExplicitPort(proxyUrl);
+
+  let url: URL;
+  try {
+    url = new URL(proxyUrl);
+  } catch {
+    return null;
+  }
+
+  const host = url.hostname;
+  const port = parseInt(explicitPort || url.port || defaultPortForScheme(url.protocol), 10);
+
+  if (!host || isNaN(port)) return null;
+  return { host, port };
+}
 
 /**
  * T14: Perform a fast TCP check to see if a proxy host:port is reachable.
@@ -43,11 +92,8 @@ export async function isProxyReachable(
     return cached.healthy;
   }
 
-  let url: URL;
-  try {
-    url = new URL(proxyUrl);
-  } catch {
-    // Malformed URL — treat as unreachable
+  const target = resolveProxyHealthTarget(proxyUrl);
+  if (!target) {
     proxyHealthCache.set(proxyUrl, {
       healthy: false,
       checkedAt: Date.now(),
@@ -56,19 +102,7 @@ export async function isProxyReachable(
     return false;
   }
 
-  const host = url.hostname;
-  const port = parseInt(url.port || defaultPortForScheme(url.protocol), 10);
-
-  if (!host || isNaN(port)) {
-    proxyHealthCache.set(proxyUrl, {
-      healthy: false,
-      checkedAt: Date.now(),
-      ttlMs: cacheTtlMs,
-    });
-    return false;
-  }
-
-  const healthy = await tcpCheck(host, port, timeoutMs);
+  const healthy = await tcpCheck(target.host, target.port, timeoutMs);
   proxyHealthCache.set(proxyUrl, { healthy, checkedAt: Date.now(), ttlMs: cacheTtlMs });
   return healthy;
 }

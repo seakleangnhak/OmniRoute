@@ -76,6 +76,51 @@ test("proxy CRUD redacts secrets by default and preserves stored credentials on 
   assert.equal(listed[0].password, "***");
 });
 
+test("upsertProxy uses proxy name as bulk import identity", async () => {
+  const first = await proxiesDb.upsertProxy({
+    name: "1",
+    type: "http",
+    host: "p.webshare.io",
+    port: 80,
+    username: "username",
+    password: "xxxx",
+    region: "AU",
+    status: "active",
+  });
+  const second = await proxiesDb.upsertProxy({
+    name: "2",
+    type: "http",
+    host: "p.webshare.io",
+    port: 80,
+    username: "username",
+    password: "xxxx",
+    region: "AU",
+    status: "active",
+  });
+
+  assert.equal(first.action, "created");
+  assert.equal(second.action, "created");
+  assert.notEqual(first.proxy?.id, second.proxy?.id);
+
+  const repeated = await proxiesDb.upsertProxy({
+    name: "1",
+    type: "http",
+    host: "p.webshare.io",
+    port: 80,
+    username: "username",
+    password: "yyyy",
+    region: "AU",
+    status: "inactive",
+  });
+  const listed = await proxiesDb.listProxies({ includeSecrets: true });
+  const updatedFirst = listed.find((proxy) => proxy.name === "1");
+
+  assert.equal(repeated.action, "updated");
+  assert.equal(listed.length, 2);
+  assert.equal(updatedFirst?.password, "yyyy");
+  assert.equal(updatedFirst?.status, "inactive");
+});
+
 test("proxy assignments resolve by account, provider and global scope", async () => {
   const connection = await providersDb.createProviderConnection({
     provider: "openai",

@@ -326,7 +326,10 @@ export default function ProxyConfigModal({
       const res = await fetch("/api/settings/proxy/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ proxy }),
+        body: JSON.stringify({
+          ...(mode === "saved" ? { proxyId: selectedProxyId } : {}),
+          proxy,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {

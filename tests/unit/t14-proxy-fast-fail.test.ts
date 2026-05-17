@@ -5,8 +5,20 @@ import {
   isProxyReachable,
   getCachedProxyHealth,
   invalidateProxyHealth,
+  resolveProxyHealthTarget,
 } from "../../src/lib/proxyHealth.ts";
 import { runWithProxyContext } from "../../open-sse/utils/proxyFetch.ts";
+
+test("T14: proxy health preserves explicit HTTP port 80", () => {
+  assert.deepEqual(resolveProxyHealthTarget("http://p.webshare.io:80"), {
+    host: "p.webshare.io",
+    port: 80,
+  });
+  assert.deepEqual(resolveProxyHealthTarget("http://p.webshare.io"), {
+    host: "p.webshare.io",
+    port: 8080,
+  });
+});
 
 test("T14: isProxyReachable caches unreachable proxy result", async () => {
   const proxyUrl = "http://127.0.0.1:1";
@@ -28,7 +40,7 @@ test("T14: runWithProxyContext fast-fails when proxy is unreachable", async () =
         executed = true;
         return "ok";
       }),
-    (err) => (err as any).code === "PROXY_UNREACHABLE"
+    (err) => err instanceof Error && (err as Error & { code?: string }).code === "PROXY_UNREACHABLE"
   );
 
   assert.equal(executed, false);
