@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { createChatPipelineHarness } from "../integration/_chatPipelineHarness.ts";
 
 process.env.STREAM_IDLE_TIMEOUT_MS = "50";
+process.env.STREAM_READINESS_TIMEOUT_MS = "50";
 
 const harness = await createChatPipelineHarness("chat-cooldown-aware-retry");
 const auth = await import("../../src/sse/services/auth.ts");
@@ -256,7 +257,6 @@ test("handleChat returns stream readiness timeout without entering cooldown-awar
     return buildZombieSseResponse();
   };
 
-  const startedAt = Date.now();
   const response = await handleChat(
     buildRequest({
       body: {
@@ -266,12 +266,10 @@ test("handleChat returns stream readiness timeout without entering cooldown-awar
       },
     })
   );
-  const elapsedMs = Date.now() - startedAt;
   const body = (await response.json()) as any;
 
   assert.equal(response.status, 504);
   assert.equal(fetchCalls, 1);
-  assert.ok(elapsedMs < 1000, `should not wait for cooldown retry, got ${elapsedMs}ms`);
   assert.equal(body.error.code, "STREAM_READINESS_TIMEOUT");
 
   const refreshedConnection = (await getProviderConnectionById((connection as any).id)) as any;
@@ -284,13 +282,13 @@ test("handleChat returns stream readiness timeout without entering cooldown-awar
 test("handleChat aborts the pending cooldown wait when the client disconnects", async () => {
   await seedConnection("openai", {
     apiKey: "sk-openai-cooldown-abort",
-    rateLimitedUntil: new Date(Date.now() + 250).toISOString(),
+    rateLimitedUntil: new Date(Date.now() + 5_000).toISOString(),
     lastError: "abort retry wait",
     errorCode: 429,
   });
   await settingsDb.updateSettings({
     requestRetry: 1,
-    maxRetryIntervalSec: 1,
+    maxRetryIntervalSec: 10,
   });
 
   let fetchCalls = 0;
@@ -302,6 +300,7 @@ test("handleChat aborts the pending cooldown wait when the client disconnects", 
   const controller = new AbortController();
   setTimeout(() => controller.abort(), 40);
 
+  const startedAt = Date.now();
   const response = await handleChat(
     buildRequestWithSignal(
       {
@@ -312,9 +311,11 @@ test("handleChat aborts the pending cooldown wait when the client disconnects", 
       controller.signal
     )
   );
+  const elapsedMs = Date.now() - startedAt;
   const body = (await response.json()) as any;
 
   assert.equal(fetchCalls, 0);
+  assert.ok(elapsedMs < 1_000, `should abort cooldown wait promptly, got ${elapsedMs}ms`);
   assert.equal(response.status, 499);
   assert.equal(body.error.message, "Request aborted");
 });

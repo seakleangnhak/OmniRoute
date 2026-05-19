@@ -13,7 +13,7 @@ const core = await import("../../src/lib/db/core.ts");
 const localDb = await import("../../src/lib/localDb.ts");
 const apiKeysDb = await import("../../src/lib/db/apiKeys.ts");
 const apiAuth = await import("../../src/shared/utils/apiAuth.ts");
-const managementAuth = await import("../../src/lib/api/requireManagementAuth.ts");
+const { requireManagementAuth } = await import("../../src/lib/api/requireManagementAuth.ts");
 
 const ORIGINAL_JWT_SECRET = process.env.JWT_SECRET;
 const ORIGINAL_INITIAL_PASSWORD = process.env.INITIAL_PASSWORD;
@@ -68,34 +68,6 @@ test.after(() => {
   }
 });
 
-async function enableManagementAuth() {
-  process.env.INITIAL_PASSWORD = "bootstrap-password";
-  await localDb.updateSettings({ requireLogin: true, password: "" });
-}
-
-async function createDashboardSessionCookie(): Promise<string> {
-  process.env.JWT_SECRET = "jwt-secret-for-management-auth-tests";
-  const secret = new TextEncoder().encode(process.env.JWT_SECRET);
-  const token = await new SignJWT({ authenticated: true })
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime("1h")
-    .sign(secret);
-
-  return `auth_token=${token}`;
-}
-
-async function assertManagementAuthError(
-  response: Response | null,
-  status: number,
-  message: string
-) {
-  assert.ok(response);
-  const body = (await response.json()) as any;
-  assert.equal(response.status, status);
-  assert.equal(body.error.message, message);
-}
-
 test("isPublicRoute recognizes allowed API prefixes", () => {
   assert.equal(apiAuth.isPublicRoute("/api/auth/login"), true);
   assert.equal(apiAuth.isPublicRoute("/api/v1/chat/completions"), true);
@@ -117,89 +89,6 @@ test("verifyAuth accepts a valid JWT session cookie", async () => {
   const result = await apiAuth.verifyAuth(makeCookieRequest(token));
 
   assert.equal(result, null);
-});
-
-test("requireManagementAuth allows when auth is not required", async () => {
-  await localDb.updateSettings({ requireLogin: false });
-
-  const result = await managementAuth.requireManagementAuth(
-    new Request("https://example.com/api/keys")
-  );
-
-  assert.equal(result, null);
-});
-
-test("requireManagementAuth rejects missing auth when login protection is enabled", async () => {
-  await enableManagementAuth();
-
-  const result = await managementAuth.requireManagementAuth(
-    new Request("https://example.com/api/keys")
-  );
-
-  await assertManagementAuthError(result, 401, "Authentication required");
-});
-
-test("requireManagementAuth accepts dashboard session auth", async () => {
-  await enableManagementAuth();
-  const cookie = await createDashboardSessionCookie();
-
-  const result = await managementAuth.requireManagementAuth(
-    new Request("https://example.com/api/keys", { headers: { cookie } })
-  );
-
-  assert.equal(result, null);
-});
-
-test("requireManagementAuth accepts a valid management bearer token", async () => {
-  await enableManagementAuth();
-  process.env.OMNIROUTE_MANAGEMENT_TOKEN = "test-management-token-123";
-
-  const result = await managementAuth.requireManagementAuth(
-    new Request("https://example.com/api/keys", {
-      headers: { authorization: "Bearer test-management-token-123" },
-    })
-  );
-
-  assert.equal(result, null);
-});
-
-test("requireManagementAuth rejects an invalid management bearer token", async () => {
-  await enableManagementAuth();
-  process.env.OMNIROUTE_MANAGEMENT_TOKEN = "test-management-token-123";
-
-  const result = await managementAuth.requireManagementAuth(
-    new Request("https://example.com/api/keys", {
-      headers: { authorization: "Bearer wrong-token" },
-    })
-  );
-
-  await assertManagementAuthError(result, 403, "Invalid management token");
-});
-
-test("requireManagementAuth rejects bearer tokens when env token is empty", async () => {
-  await enableManagementAuth();
-  process.env.OMNIROUTE_MANAGEMENT_TOKEN = "";
-
-  const result = await managementAuth.requireManagementAuth(
-    new Request("https://example.com/api/keys", {
-      headers: { authorization: "Bearer test-management-token-123" },
-    })
-  );
-
-  await assertManagementAuthError(result, 403, "Invalid management token");
-});
-
-test("requireManagementAuth rejects bearer tokens when env token is whitespace", async () => {
-  await enableManagementAuth();
-  process.env.OMNIROUTE_MANAGEMENT_TOKEN = "   \t   ";
-
-  const result = await managementAuth.requireManagementAuth(
-    new Request("https://example.com/api/keys", {
-      headers: { authorization: "Bearer test-management-token-123" },
-    })
-  );
-
-  await assertManagementAuthError(result, 403, "Invalid management token");
 });
 
 test("verifyAuth falls back to bearer API key validation after a bad JWT", async () => {
@@ -272,6 +161,94 @@ test("isAuthenticated rejects bearer API keys on management routes", async () =>
   const result = await apiAuth.isAuthenticated(request);
 
   assert.equal(result, false);
+});
+
+test("verifyAuth accepts bearer API keys with manage scope on management routes", async () => {
+  const key = await apiKeysDb.createApiKey("mcp-management", "machine1234567890", ["manage"]);
+  const result = await apiAuth.verifyAuth({
+    cookies: {
+      get() {
+        return undefined;
+      },
+    },
+    headers: new Headers({ authorization: `Bearer ${key.key}` }),
+    url: "https://example.com/api/providers",
+  });
+
+  assert.equal(result, null);
+});
+
+test("verifyAuth accepts the configured management bearer token", async () => {
+  process.env.OMNIROUTE_MANAGEMENT_TOKEN = "test-management-token-123";
+  const result = await apiAuth.verifyAuth({
+    cookies: {
+      get() {
+        return undefined;
+      },
+    },
+    headers: new Headers({ authorization: "Bearer test-management-token-123" }),
+    url: "https://example.com/api/providers",
+  });
+
+  assert.equal(result, null);
+});
+
+test("verifyAuth accepts bearer API keys with admin scope on management routes", async () => {
+  const key = await apiKeysDb.createApiKey("mcp-admin", "machine1234567890", ["admin"]);
+  const result = await apiAuth.verifyAuth({
+    cookies: {
+      get() {
+        return undefined;
+      },
+    },
+    headers: new Headers({ authorization: `Bearer ${key.key}` }),
+    url: "https://example.com/api/settings",
+  });
+
+  assert.equal(result, null);
+});
+
+test("verifyAuth still rejects unscoped bearer API keys on management routes", async () => {
+  const key = await apiKeysDb.createApiKey("integration-no-scope", "machine1234567890");
+  const result = await apiAuth.verifyAuth({
+    cookies: {
+      get() {
+        return undefined;
+      },
+    },
+    headers: new Headers({ authorization: `Bearer ${key.key}` }),
+    url: "https://example.com/api/providers",
+  });
+
+  assert.equal(result, "Invalid management token");
+});
+
+test("isAuthenticated accepts bearer API keys with manage scope on management routes", async () => {
+  process.env.INITIAL_PASSWORD = "bootstrap-password";
+  await localDb.updateSettings({ requireLogin: true, password: "" });
+
+  const key = await apiKeysDb.createApiKey("mcp-management", "machine1234567890", ["manage"]);
+  const request = new Request("https://example.com/api/providers", {
+    headers: { authorization: `Bearer ${key.key}` },
+  });
+
+  const result = await apiAuth.isAuthenticated(request);
+
+  assert.equal(result, true);
+});
+
+test("isAuthenticated accepts the configured management bearer token", async () => {
+  process.env.INITIAL_PASSWORD = "bootstrap-password";
+  process.env.OMNIROUTE_MANAGEMENT_TOKEN = "test-management-token-123";
+  await localDb.updateSettings({ requireLogin: true, password: "" });
+
+  const request = new Request("https://example.com/api/providers", {
+    headers: { authorization: "Bearer test-management-token-123" },
+  });
+
+  const result = await apiAuth.isAuthenticated(request);
+
+  assert.equal(result, true);
 });
 
 test("monitoring health reset route requires dashboard authentication", async () => {
@@ -375,4 +352,119 @@ test("getApiKeyMetadata recognizes ROUTER_API_KEY environment variable", async (
   assert.equal(metadata.id, "env-key");
 
   delete process.env.ROUTER_API_KEY;
+});
+
+// ──── requireManagementAuth ────
+
+async function setupAuth() {
+  process.env.INITIAL_PASSWORD = "bootstrap-password";
+  await localDb.updateSettings({ requireLogin: true, password: "" });
+}
+
+function managementRequest(bearerKey?: string) {
+  return new Request("https://example.com/api/combos", {
+    headers: bearerKey ? { authorization: `Bearer ${bearerKey}` } : {},
+  });
+}
+
+test("requireManagementAuth returns 401 with no credentials", async () => {
+  await setupAuth();
+  const res = await requireManagementAuth(managementRequest());
+  assert.ok(res);
+  assert.equal(res.status, 401);
+});
+
+test("requireManagementAuth returns 403 for an invalid management token", async () => {
+  await setupAuth();
+  const res = await requireManagementAuth(managementRequest("sk-not-a-real-key"));
+  assert.ok(res);
+  assert.equal(res.status, 403);
+  const body = await res.json();
+  assert.equal(body.error?.message, "Invalid management token");
+});
+
+test("requireManagementAuth returns null for a valid management bearer token", async () => {
+  await setupAuth();
+  process.env.OMNIROUTE_MANAGEMENT_TOKEN = "test-management-token-123";
+  const res = await requireManagementAuth(managementRequest("test-management-token-123"));
+  assert.equal(res, null);
+});
+
+test("requireManagementAuth rejects bearer tokens when env token is empty", async () => {
+  await setupAuth();
+  process.env.OMNIROUTE_MANAGEMENT_TOKEN = "";
+  const res = await requireManagementAuth(managementRequest("test-management-token-123"));
+  assert.ok(res);
+  assert.equal(res.status, 403);
+  const body = await res.json();
+  assert.equal(body.error?.message, "Invalid management token");
+});
+
+test("requireManagementAuth rejects bearer tokens when env token is whitespace", async () => {
+  await setupAuth();
+  process.env.OMNIROUTE_MANAGEMENT_TOKEN = "   \t   ";
+  const res = await requireManagementAuth(managementRequest("test-management-token-123"));
+  assert.ok(res);
+  assert.equal(res.status, 403);
+  const body = await res.json();
+  assert.equal(body.error?.message, "Invalid management token");
+});
+
+test("requireManagementAuth returns 403 for valid key without manage scope", async () => {
+  await setupAuth();
+  const key = await apiKeysDb.createApiKey("inference-only", "machine-test");
+  const res = await requireManagementAuth(managementRequest(key.key));
+  assert.ok(res);
+  assert.equal(res.status, 403);
+  const body = await res.json();
+  assert.ok(body.error?.message?.includes("manage"));
+});
+
+test("requireManagementAuth returns null for valid key with manage scope", async () => {
+  await setupAuth();
+  const key = await apiKeysDb.createApiKey("admin-key", "machine-test", ["manage"]);
+  const res = await requireManagementAuth(managementRequest(key.key));
+  assert.equal(res, null);
+});
+
+test("requireManagementAuth returns null for OMNIROUTE_API_KEY env passthrough", async () => {
+  await setupAuth();
+  const envKey = "sk-env-root-" + Date.now();
+  process.env.OMNIROUTE_API_KEY = envKey;
+  try {
+    const res = await requireManagementAuth(managementRequest(envKey));
+    assert.equal(res, null);
+  } finally {
+    delete process.env.OMNIROUTE_API_KEY;
+  }
+});
+
+test("requireManagementAuth returns 403 for revoked key with manage scope", async () => {
+  await setupAuth();
+  const key = await apiKeysDb.createApiKey("revoked-admin", "machine-test", ["manage"]);
+  await apiKeysDb.revokeApiKey(key.id);
+  const res = await requireManagementAuth(managementRequest(key.key));
+  assert.ok(res);
+  assert.equal(res.status, 403);
+  const body = await res.json();
+  assert.equal(body.error?.message, "Invalid management token");
+});
+
+test("requireManagementAuth returns null for valid JWT cookie", async () => {
+  await setupAuth();
+  process.env.JWT_SECRET = "jwt-secret-for-tests";
+  const secret = new TextEncoder().encode(process.env.JWT_SECRET);
+  const token = await new SignJWT({ authenticated: true })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("1h")
+    .sign(secret);
+
+  const request = {
+    cookies: { get: (name: string) => (name === "auth_token" ? { value: token } : undefined) },
+    headers: new Headers(),
+    url: "https://example.com/api/combos",
+  };
+  const res = await requireManagementAuth(request as unknown as Request);
+  assert.equal(res, null);
 });

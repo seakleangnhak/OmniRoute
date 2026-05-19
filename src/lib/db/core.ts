@@ -16,7 +16,8 @@ import {
   writeCallArtifact,
   type CallLogArtifact,
 } from "../usage/callLogArtifacts";
-import { autoMigrateLegacyEncryptedConnections } from "./providers";
+import { migrateLegacyEncryptedString } from "./encryption";
+import { invalidateDbCache } from "./readCache";
 
 type SqliteDatabase = import("better-sqlite3").Database;
 type JsonRecord = Record<string, unknown>;
@@ -94,8 +95,14 @@ function isNativeSqliteLoadError(error: unknown): boolean {
     message.includes("Module did not self-register") ||
     message.includes("NODE_MODULE_VERSION") ||
     message.includes("ERR_DLOPEN_FAILED") ||
-    (error as any)?.code === "ERR_DLOPEN_FAILED"
+    getErrorCode(error) === "ERR_DLOPEN_FAILED"
   );
+}
+
+function getErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object" || !("code" in error)) return undefined;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
 }
 
 function createNativeSqliteLoadError(error: unknown): Error {
@@ -105,10 +112,10 @@ function createNativeSqliteLoadError(error: unknown): Error {
     "This usually happens after switching Node.js versions without rebuilding native modules. " +
     "Run `npm rebuild better-sqlite3` in the OmniRoute project and start again. " +
     `Original error: ${message}`;
-  const wrapped = new Error(detail);
+  const wrapped = new Error(detail) as Error & { cause?: unknown; code?: string };
   wrapped.name = "NativeSqliteLoadError";
-  (wrapped as any).cause = error;
-  (wrapped as any).code = (error as any)?.code || "ERR_DLOPEN_FAILED";
+  wrapped.cause = error;
+  wrapped.code = getErrorCode(error) || "ERR_DLOPEN_FAILED";
   return wrapped;
 }
 
@@ -181,6 +188,7 @@ const SCHEMA_SQL = `
     last_used_at TEXT,
     "group" TEXT,
     max_concurrent INTEGER,
+    quota_window_thresholds_json TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
@@ -243,6 +251,7 @@ const SCHEMA_SQL = `
     tokens_cache_read INTEGER DEFAULT 0,
     tokens_cache_creation INTEGER DEFAULT 0,
     tokens_reasoning INTEGER DEFAULT 0,
+    service_tier TEXT DEFAULT 'standard',
     status TEXT,
     success INTEGER DEFAULT 1,
     latency_ms INTEGER DEFAULT 0,
@@ -271,7 +280,6 @@ const SCHEMA_SQL = `
     tokens_cache_read INTEGER DEFAULT NULL,
     tokens_cache_creation INTEGER DEFAULT NULL,
     tokens_reasoning INTEGER DEFAULT NULL,
-    cost_usd REAL DEFAULT NULL,
     tokens_compressed INTEGER DEFAULT NULL,
     cache_source TEXT DEFAULT "upstream",
     request_type TEXT,
@@ -436,6 +444,16 @@ export function rowToCamel(row: unknown): JsonRecord | null {
       } catch {
         result[camelKey] = v;
       }
+    } else if (camelKey.endsWith("Json") && typeof v === "string") {
+      // Convention: any column with a `_json` suffix is JSON-encoded TEXT.
+      // Surface the parsed object under the friendlier name (key minus the
+      // "Json" suffix) — e.g. quotaWindowThresholdsJson → quotaWindowThresholds.
+      const baseKey = camelKey.slice(0, -"Json".length);
+      try {
+        result[baseKey] = JSON.parse(v);
+      } catch {
+        result[baseKey] = null;
+      }
     } else {
       result[camelKey] = v;
     }
@@ -503,6 +521,10 @@ function ensureProviderConnectionsColumns(db: SqliteDatabase) {
       db.exec("ALTER TABLE provider_connections ADD COLUMN max_concurrent INTEGER");
       console.log("[DB] Added provider_connections.max_concurrent column");
     }
+    if (!columnNames.has("quota_window_thresholds_json")) {
+      db.exec("ALTER TABLE provider_connections ADD COLUMN quota_window_thresholds_json TEXT");
+      console.log("[DB] Added provider_connections.quota_window_thresholds_json column");
+    }
     db.exec(
       "CREATE INDEX IF NOT EXISTS idx_pc_max_concurrent ON provider_connections(provider, max_concurrent)"
     );
@@ -535,6 +557,11 @@ function ensureUsageHistoryColumns(db: SqliteDatabase) {
       db.exec("ALTER TABLE usage_history ADD COLUMN error_code TEXT");
       console.log("[DB] Added usage_history.error_code column");
     }
+    if (!columnNames.has("service_tier")) {
+      db.exec("ALTER TABLE usage_history ADD COLUMN service_tier TEXT DEFAULT 'standard'");
+      console.log("[DB] Added usage_history.service_tier column");
+    }
+    db.exec("CREATE INDEX IF NOT EXISTS idx_uh_service_tier ON usage_history(service_tier)");
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn("[DB] Failed to verify usage_history schema:", message);
@@ -575,14 +602,6 @@ function ensureCallLogsColumns(db: SqliteDatabase) {
     if (!columnNames.has("tokens_reasoning")) {
       db.exec("ALTER TABLE call_logs ADD COLUMN tokens_reasoning INTEGER DEFAULT NULL");
       console.log("[DB] Added call_logs.tokens_reasoning column");
-    }
-    if (!columnNames.has("cost_usd")) {
-      db.exec("ALTER TABLE call_logs ADD COLUMN cost_usd REAL DEFAULT NULL");
-      console.log("[DB] Added call_logs.cost_usd column");
-    }
-    if (!columnNames.has("tokens_compressed")) {
-      db.exec("ALTER TABLE call_logs ADD COLUMN tokens_compressed INTEGER DEFAULT NULL");
-      console.log("[DB] Added call_logs.tokens_compressed column");
     }
     if (!columnNames.has("cache_source")) {
       db.exec("ALTER TABLE call_logs ADD COLUMN cache_source TEXT DEFAULT 'upstream'");
@@ -909,7 +928,6 @@ function offloadLegacyCallLogDetails(db: SqliteDatabase) {
             reasoning: row.tokens_reasoning ?? null,
             compressed: row.tokens_compressed ?? null,
           },
-          costUsd: null,
           requestType: row.request_type || null,
           sourceFormat: row.source_format || null,
           targetFormat: row.target_format || null,
@@ -977,7 +995,7 @@ function shouldRunStartupDbHealthCheck(): boolean {
   return !isAutomatedTestProcess();
 }
 
-function createHealthCheckBackup(db: SqliteDatabase): boolean {
+function createManagedDbBackup(db: SqliteDatabase, reason: string): boolean {
   const isTest = isAutomatedTestProcess();
   if (isTest) return false;
 
@@ -988,17 +1006,70 @@ function createHealthCheckBackup(db: SqliteDatabase): boolean {
     }
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const backupPath = path.join(backupDir, `db_${timestamp}_health-check-repair.sqlite`);
+    const backupPath = path.join(backupDir, `db_${timestamp}_${reason}.sqlite`);
     const escapedBackupPath = backupPath.replace(/'/g, "''");
 
     db.exec(`VACUUM INTO '${escapedBackupPath}'`);
-    console.log(`[DB] Health-check backup created: ${backupPath}`);
+    console.log(`[DB] Backup created (${reason}): ${backupPath}`);
     return true;
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    console.warn("[DB] Failed to create health-check backup:", message);
+    console.warn(`[DB] Failed to create ${reason} backup:`, message);
     return false;
   }
+}
+
+function createHealthCheckBackup(db: SqliteDatabase): boolean {
+  return createManagedDbBackup(db, "health-check-repair");
+}
+
+function autoMigrateLegacyEncryptedConnections(db: SqliteDatabase): number {
+  const rows = db.prepare("SELECT * FROM provider_connections").all() as JsonRecord[];
+  const updateStmt = db.prepare(
+    "UPDATE provider_connections SET api_key = @apiKey, id_token = @idToken, access_token = @accessToken, refresh_token = @refreshToken, updated_at = @updatedAt WHERE id = @id"
+  );
+  const encryptedFields = ["apiKey", "idToken", "accessToken", "refreshToken"] as const;
+  let migratedCount = 0;
+  let backupCreated = false;
+
+  for (const row of rows) {
+    const camelRow = rowToCamel(row);
+    if (!camelRow) continue;
+
+    let updatedRow = false;
+    for (const field of encryptedFields) {
+      if (typeof camelRow[field] !== "string") continue;
+
+      const { updated, value } = migrateLegacyEncryptedString(camelRow[field]);
+      if (updated) {
+        camelRow[field] = value;
+        updatedRow = true;
+      }
+    }
+
+    if (!updatedRow) continue;
+    if (!backupCreated) {
+      createManagedDbBackup(db, "legacy-encryption-migration");
+      backupCreated = true;
+    }
+
+    updateStmt.run({
+      id: camelRow.id,
+      apiKey: camelRow.apiKey ?? null,
+      idToken: camelRow.idToken ?? null,
+      accessToken: camelRow.accessToken ?? null,
+      refreshToken: camelRow.refreshToken ?? null,
+      updatedAt: new Date().toISOString(),
+    });
+    migratedCount++;
+  }
+
+  if (migratedCount > 0) {
+    invalidateDbCache("connections");
+    console.log(`[DB] Auto-migrated ${migratedCount} connection(s) to new static-salt encryption.`);
+  }
+
+  return migratedCount;
 }
 
 let dbHealthCheckTimer: NodeJS.Timeout | null = null;
@@ -1066,6 +1137,7 @@ export function getDbInstance(): SqliteDatabase {
     memoryDb.exec(SCHEMA_SQL);
     ensureUsageHistoryColumns(memoryDb);
     ensureCallLogsColumns(memoryDb);
+    ensureProviderConnectionsColumns(memoryDb);
     setDb(memoryDb);
     return memoryDb;
   }
@@ -1244,6 +1316,7 @@ export function getDbInstance(): SqliteDatabase {
     INSERT OR IGNORE INTO _omniroute_migrations (version, name)
     VALUES ('001', 'initial_schema');
   `);
+
   runMigrations(db, { isNewDb });
 
   offloadLegacyCallLogDetails(db);
@@ -1294,7 +1367,7 @@ export function getDbInstance(): SqliteDatabase {
 
   // Re-encrypt any tokens using the legacy dynamic salt to canonical static salt
   try {
-    autoMigrateLegacyEncryptedConnections();
+    autoMigrateLegacyEncryptedConnections(db);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[DB] Legacy encryption migration failed: ${message}`);
@@ -1339,6 +1412,49 @@ export function closeDbInstance(options?: { checkpointMode?: CheckpointMode | nu
  */
 export function resetDbInstance() {
   closeDbInstance();
+}
+
+// ──────────────── Runtime Driver Info ────────────────
+
+type DbDriverInfo = { source: string; kind: string };
+let driverInfoCached: DbDriverInfo | null = null;
+
+function setDriverInfo(info: DbDriverInfo) {
+  driverInfoCached = info;
+}
+
+/** Returns how better-sqlite3 was resolved (bundled / runtime / etc.). Null if not yet init. */
+export function getDriverInfo(): DbDriverInfo | null {
+  return driverInfoCached;
+}
+
+/**
+ * Async initializer that pre-resolves the SQLite runtime before first DB access.
+ *
+ * Call this at process startup (before any call to getDbInstance()) so that
+ * if the bundled better-sqlite3 binary is unavailable, the runtime installer
+ * can place it in ~/.omniroute/runtime/ without blocking a synchronous caller.
+ *
+ * Idempotent — safe to call multiple times.
+ */
+export async function ensureDbInitialized(): Promise<void> {
+  if (getDb()) return;
+
+  try {
+    const runtimeModule = await import("../../../bin/cli/runtime/sqliteRuntime.mjs" as any);
+    const { driver, source } = await runtimeModule.loadSqliteRuntime();
+    setDriverInfo({ source, kind: driver.kind as string });
+    if ((driver.kind as string) !== "better-sqlite3") {
+      console.warn(
+        `[DB] better-sqlite3 unavailable (resolved via ${source}/${driver.kind}). ` +
+          `OmniRoute may fall back to read-only or limited functionality.`
+      );
+    }
+  } catch {
+    // Runtime loader unavailable (CLI context only) — DB init falls through to normal path.
+  }
+
+  getDbInstance();
 }
 
 // ──────────────── JSON → SQLite Migration ────────────────
@@ -1586,10 +1702,11 @@ export function runManualVacuum(): { success: boolean; duration: number; error?:
     const duration = Date.now() - startTime;
     console.log(`[DB] Manual VACUUM completed in ${duration}ms`);
     return { success: true, duration };
-  } catch (err: any) {
+  } catch (err: unknown) {
     const duration = Date.now() - startTime;
     console.error("[DB] Manual VACUUM failed:", err);
-    return { success: false, duration, error: err.message };
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, duration, error: message };
   }
 }
 
