@@ -44,6 +44,7 @@ type PreservedCriticalDbState = {
 type CriticalTableSpec = {
   table: string;
   maxRows?: number;
+  countRows?: (db: SqliteDatabase) => number;
   readRows?: (db: SqliteDatabase) => JsonRecord[];
 };
 
@@ -66,12 +67,20 @@ const CRITICAL_DB_TABLES: CriticalTableSpec[] = [
   {
     table: "key_value",
     maxRows: 10_000,
+    countRows(db) {
+      const placeholders = Array.from(SKIP_PRESERVE_NAMESPACES, () => "?").join(", ");
+      const row = db
+        .prepare(`SELECT COUNT(*) AS count FROM key_value WHERE namespace NOT IN (${placeholders})`)
+        .get(...Array.from(SKIP_PRESERVE_NAMESPACES)) as { count?: number } | undefined;
+      return Number(row?.count || 0);
+    },
     readRows(db) {
-      return (
-        (db.prepare("SELECT namespace, key, value FROM key_value").all() as JsonRecord[]) ?? []
-      ).filter(
-        (row) => typeof row.namespace !== "string" || !SKIP_PRESERVE_NAMESPACES.has(row.namespace)
-      );
+      const placeholders = Array.from(SKIP_PRESERVE_NAMESPACES, () => "?").join(", ");
+      return (db
+        .prepare(
+          `SELECT namespace, key, value FROM key_value WHERE namespace NOT IN (${placeholders})`
+        )
+        .all(...Array.from(SKIP_PRESERVE_NAMESPACES)) ?? []) as JsonRecord[];
     },
   },
   { table: "provider_connections", maxRows: 5_000 },
@@ -680,6 +689,13 @@ function getTableColumns(db: SqliteDatabase, tableName: string): string[] {
     .filter((column) => column.length > 0);
 }
 
+function countTableRows(db: SqliteDatabase, tableName: string): number {
+  const row = db.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(tableName)}`).get() as
+    | { count?: number }
+    | undefined;
+  return Number(row?.count || 0);
+}
+
 function summarizePreservedTables(tables: PreservedTableSnapshot[]): string {
   if (tables.length === 0) return "none";
   return tables.map((table) => `${table.table}(${table.rowCount})`).join(", ");
@@ -734,11 +750,7 @@ function captureCriticalDbState(sqliteFile: string): PreservedCriticalDbState {
       if (!hasTable(probe, tableSpec.table)) continue;
 
       const maxRows = tableSpec.maxRows ?? DEFAULT_CRITICAL_TABLE_ROW_LIMIT;
-      const rows = (tableSpec.readRows?.(probe) ??
-        (probe
-          .prepare(`SELECT * FROM ${quoteIdentifier(tableSpec.table)}`)
-          .all() as JsonRecord[])) as JsonRecord[];
-      const rowCount = rows.length;
+      const rowCount = tableSpec.countRows?.(probe) ?? countTableRows(probe, tableSpec.table);
 
       if (rowCount === 0) continue;
 
@@ -751,6 +763,11 @@ function captureCriticalDbState(sqliteFile: string): PreservedCriticalDbState {
         });
         continue;
       }
+
+      const rows = (tableSpec.readRows?.(probe) ??
+        (probe
+          .prepare(`SELECT * FROM ${quoteIdentifier(tableSpec.table)}`)
+          .all() as JsonRecord[])) as JsonRecord[];
 
       snapshot.preservedTables.push({
         table: tableSpec.table,
