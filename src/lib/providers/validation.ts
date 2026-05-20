@@ -17,6 +17,7 @@ import {
   isClaudeCodeCompatibleProvider,
   isAnthropicCompatibleProvider,
   isOpenAICompatibleProvider,
+  isLocalProvider,
   isSelfHostedChatProvider,
   providerAllowsOptionalApiKey,
 } from "@/shared/constants/providers";
