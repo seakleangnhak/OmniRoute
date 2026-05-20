@@ -72,11 +72,17 @@ function installMockFetch({
   onAttachmentDownload,
   onUserConfig,
 }: any = {}) {
+  const originalFetch = globalThis.fetch;
   const calls = {
     session: 0,
     dpl: 0,
     sentinel: 0,
     conv: 0,
+    fileCreate: 0,
+    fileUploaded: 0,
+    fileProcess: 0,
+    uploadPut: 0,
+    uploadPutUrls: [],
     fileDownload: 0,
     attachmentDownload: 0,
     signedDownload: 0,
@@ -86,6 +92,16 @@ function installMockFetch({
     urls: [],
     headers: [],
     bodies: [],
+  };
+
+  globalThis.fetch = async (url, opts = {}) => {
+    const u = String(url);
+    if (/^https:\/\/files\.oaiusercontent\.com\/upload\//.test(u)) {
+      calls.uploadPut++;
+      calls.uploadPutUrls.push(u);
+      return new Response("", { status: 201 });
+    }
+    return originalFetch(url, opts);
   };
 
   __setTlsFetchOverrideForTesting(async (url, opts = {}) => {
@@ -162,6 +178,42 @@ function installMockFetch({
         text: JSON.stringify(cfg.body || {}),
         body: null,
       };
+    }
+
+    if (u.endsWith("/backend-api/files") && (opts.method || "GET") === "POST") {
+      calls.fileCreate++;
+      return {
+        status: 200,
+        headers: makeHeaders({ "Content-Type": "application/json" }),
+        text: JSON.stringify({
+          file_id: "file-reference-1",
+          upload_url: "https://files.oaiusercontent.com/upload/file-reference-1?sig=mock",
+        }),
+        body: null,
+      };
+    }
+
+    if (u.includes("/backend-api/files/process_upload_stream")) {
+      calls.fileProcess++;
+      return {
+        status: 200,
+        headers: makeHeaders({ "Content-Type": "application/json" }),
+        text: JSON.stringify({ status: "success" }),
+        body: null,
+      };
+    }
+
+    {
+      const m1 = u.match(/\/backend-api\/files\/([^/]+)\/uploaded/);
+      if (m1) {
+        calls.fileUploaded++;
+        return {
+          status: 200,
+          headers: makeHeaders({ "Content-Type": "application/json" }),
+          text: JSON.stringify({ status: "success" }),
+          body: null,
+        };
+      }
     }
 
     // /backend-api/conversation/<conv_id>/attachment/<file_id>/download
@@ -292,6 +344,7 @@ function installMockFetch({
     calls,
     restore() {
       __setTlsFetchOverrideForTesting(null);
+      globalThis.fetch = originalFetch;
     },
   };
 }
@@ -1867,6 +1920,61 @@ function imageGenEvents({ pointer, text = "Here's your kitten:" }) {
     },
   ];
 }
+
+const TINY_PNG_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p94AAAAASUVORK5CYII=";
+
+test("Image gen: image_url input uploads reference image and sends multimodal payload", async () => {
+  reset();
+  const m = installMockFetch();
+  try {
+    const executor = new ChatGptWebExecutor();
+    const result = await executor.execute({
+      model: "gpt-5.3-instant",
+      body: {
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Create a similar image with a blue background" },
+              { type: "image_url", image_url: { url: TINY_PNG_DATA_URL } },
+            ],
+          },
+        ],
+      },
+      stream: false,
+      credentials: { apiKey: "test" },
+      signal: AbortSignal.timeout(10_000),
+      log: null,
+    });
+
+    assert.equal(result.response.status, 200);
+    assert.equal(m.calls.fileCreate, 1, "created ChatGPT upload slot");
+    assert.equal(m.calls.uploadPut, 1, "uploaded bytes to signed URL");
+    assert.equal(m.calls.fileUploaded, 1, "marked upload complete");
+    assert.equal(m.calls.fileProcess, 0, "did not need legacy process fallback");
+
+    const createIdx = m.calls.urls.findIndex((u) => u.endsWith("/backend-api/files"));
+    const createPayload = JSON.parse(m.calls.bodies[createIdx]);
+    assert.equal(createPayload.use_case, "multimodal");
+    assert.equal(createPayload.file_size > 0, true);
+
+    const convIdx = m.calls.urls.findIndex((u) => u.endsWith("/backend-api/f/conversation"));
+    const body = JSON.parse(m.calls.bodies[convIdx]);
+    const userMessage = body.messages[body.messages.length - 1];
+
+    assert.equal(body.history_and_training_disabled, false);
+    assert.equal(userMessage.content.content_type, "multimodal_text");
+    assert.equal(userMessage.content.parts[0].content_type, "image_asset_pointer");
+    assert.equal(userMessage.content.parts[0].asset_pointer, "file-service://file-reference-1");
+    assert.match(userMessage.content.parts[1], /similar image/);
+    assert.equal(userMessage.metadata.attachments[0].id, "file-reference-1");
+    assert.equal(userMessage.metadata.attachments[0].mime_type, "image/png");
+    assert.doesNotMatch(JSON.stringify(body), /data:image/);
+  } finally {
+    m.restore();
+  }
+});
 
 test("Image gen: file-service:// pointer resolves to download URL and is appended as markdown (non-streaming)", async () => {
   reset();

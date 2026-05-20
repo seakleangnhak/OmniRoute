@@ -860,9 +860,15 @@ function extractMarkdownImageUrls(text: string): string[] {
   return urls;
 }
 
-function buildChatGptWebImagePrompt(body): string {
+function buildChatGptWebImagePrompt(body, referenceImageCount = 0): string {
   const prompt = String(body.prompt || "").trim();
-  const details: string[] = [`Create an image for this prompt: ${prompt}`];
+  const details: string[] = [];
+  if (referenceImageCount > 0) {
+    details.push(
+      `Use the attached reference image${referenceImageCount === 1 ? "" : "s"} as visual guidance.`
+    );
+  }
+  details.push(`Create an image for this prompt: ${prompt}`);
   if (typeof body.size === "string" && body.size.trim()) {
     details.push(`Requested size: ${body.size.trim()}.`);
   }
@@ -929,12 +935,24 @@ async function handleChatGptWebImageGeneration({
   }
 
   const wantsBase64 = body.response_format === "b64_json";
+  const imageInputs = extractImageInputs(body);
+  const referenceImageUrls = imageInputs.imageUrls;
   const images: Array<{ url?: string; b64_json?: string }> = [];
   const requestBody = {
     model,
     prompt: prompt.slice(0, 500),
     size: body.size || undefined,
     quality: body.quality || undefined,
+    reference_images: referenceImageUrls.length || undefined,
+  };
+
+  const buildUserContent = () => {
+    const text = buildChatGptWebImagePrompt(body, referenceImageUrls.length);
+    if (referenceImageUrls.length === 0) return text;
+    return [
+      { type: "text", text },
+      ...referenceImageUrls.map((url) => ({ type: "image_url", image_url: { url } })),
+    ];
   };
 
   for (let i = 0; i < requestedCount; i++) {
@@ -942,7 +960,7 @@ async function handleChatGptWebImageGeneration({
     const result = await executor.execute({
       model,
       body: {
-        messages: [{ role: "user", content: buildChatGptWebImagePrompt(body) }],
+        messages: [{ role: "user", content: buildUserContent() }],
       },
       stream: false,
       credentials,

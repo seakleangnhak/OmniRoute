@@ -22,6 +22,7 @@ import {
   TlsClientUnavailableError,
   type TlsFetchResult,
 } from "../services/chatgptTlsClient.ts";
+import { fetchRemoteImage } from "@/shared/network/remoteImageFetch";
 import {
   storeChatGptImage,
   getChatGptImageConversationContext,
@@ -36,6 +37,8 @@ const SESSION_URL = `${CHATGPT_BASE}/api/auth/session`;
 const SENTINEL_PREPARE_URL = `${CHATGPT_BASE}/backend-api/sentinel/chat-requirements/prepare`;
 const SENTINEL_CR_URL = `${CHATGPT_BASE}/backend-api/sentinel/chat-requirements`;
 const CONV_URL = `${CHATGPT_BASE}/backend-api/f/conversation`;
+const FILE_UPLOAD_URL = `${CHATGPT_BASE}/backend-api/files`;
+const FILE_PROCESS_UPLOAD_URL = `${CHATGPT_BASE}/backend-api/files/process_upload_stream`;
 const USER_LAST_USED_MODEL_CONFIG_URL = `${CHATGPT_BASE}/backend-api/settings/user_last_used_model_config`;
 
 const CHATGPT_USER_AGENT =
@@ -878,10 +881,21 @@ async function solveProofOfWork(
 
 // ─── OpenAI → ChatGPT message translation ───────────────────────────────────
 
+interface ChatGptReferenceImageInput {
+  source: string;
+}
+
+interface ParsedHistoryMessage {
+  role: string;
+  content: string;
+  images: ChatGptReferenceImageInput[];
+}
+
 interface ParsedMessages {
   systemMsg: string;
-  history: Array<{ role: string; content: string }>;
+  history: ParsedHistoryMessage[];
   currentMsg: string;
+  currentImages: ChatGptReferenceImageInput[];
   latestImageContext: ChatGptImageConversationContext | null;
 }
 
@@ -920,9 +934,47 @@ function findCachedImageContext(content: string): ChatGptImageConversationContex
   return latest;
 }
 
+function extractImageInputFromPart(
+  part: Record<string, unknown>
+): ChatGptReferenceImageInput | null {
+  const type = typeof part.type === "string" ? part.type : "";
+
+  if (type === "image_url") {
+    const raw = part.image_url;
+    if (typeof raw === "string" && raw.trim()) return { source: raw.trim() };
+    if (raw && typeof raw === "object") {
+      const url = (raw as Record<string, unknown>).url;
+      if (typeof url === "string" && url.trim()) return { source: url.trim() };
+    }
+  }
+
+  if (type === "input_image") {
+    const raw = part.image_url ?? part.image;
+    if (typeof raw === "string" && raw.trim()) return { source: raw.trim() };
+    if (raw && typeof raw === "object") {
+      const url = (raw as Record<string, unknown>).url;
+      if (typeof url === "string" && url.trim()) return { source: url.trim() };
+    }
+  }
+
+  if (type === "image") {
+    const source = part.source;
+    if (source && typeof source === "object") {
+      const src = source as Record<string, unknown>;
+      if (src.type === "base64" && typeof src.data === "string") {
+        const mediaType = typeof src.media_type === "string" ? src.media_type : "image/png";
+        return { source: `data:${mediaType};base64,${src.data}` };
+      }
+      if (typeof src.url === "string" && src.url.trim()) return { source: src.url.trim() };
+    }
+  }
+
+  return null;
+}
+
 function parseOpenAIMessages(messages: Array<Record<string, unknown>>): ParsedMessages {
   let systemMsg = "";
-  const history: Array<{ role: string; content: string }> = [];
+  const history: ParsedHistoryMessage[] = [];
   let latestImageContext: ChatGptImageConversationContext | null = null;
 
   for (const msg of messages) {
@@ -930,38 +982,66 @@ function parseOpenAIMessages(messages: Array<Record<string, unknown>>): ParsedMe
     if (role === "developer") role = "system";
 
     let content = "";
+    const images: ChatGptReferenceImageInput[] = [];
     if (typeof msg.content === "string") {
       content = msg.content;
     } else if (Array.isArray(msg.content)) {
-      content = (msg.content as Array<Record<string, unknown>>)
-        .filter((c) => c.type === "text")
-        .map((c) => String(c.text || ""))
-        .join(" ");
+      const textParts: string[] = [];
+      for (const part of msg.content as Array<Record<string, unknown>>) {
+        if (part?.type === "text") textParts.push(String(part.text || ""));
+        const imageInput = extractImageInputFromPart(part);
+        if (imageInput) images.push(imageInput);
+      }
+      content = textParts.join(" ");
     }
     content = stripInlinedImages(content);
     const imageContext = findCachedImageContext(content);
     if (imageContext) latestImageContext = imageContext;
-    if (!content.trim()) continue;
+    if (!content.trim() && images.length === 0) continue;
 
     if (role === "system") {
       systemMsg += (systemMsg ? "\n" : "") + content;
     } else if (role === "user" || role === "assistant") {
-      history.push({ role, content });
+      history.push({ role, content, images });
     }
   }
 
   let currentMsg = "";
+  let currentImages: ChatGptReferenceImageInput[] = [];
   if (history.length > 0 && history[history.length - 1].role === "user") {
-    currentMsg = history.pop()!.content;
+    const current = history.pop()!;
+    currentMsg = current.content;
+    currentImages = current.images;
   }
 
-  return { systemMsg, history, currentMsg, latestImageContext };
+  return { systemMsg, history, currentMsg, currentImages, latestImageContext };
+}
+
+interface ChatGptUploadedImage {
+  fileId: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  width: number;
+  height: number;
+}
+
+interface ChatGptImageAssetMessagePart {
+  content_type: "image_asset_pointer";
+  asset_pointer: string;
+  height: number;
+  size_bytes: number;
+  width: number;
 }
 
 interface ChatGptMessage {
   id: string;
   author: { role: string };
-  content: { content_type: "text"; parts: string[] };
+  create_time?: number;
+  content:
+    | { content_type: "text"; parts: string[] }
+    | { content_type: "multimodal_text"; parts: Array<string | ChatGptImageAssetMessagePart> };
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -1056,7 +1136,8 @@ function buildConversationBody(
   // is available. When false (default), use Temporary Chat to keep chats
   // out of the user's chatgpt.com history.
   forImageGen: boolean,
-  continuation: ChatGptImageConversationContext | null = null
+  continuation: ChatGptImageConversationContext | null = null,
+  uploadedImages: ChatGptUploadedImage[] = []
 ): Record<string, unknown> {
   // Critical: do NOT send prior turns as separate `assistant` and `user`
   // messages in the `messages` array. ChatGPT's web API ("action: next")
@@ -1073,7 +1154,10 @@ function buildConversationBody(
   }
   if (!continuation && parsed.history.length > 0) {
     const formatted = parsed.history
-      .map((h) => `${h.role === "assistant" ? "Assistant" : "User"}: ${h.content}`)
+      .map((h) => {
+        const marker = !h.content.trim() && h.images.length > 0 ? "[image attached]" : h.content;
+        return `${h.role === "assistant" ? "Assistant" : "User"}: ${marker}`;
+      })
       .join("\n\n");
     systemParts.push(
       `Prior conversation (for context — answer only the new user message below):\n\n${formatted}`
@@ -1093,11 +1177,43 @@ function buildConversationBody(
     ? "Briefly acknowledge the image result described in the system context. Do not generate, edit, or request another image."
     : parsed.currentMsg || "";
 
-  messages.push({
+  const userMessage: ChatGptMessage = {
     id: randomUUID(),
     author: { role: "user" },
     content: { content_type: "text", parts: [currentUserContent] },
-  });
+  };
+
+  if (uploadedImages.length > 0) {
+    const imageParts: ChatGptImageAssetMessagePart[] = uploadedImages.map((image) => ({
+      content_type: "image_asset_pointer",
+      asset_pointer: `file-service://${image.fileId}`,
+      height: image.height,
+      size_bytes: image.size,
+      width: image.width,
+    }));
+    userMessage.create_time = Date.now() / 1000;
+    userMessage.content = {
+      content_type: "multimodal_text",
+      parts: [...imageParts, currentUserContent || "Use the attached image as reference."],
+    };
+    userMessage.metadata = {
+      attachments: uploadedImages.map((image) => ({
+        id: image.fileId,
+        mime_type: image.mimeType,
+        name: image.name,
+        size: image.size,
+        height: image.height,
+        width: image.width,
+        source: "local",
+      })),
+      selected_all_github_repos: false,
+      selected_github_repos: [],
+      serialization_metadata: { custom_symbol_offsets: [] },
+      system_hints: [],
+    };
+  }
+
+  messages.push(userMessage);
 
   return {
     action: "next",
@@ -1118,6 +1234,376 @@ function buildConversationBody(
     suggestions: [],
     websocket_request_id: randomUUID(),
   };
+}
+
+// ─── ChatGPT reference image upload ────────────────────────────────────────
+
+const CHATGPT_REFERENCE_IMAGE_MAX = 4;
+const CHATGPT_REFERENCE_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
+
+interface ChatGptResolvedReferenceImage {
+  bytes: Buffer;
+  name: string;
+  mimeType: string;
+  size: number;
+  width: number;
+  height: number;
+}
+
+interface ChatGptUploadContext {
+  accessToken: string;
+  accountId: string | null;
+  sessionId: string;
+  deviceId: string;
+  cookie: string;
+  signal?: AbortSignal | null;
+  log?: { debug?: (tag: string, msg: string) => void; warn?: (tag: string, msg: string) => void };
+}
+
+const MIME_EXTENSION: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
+
+function normalizeImageMimeType(contentType: string | null | undefined, bytes: Buffer): string {
+  const normalized = String(contentType || "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+  if (normalized.startsWith("image/") && MIME_EXTENSION[normalized]) return normalized;
+
+  if (
+    bytes.length >= 8 &&
+    bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+  ) {
+    return "image/png";
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    bytes.length >= 12 &&
+    bytes.toString("ascii", 0, 4) === "RIFF" &&
+    bytes.toString("ascii", 8, 12) === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  if (bytes.length >= 6) {
+    const sig = bytes.toString("ascii", 0, 6);
+    if (sig === "GIF87a" || sig === "GIF89a") return "image/gif";
+  }
+
+  throw new Error("Reference image must be PNG, JPEG, WebP, or GIF");
+}
+
+function imageDimensions(bytes: Buffer, mimeType: string): { width: number; height: number } {
+  if (mimeType === "image/png" && bytes.length >= 24) {
+    return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+  }
+
+  if (mimeType === "image/jpeg" && bytes.length >= 4) {
+    let offset = 2;
+    while (offset + 9 < bytes.length) {
+      if (bytes[offset] !== 0xff) {
+        offset += 1;
+        continue;
+      }
+      const marker = bytes[offset + 1];
+      offset += 2;
+      if (marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+      if (offset + 2 > bytes.length) break;
+      const length = bytes.readUInt16BE(offset);
+      if (length < 2 || offset + length > bytes.length) break;
+      const isSof =
+        (marker >= 0xc0 && marker <= 0xc3) ||
+        (marker >= 0xc5 && marker <= 0xc7) ||
+        (marker >= 0xc9 && marker <= 0xcb) ||
+        (marker >= 0xcd && marker <= 0xcf);
+      if (isSof && offset + 7 < bytes.length) {
+        return { width: bytes.readUInt16BE(offset + 5), height: bytes.readUInt16BE(offset + 3) };
+      }
+      offset += length;
+    }
+  }
+
+  if (mimeType === "image/webp" && bytes.length >= 30) {
+    const chunk = bytes.toString("ascii", 12, 16);
+    if (chunk === "VP8X") {
+      const width = 1 + bytes.readUIntLE(24, 3);
+      const height = 1 + bytes.readUIntLE(27, 3);
+      return { width, height };
+    }
+    if (chunk === "VP8L" && bytes.length >= 25) {
+      const b0 = bytes[21];
+      const b1 = bytes[22];
+      const b2 = bytes[23];
+      const b3 = bytes[24];
+      return {
+        width: 1 + b0 + ((b1 & 0x3f) << 8),
+        height: 1 + ((b1 & 0xc0) >> 6) + (b2 << 2) + ((b3 & 0x0f) << 10),
+      };
+    }
+    if (chunk === "VP8 " && bytes.length >= 30) {
+      return {
+        width: bytes.readUInt16LE(26) & 0x3fff,
+        height: bytes.readUInt16LE(28) & 0x3fff,
+      };
+    }
+  }
+
+  if (mimeType === "image/gif" && bytes.length >= 10) {
+    return { width: bytes.readUInt16LE(6), height: bytes.readUInt16LE(8) };
+  }
+
+  return { width: 1024, height: 1024 };
+}
+
+function filenameFromImageSource(source: string, index: number, mimeType: string): string {
+  const ext = MIME_EXTENSION[mimeType] || "png";
+  if (/^https?:\/\//i.test(source)) {
+    try {
+      const url = new URL(source);
+      const basename = decodeURIComponent(url.pathname.split("/").filter(Boolean).pop() || "");
+      const cleaned = basename.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+      if (cleaned) return /\.[a-z0-9]{2,5}$/i.test(cleaned) ? cleaned : `${cleaned}.${ext}`;
+    } catch {
+      // Fall through to generated name.
+    }
+  }
+  return `omniroute-reference-${index + 1}.${ext}`;
+}
+
+async function resolveReferenceImage(
+  input: ChatGptReferenceImageInput,
+  index: number,
+  signal?: AbortSignal | null
+): Promise<ChatGptResolvedReferenceImage> {
+  const source = input.source.trim();
+  let bytes: Buffer;
+  let contentType: string | null = null;
+
+  const dataUri = /^data:([^;,]+)(?:;[^,]*)?;base64,(.+)$/is.exec(source);
+  if (dataUri) {
+    contentType = dataUri[1];
+    bytes = Buffer.from(dataUri[2].replace(/\s/g, ""), "base64");
+  } else if (/^https?:\/\//i.test(source)) {
+    const remote = await fetchRemoteImage(source, {
+      maxBytes: CHATGPT_REFERENCE_IMAGE_MAX_BYTES,
+      signal: signal ?? undefined,
+    });
+    contentType = remote.contentType;
+    bytes = remote.buffer;
+  } else {
+    bytes = Buffer.from(source.replace(/\s/g, ""), "base64");
+  }
+
+  if (bytes.length === 0) throw new Error("Reference image is empty");
+  if (bytes.length > CHATGPT_REFERENCE_IMAGE_MAX_BYTES) {
+    throw new Error(`Reference image exceeds ${CHATGPT_REFERENCE_IMAGE_MAX_BYTES} byte limit`);
+  }
+
+  const mimeType = normalizeImageMimeType(contentType, bytes);
+  const dimensions = imageDimensions(bytes, mimeType);
+  return {
+    bytes,
+    mimeType,
+    size: bytes.length,
+    width: dimensions.width || 1024,
+    height: dimensions.height || 1024,
+    name: filenameFromImageSource(source, index, mimeType),
+  };
+}
+
+function chatGptJsonHeaders(ctx: ChatGptUploadContext): Record<string, string> {
+  const headers: Record<string, string> = {
+    ...browserHeaders(),
+    ...oaiHeaders(ctx.sessionId, ctx.deviceId),
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${ctx.accessToken}`,
+    Cookie: buildSessionCookieHeader(ctx.cookie),
+  };
+  if (ctx.accountId) headers["chatgpt-account-id"] = ctx.accountId;
+  return headers;
+}
+
+function ensureChatGptUploadUrl(uploadUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(uploadUrl);
+  } catch {
+    throw new Error("ChatGPT returned an invalid upload URL");
+  }
+  const host = parsed.hostname.toLowerCase();
+  const allowedHost =
+    host === "files.oaiusercontent.com" ||
+    host.endsWith(".oaiusercontent.com") ||
+    host.endsWith(".blob.core.windows.net");
+  if (parsed.protocol !== "https:" || !allowedHost) {
+    throw new Error(`ChatGPT returned an unexpected upload host: ${host}`);
+  }
+  return parsed.toString();
+}
+
+function parseJsonObject(text: string | null): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(text || "{}");
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function uploadCompletionSucceeded(text: string | null): boolean {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return true;
+  const parsed = parseJsonObject(trimmed);
+  const status = typeof parsed.status === "string" ? parsed.status.toLowerCase() : "";
+  if (["success", "succeeded", "uploaded", "complete", "completed"].includes(status)) return true;
+  return /succeeded processing|success/i.test(trimmed);
+}
+
+async function uploadReferenceBytes(
+  uploadUrl: string,
+  image: ChatGptResolvedReferenceImage,
+  ctx: ChatGptUploadContext
+): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort("ChatGPT image upload timed out"), 120_000);
+  const signal = ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal;
+  try {
+    const response = await fetch(ensureChatGptUploadUrl(uploadUrl), {
+      method: "PUT",
+      headers: {
+        Accept: "application/json, text/plain, */*",
+        "Content-Type": image.mimeType,
+        Origin: CHATGPT_BASE,
+        Referer: `${CHATGPT_BASE}/`,
+        "User-Agent": CHATGPT_USER_AGENT,
+        "x-ms-blob-type": "BlockBlob",
+        "x-ms-version": "2020-04-08",
+      },
+      body: image.bytes,
+      signal,
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(`ChatGPT image upload failed (${response.status}): ${text.slice(0, 160)}`);
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function completeReferenceUpload(
+  fileId: string,
+  image: ChatGptResolvedReferenceImage,
+  ctx: ChatGptUploadContext
+): Promise<void> {
+  const headers = chatGptJsonHeaders(ctx);
+  const uploaded = await tlsFetchChatGpt(
+    `${FILE_UPLOAD_URL}/${encodeURIComponent(fileId)}/uploaded`,
+    {
+      method: "POST",
+      headers,
+      body: "{}",
+      timeoutMs: 60_000,
+      signal: ctx.signal,
+    }
+  );
+  if (uploaded.status >= 200 && uploaded.status < 300 && uploadCompletionSucceeded(uploaded.text)) {
+    return;
+  }
+
+  ctx.log?.debug?.(
+    "CGPT-WEB",
+    `file uploaded marker returned ${uploaded.status}; trying process_upload_stream fallback`
+  );
+  const processed = await tlsFetchChatGpt(FILE_PROCESS_UPLOAD_URL, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      file_id: fileId,
+      use_case: "multimodal",
+      index_for_retrieval: false,
+      file_name: image.name,
+    }),
+    timeoutMs: 60_000,
+    signal: ctx.signal,
+  });
+  if (
+    processed.status >= 200 &&
+    processed.status < 300 &&
+    uploadCompletionSucceeded(processed.text)
+  ) {
+    return;
+  }
+  throw new Error(
+    `ChatGPT image upload completion failed (${processed.status}): ${(processed.text || uploaded.text || "").slice(0, 160)}`
+  );
+}
+
+async function uploadOneReferenceImage(
+  input: ChatGptReferenceImageInput,
+  index: number,
+  ctx: ChatGptUploadContext
+): Promise<ChatGptUploadedImage> {
+  const image = await resolveReferenceImage(input, index, ctx.signal);
+  const create = await tlsFetchChatGpt(FILE_UPLOAD_URL, {
+    method: "POST",
+    headers: chatGptJsonHeaders(ctx),
+    body: JSON.stringify({
+      file_name: image.name,
+      file_size: image.size,
+      use_case: "multimodal",
+      timezone_offset_min: -new Date().getTimezoneOffset(),
+      reset_rate_limits: false,
+    }),
+    timeoutMs: 60_000,
+    signal: ctx.signal,
+  });
+  if (create.status < 200 || create.status >= 300) {
+    throw new Error(
+      `ChatGPT image upload init failed (${create.status}): ${(create.text || "").slice(0, 160)}`
+    );
+  }
+
+  const payload = parseJsonObject(create.text);
+  const fileId = typeof payload.file_id === "string" ? payload.file_id : "";
+  const uploadUrl = typeof payload.upload_url === "string" ? payload.upload_url : "";
+  if (!fileId || !uploadUrl)
+    throw new Error("ChatGPT image upload init did not return file_id/upload_url");
+
+  await uploadReferenceBytes(uploadUrl, image, ctx);
+  await completeReferenceUpload(fileId, image, ctx);
+
+  return {
+    fileId,
+    name: image.name,
+    mimeType: image.mimeType,
+    size: image.size,
+    width: image.width,
+    height: image.height,
+  };
+}
+
+async function uploadChatGptReferenceImages(
+  inputs: ChatGptReferenceImageInput[],
+  ctx: ChatGptUploadContext
+): Promise<ChatGptUploadedImage[]> {
+  const unique = Array.from(new Map(inputs.map((input) => [input.source, input])).values());
+  if (unique.length > CHATGPT_REFERENCE_IMAGE_MAX) {
+    throw new Error(
+      `ChatGPT Web supports up to ${CHATGPT_REFERENCE_IMAGE_MAX} reference images per request`
+    );
+  }
+  const uploaded: ChatGptUploadedImage[] = [];
+  for (let i = 0; i < unique.length; i++) {
+    uploaded.push(await uploadOneReferenceImage(unique[i], i, ctx));
+  }
+  return uploaded;
 }
 
 // ─── ChatGPT SSE parsing ────────────────────────────────────────────────────
@@ -2641,7 +3127,11 @@ export class ChatGptWebExecutor extends BaseExecutor {
 
     // 4. Build conversation request
     const parsed = parseOpenAIMessages(messages);
-    if (!parsed.currentMsg.trim() && parsed.history.length === 0) {
+    if (
+      !parsed.currentMsg.trim() &&
+      parsed.history.length === 0 &&
+      parsed.currentImages.length === 0
+    ) {
       return {
         response: errorResponse(400, "Empty user message"),
         url: CONV_URL,
@@ -2666,6 +3156,34 @@ export class ChatGptWebExecutor extends BaseExecutor {
       );
     }
 
+    let uploadedImages: ChatGptUploadedImage[] = [];
+    if (parsed.currentImages.length > 0) {
+      try {
+        uploadedImages = await uploadChatGptReferenceImages(parsed.currentImages, {
+          accessToken: tokenEntry.accessToken,
+          accountId: tokenEntry.accountId,
+          sessionId,
+          deviceId,
+          cookie,
+          signal,
+          log,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        log?.warn?.("CGPT-WEB", `Reference image upload failed: ${message}`);
+        return {
+          response: errorResponse(
+            502,
+            `ChatGPT image upload failed: ${message}`,
+            "IMAGE_UPLOAD_FAILED"
+          ),
+          url: FILE_UPLOAD_URL,
+          headers: {},
+          transformedBody: body,
+        };
+      }
+    }
+
     const parentMessageId = continuation?.parentMessageId ?? randomUUID();
     const modelSlug = MODEL_MAP[model] ?? model;
     const cgptBody = buildConversationBody(
@@ -2673,7 +3191,8 @@ export class ChatGptWebExecutor extends BaseExecutor {
       modelSlug,
       parentMessageId,
       forImageGen,
-      continuation
+      continuation,
+      uploadedImages
     );
 
     const headers: Record<string, string> = {
