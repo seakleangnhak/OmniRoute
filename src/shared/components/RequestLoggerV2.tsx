@@ -13,6 +13,7 @@ import {
 import {
   formatTime,
   formatDuration,
+  formatCost,
   maskSegment,
   maskAccount,
   formatApiKeyLabel,
@@ -53,7 +54,7 @@ function getProviderDisplayLabel(provider: string, providerNodes?: any[]): strin
 }
 
 function getLogTotalTokens(log) {
-  return (log?.tokens?.in || 0) + (log?.tokens?.out || 0);
+  return (log?.tokens?.in || 0) + (log?.tokens?.out || 0) + (log?.tokens?.images || 0);
 }
 
 function getLogTps(log): number {
@@ -112,6 +113,7 @@ export default function RequestLoggerV2() {
       { key: "apiKey", label: t("columns.apiKey") },
       { key: "combo", label: t("columns.combo") },
       { key: "tokens", label: t("columns.tokens") },
+      { key: "cost", label: t("columns.cost") },
       { key: "tps", label: t("columns.tps") },
       { key: "duration", label: t("columns.duration") },
       { key: "time", label: t("columns.time") },
@@ -660,6 +662,11 @@ export default function RequestLoggerV2() {
                       {t("columns.tokens")}
                     </th>
                   )}
+                  {visibleColumns.cost && (
+                    <th className="px-3 py-2.5 font-semibold text-text-muted uppercase tracking-wider text-[10px] text-right">
+                      {t("columns.cost")}
+                    </th>
+                  )}
                   {visibleColumns.tps && (
                     <th className="px-3 py-2.5 font-semibold text-text-muted uppercase tracking-wider text-[10px] text-right">
                       {t("columns.tps")}
@@ -807,6 +814,15 @@ export default function RequestLoggerV2() {
                           <span className="text-emerald-700 dark:text-emerald-400">
                             {log.tokens?.out?.toLocaleString() || 0}
                           </span>
+                          {log.tokens?.images != null && log.tokens.images > 0 && (
+                            <>
+                              <span className="mx-1 text-border">|</span>
+                              <span className="text-text-muted">IMG:</span>{" "}
+                              <span className="text-amber-700 dark:text-amber-400">
+                                {log.tokens.images.toLocaleString()}
+                              </span>
+                            </>
+                          )}
                           {log.tokens?.compressed != null && log.tokens.compressed > 0 && (
                             <>
                               <span className="mx-1 text-border">|</span>
@@ -818,6 +834,11 @@ export default function RequestLoggerV2() {
                               </span>
                             </>
                           )}
+                        </td>
+                      )}
+                      {visibleColumns.cost && (
+                        <td className="px-3 py-2 text-right whitespace-nowrap font-mono text-[11px] text-text-muted">
+                          {log.costUsd != null ? formatCost(log.costUsd) : "—"}
                         </td>
                       )}
                       {visibleColumns.tps && (

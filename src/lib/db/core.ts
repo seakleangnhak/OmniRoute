@@ -61,6 +61,8 @@ const LEGACY_DATA_DIR = isCloud ? null : getLegacyDotDataDir();
 export const SQLITE_FILE = isCloud ? null : path.join(DATA_DIR, "storage.sqlite");
 const JSON_DB_FILE = isCloud ? null : path.join(DATA_DIR, "db.json");
 export const DB_BACKUPS_DIR = isCloud ? null : path.join(DATA_DIR, "db_backups");
+const DEFAULT_SQLITE_MAX_SIZE_MB = 2048;
+const SQLITE_MAX_PAGE_COUNT_HARD_LIMIT = 1_073_741_823;
 const DEFAULT_CRITICAL_TABLE_ROW_LIMIT = 10_000;
 const SKIP_PRESERVE_NAMESPACES = new Set(["syncedAvailableModels", "providerLimitsCache", "lkgp"]);
 const CRITICAL_DB_TABLES: CriticalTableSpec[] = [
@@ -140,6 +142,34 @@ function openSqliteDatabase(
     }
     throw error;
   }
+}
+
+function parseSqliteMaxSizeMb(value: string | undefined): number {
+  if (value === undefined || value.trim() === "") return DEFAULT_SQLITE_MAX_SIZE_MB;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_SQLITE_MAX_SIZE_MB;
+}
+
+export function getSqliteMaxSizeMb(): number {
+  return parseSqliteMaxSizeMb(process.env.SQLITE_MAX_SIZE_MB);
+}
+
+function applySqliteSizeLimit(db: SqliteDatabase): void {
+  const maxSizeMb = getSqliteMaxSizeMb();
+  const pageSize = Number(db.pragma("page_size", { simple: true }) || 4096);
+  const maxBytes = maxSizeMb * 1024 * 1024;
+  const maxPages = Math.min(
+    SQLITE_MAX_PAGE_COUNT_HARD_LIMIT,
+    Math.max(1, Math.floor(maxBytes / pageSize))
+  );
+  db.pragma(`max_page_count = ${maxPages}`);
+}
+
+function configureSqlitePragmas(db: SqliteDatabase): void {
+  db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 5000");
+  db.pragma("synchronous = NORMAL");
+  applySqliteSizeLimit(db);
 }
 
 // Ensure data directory exists — with fallback for restricted home directories (#133)
@@ -289,7 +319,9 @@ const SCHEMA_SQL = `
     tokens_cache_read INTEGER DEFAULT NULL,
     tokens_cache_creation INTEGER DEFAULT NULL,
     tokens_reasoning INTEGER DEFAULT NULL,
+    cost_usd REAL DEFAULT NULL,
     tokens_compressed INTEGER DEFAULT NULL,
+    images_count INTEGER DEFAULT NULL,
     cache_source TEXT DEFAULT "upstream",
     request_type TEXT,
     source_format TEXT,
@@ -612,6 +644,18 @@ function ensureCallLogsColumns(db: SqliteDatabase) {
       db.exec("ALTER TABLE call_logs ADD COLUMN tokens_reasoning INTEGER DEFAULT NULL");
       console.log("[DB] Added call_logs.tokens_reasoning column");
     }
+    if (!columnNames.has("cost_usd")) {
+      db.exec("ALTER TABLE call_logs ADD COLUMN cost_usd REAL DEFAULT NULL");
+      console.log("[DB] Added call_logs.cost_usd column");
+    }
+    if (!columnNames.has("tokens_compressed")) {
+      db.exec("ALTER TABLE call_logs ADD COLUMN tokens_compressed INTEGER DEFAULT NULL");
+      console.log("[DB] Added call_logs.tokens_compressed column");
+    }
+    if (!columnNames.has("images_count")) {
+      db.exec("ALTER TABLE call_logs ADD COLUMN images_count INTEGER DEFAULT NULL");
+      console.log("[DB] Added call_logs.images_count column");
+    }
     if (!columnNames.has("cache_source")) {
       db.exec("ALTER TABLE call_logs ADD COLUMN cache_source TEXT DEFAULT 'upstream'");
       console.log("[DB] Added call_logs.cache_source column");
@@ -872,7 +916,9 @@ function offloadLegacyCallLogDetails(db: SqliteDatabase) {
     tokens_cache_read: number | null;
     tokens_cache_creation: number | null;
     tokens_reasoning: number | null;
+    cost_usd?: number | null;
     tokens_compressed: number | null;
+    images_count?: number | null;
     request_type: string | null;
     source_format: string | null;
     target_format: string | null;
@@ -944,7 +990,9 @@ function offloadLegacyCallLogDetails(db: SqliteDatabase) {
             cacheWrite: row.tokens_cache_creation ?? null,
             reasoning: row.tokens_reasoning ?? null,
             compressed: row.tokens_compressed ?? null,
+            images: row.images_count ?? null,
           },
+          costUsd: row.cost_usd ?? null,
           requestType: row.request_type || null,
           sourceFormat: row.source_format || null,
           targetFormat: row.target_format || null,
@@ -1150,7 +1198,7 @@ export function getDbInstance(): SqliteDatabase {
       console.log("[DB] Build phase detected — using in-memory SQLite (read-only)");
     }
     const memoryDb = openSqliteDatabase(":memory:");
-    memoryDb.pragma("journal_mode = WAL");
+    configureSqlitePragmas(memoryDb);
     memoryDb.exec(SCHEMA_SQL);
     ensureUsageHistoryColumns(memoryDb);
     ensureCallLogsColumns(memoryDb);
@@ -1313,9 +1361,7 @@ export function getDbInstance(): SqliteDatabase {
   }
 
   const db = openSqliteDatabase(sqliteFile);
-  db.pragma("journal_mode = WAL");
-  db.pragma("busy_timeout = 5000");
-  db.pragma("synchronous = NORMAL");
+  configureSqlitePragmas(db);
   db.exec(SCHEMA_SQL);
   ensureProviderConnectionsColumns(db);
   ensureUsageHistoryColumns(db);
@@ -1739,6 +1785,7 @@ export function setPageSize(pageSize: number): void {
   console.log(`[DB] Changing page_size from ${currentPageSize} to ${pageSize}`);
   db.pragma(`page_size = ${pageSize}`);
   db.exec("VACUUM");
+  applySqliteSizeLimit(db);
 
   const newPageSize = db.pragma("page_size", { simple: true }) as number;
   console.log(`[DB] page_size changed to ${newPageSize}`);

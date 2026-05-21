@@ -39,6 +39,7 @@ export type CallLogArtifact = {
       cacheWrite: number | null;
       reasoning: number | null;
       compressed: number | null;
+      images?: number | null;
     };
     costUsd: number | null;
     requestType: string | null;

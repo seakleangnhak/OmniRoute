@@ -417,8 +417,31 @@ test("local sqlite configuration enables WAL and sane pragmas", serial, async ()
       assert.equal(db.pragma("journal_mode", { simple: true }), "wal");
       assert.equal(db.pragma("busy_timeout", { simple: true }), 5000);
       assert.equal(db.pragma("synchronous", { simple: true }), 1);
+      assert.equal(core.getSqliteMaxSizeMb(), 2048);
       assert.equal(core.closeDbInstance({ checkpointMode: null }), true);
     });
+  } finally {
+    removePath(dataDir);
+  }
+});
+
+test("local sqlite configuration applies SQLITE_MAX_SIZE_MB", serial, async () => {
+  const dataDir = makeTempDir("omniroute-db-core-size-");
+
+  try {
+    await withEnv(
+      { DATA_DIR: dataDir, NEXT_PHASE: undefined, SQLITE_MAX_SIZE_MB: "64" },
+      async () => {
+        const core = await importFresh("src/lib/db/core.ts");
+        const db = core.getDbInstance();
+        const pageSize = db.pragma("page_size", { simple: true }) as number;
+        const maxPageCount = db.pragma("max_page_count", { simple: true }) as number;
+
+        assert.equal(core.getSqliteMaxSizeMb(), 64);
+        assert.equal(maxPageCount, Math.floor((64 * 1024 * 1024) / pageSize));
+        assert.equal(core.closeDbInstance({ checkpointMode: null }), true);
+      }
+    );
   } finally {
     removePath(dataDir);
   }
@@ -705,6 +728,21 @@ test(
           db
             .prepare("SELECT name FROM pragma_table_info('call_logs') WHERE name = ?")
             .get("combo_execution_key")
+        );
+        assert.ok(
+          db
+            .prepare("SELECT name FROM pragma_table_info('call_logs') WHERE name = ?")
+            .get("cost_usd")
+        );
+        assert.ok(
+          db
+            .prepare("SELECT name FROM pragma_table_info('call_logs') WHERE name = ?")
+            .get("tokens_compressed")
+        );
+        assert.ok(
+          db
+            .prepare("SELECT name FROM pragma_table_info('call_logs') WHERE name = ?")
+            .get("images_count")
         );
         assert.ok(
           db

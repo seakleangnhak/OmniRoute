@@ -152,7 +152,7 @@ docker build --target runner-base -t omniroute:base .
 docker build --target runner-cli  -t omniroute:cli  .
 ```
 
-Defaults exported by `runner-base`: `PORT=20128`, `HOSTNAME=0.0.0.0`, `OMNIROUTE_MEMORY_MB=1024`, `NODE_OPTIONS=--max-old-space-size=1024`, `DATA_DIR=/app/data`, `OMNIROUTE_MIGRATIONS_DIR=/app/migrations`.
+Defaults exported by `runner-base`: `PORT=20128`, `HOSTNAME=0.0.0.0`, `OMNIROUTE_MEMORY_MB=2048`, `NODE_OPTIONS=--max-old-space-size=2048`, `DATA_DIR=/app/data`, `SQLITE_MAX_SIZE_MB=2048`, `OMNIROUTE_MIGRATIONS_DIR=/app/migrations`.
 
 ## Critical Environment Variables
 
@@ -164,7 +164,8 @@ Beyond the defaults documented in [ENVIRONMENT.md](../reference/ENVIRONMENT.md),
 | `REDIS_URL`                   | Connection string for the rate limiter / cache backend                                              | `redis://redis:6379`       |
 | `REDIS_PORT`                  | Host-side port for the bundled Redis container                                                      | `6379`                     |
 | `AUTO_UPDATE_HOST_REPO_DIR`   | Host path mounted into `cli` profile at `/workspace/omniroute` for self-update workflows            | `.` (current directory)    |
-| `OMNIROUTE_MEMORY_MB`         | Node heap ceiling (`NODE_OPTIONS=--max-old-space-size`) for the server process                      | `1024` (set in Dockerfile) |
+| `OMNIROUTE_MEMORY_MB`         | Node heap ceiling (`NODE_OPTIONS=--max-old-space-size`) for the server process                      | `2048` (set in Dockerfile) |
+| `SQLITE_MAX_SIZE_MB`          | SQLite database file size cap in MB, applied on startup                                             | `2048` (set in Dockerfile) |
 | `DASHBOARD_PORT` / `API_PORT` | Override exposed ports for dashboard (20128) and API (20129)                                        | `20128` / `20129`          |
 | `PROD_DASHBOARD_PORT`         | Host-side dashboard port for `docker-compose.prod.yml`                                              | `20130`                    |
 | `CLIPROXYAPI_PORT`            | Host-side port for the `cliproxyapi` sidecar                                                        | `8317`                     |

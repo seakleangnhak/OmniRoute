@@ -358,6 +358,8 @@ function isSchemaAlreadyApplied(
       return !hasColumn(db, "files", "status");
     case "054":
       return hasColumn(db, "usage_history", "service_tier");
+    case "060":
+      return hasColumn(db, "call_logs", "images_count");
     default:
       return false;
   }

@@ -331,6 +331,7 @@ export async function POST(request: Request) {
       body,
       credentials,
       log,
+      apiKeyInfo: policy.apiKeyInfo,
       ...(isCustomModel && { resolvedProvider: provider }),
       signal: request.signal,
       clientHeaders: publicBaseUrlHeaders(request.headers),

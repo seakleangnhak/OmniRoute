@@ -89,6 +89,7 @@ export function computeCostFromPricing(
   const outputPrice = toNumber(pricing.output, 0);
   const reasoningPrice = toNumber(pricing.reasoning, outputPrice);
   const cacheCreationPrice = toNumber(pricing.cache_creation, inputPrice);
+  const imagePrice = toNumber(pricing.image, 0);
 
   let cost = 0;
   const inputTokens = tokens.input ?? tokens.prompt_tokens ?? tokens.input_tokens ?? 0;
@@ -106,6 +107,12 @@ export function computeCostFromPricing(
 
   const cacheCreationTokens = tokens.cacheCreation ?? tokens.cache_creation_input_tokens ?? 0;
   if (cacheCreationTokens > 0) cost += cacheCreationTokens * (cacheCreationPrice / 1_000_000);
+
+  const imageCount = toNumber(
+    tokens.images ?? tokens.image_count ?? tokens.images_count ?? tokens.imageCount,
+    0
+  );
+  if (imageCount > 0) cost += imageCount * imagePrice;
 
   return cost * getCodexFastCostMultiplier(options.provider, options.model, options.serviceTier);
 }

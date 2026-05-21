@@ -863,6 +863,7 @@ const pricingFieldsSchema = z
   .object({
     input: z.number().min(0).optional(),
     output: z.number().min(0).optional(),
+    image: z.number().min(0).optional(),
     cached: z.number().min(0).optional(),
     reasoning: z.number().min(0).optional(),
     cache_creation: z.number().min(0).optional(),

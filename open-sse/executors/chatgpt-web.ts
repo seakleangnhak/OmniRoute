@@ -1447,6 +1447,32 @@ function ensureChatGptUploadUrl(uploadUrl: string): string {
   return parsed.toString();
 }
 
+function formatWebSocketError(error: unknown): string {
+  const direct = formatErrorValue(error);
+  if (direct) return direct;
+
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const nested = formatErrorValue(record.error);
+    if (nested) return nested;
+
+    const details = [record.message, record.code, record.type, record.reason]
+      .map((value) => formatErrorValue(value))
+      .filter(Boolean)
+      .join(" ");
+    if (details) return details;
+  }
+
+  return "unknown websocket error";
+}
+
+function formatErrorValue(value: unknown): string | null {
+  if (value instanceof Error && value.message.trim()) return value.message.trim();
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
+}
+
 function parseJsonObject(text: string | null): Record<string, unknown> {
   try {
     const parsed = JSON.parse(text || "{}");
@@ -2704,7 +2730,7 @@ async function waitForImageViaWebSocket(
     };
     ws.onerror = (e) => {
       errored = true;
-      ctx.log?.warn?.("CGPT-WEB", `WebSocket error: ${(e as ErrorEvent).message ?? "unknown"}`);
+      ctx.log?.warn?.("CGPT-WEB", `WebSocket error: ${formatWebSocketError(e)}`);
     };
     ws.onclose = () => {
       clearTimeout(timer);

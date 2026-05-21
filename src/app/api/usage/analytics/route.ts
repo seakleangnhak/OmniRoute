@@ -659,29 +659,98 @@ export async function GET(request: Request) {
       )
       .get(params) as Record<string, unknown>;
 
+    const imageCostWhereClause = appendWhereCondition(
+      whereClause,
+      "path IN ('/v1/images/generations', '/v1/images/edits') AND cost_usd IS NOT NULL AND cost_usd > 0"
+    );
+    const imageCostRows = db
+      .prepare(
+        `
+        SELECT
+          DATE(timestamp) as date,
+          LOWER(provider) as provider,
+          LOWER(CASE WHEN instr(model, '/') > 0 THEN substr(model, instr(model, '/') + 1) ELSE model END) as model,
+          COALESCE(NULLIF(account, ''), 'unknown') as account,
+          NULLIF(api_key_id, '') as apiKeyId,
+          NULLIF(api_key_name, '') as apiKeyName,
+          COALESCE(NULLIF(api_key_id, ''), NULLIF(api_key_name, ''), 'unknown') as apiKeyGroupKey,
+          COUNT(*) as requests,
+          COALESCE(SUM(images_count), 0) as imagesCount,
+          COALESCE(SUM(cost_usd), 0) as cost,
+          COALESCE(AVG(duration), 0) as avgLatencyMs,
+          COALESCE(MIN(timestamp), '') as firstUsed,
+          COALESCE(MAX(timestamp), '') as lastUsed
+        FROM call_logs
+        ${imageCostWhereClause}
+        GROUP BY DATE(timestamp), LOWER(provider), LOWER(CASE WHEN instr(model, '/') > 0 THEN substr(model, instr(model, '/') + 1) ELSE model END), account, apiKeyId, apiKeyName, apiKeyGroupKey
+      `
+      )
+      .all(params) as Array<Record<string, unknown>>;
+
+    let imageRequestCount = 0;
+    let imageLatencyWeightedTotal = 0;
+    let firstImageRequest = "";
+    let lastImageRequest = "";
+    const imageModelKeys = new Set<string>();
+    const imageAccountKeys = new Set<string>();
+    const imageApiKeyKeys = new Set<string>();
+    for (const row of imageCostRows) {
+      const requests = Number(row.requests || 0);
+      imageRequestCount += requests;
+      imageLatencyWeightedTotal += Number(row.avgLatencyMs || 0) * requests;
+      const provider = toStringValue(row.provider);
+      const model = toStringValue(row.model);
+      const account = toStringValue(row.account);
+      if (provider && model) imageModelKeys.add(`${provider}::${model}`);
+      if (account && account !== "unknown") imageAccountKeys.add(account);
+      if (toStringValue(row.apiKeyId) || toStringValue(row.apiKeyName)) {
+        imageApiKeyKeys.add(toStringValue(row.apiKeyGroupKey, "unknown"));
+      }
+      const firstUsed = toStringValue(row.firstUsed);
+      const lastUsed = toStringValue(row.lastUsed);
+      if (firstUsed && (!firstImageRequest || firstUsed < firstImageRequest)) {
+        firstImageRequest = firstUsed;
+      }
+      if (lastUsed && (!lastImageRequest || lastUsed > lastImageRequest)) {
+        lastImageRequest = lastUsed;
+      }
+    }
+
+    const usageRequestCount = Number(summaryRow?.totalRequests || 0);
+    const combinedRequestCount = usageRequestCount + imageRequestCount;
+    const usageSuccessfulRequests = Number(summaryRow?.successfulRequests || 0);
+    const combinedSuccessfulRequests = usageSuccessfulRequests + imageRequestCount;
+    const usageAvgLatencyMs = Number(summaryRow?.avgLatencyMs || 0);
+    const combinedAvgLatencyMs =
+      combinedRequestCount > 0
+        ? Math.round(
+            (usageAvgLatencyMs * usageRequestCount + imageLatencyWeightedTotal) /
+              combinedRequestCount
+          )
+        : 0;
+    const usageFirstRequest = toStringValue(summaryRow?.firstRequest);
+    const usageLastRequest = toStringValue(summaryRow?.lastRequest);
+    const combinedFirstRequest =
+      [usageFirstRequest, firstImageRequest].filter(Boolean).sort()[0] || "";
+    const combinedLastRequest =
+      [usageLastRequest, lastImageRequest].filter(Boolean).sort().pop() || "";
     const summary = {
-      totalRequests: Number(summaryRow?.totalRequests || 0),
+      totalRequests: combinedRequestCount,
       promptTokens: Number(summaryRow?.promptTokens || 0),
       completionTokens: Number(summaryRow?.completionTokens || 0),
       totalTokens: Number(summaryRow?.totalTokens || 0),
-      uniqueModels: Number(summaryRow?.uniqueModels || 0),
-      uniqueAccounts: Number(summaryRow?.uniqueAccounts || 0),
-      uniqueApiKeys: Number(summaryRow?.uniqueApiKeys || 0),
-      successfulRequests: Number(summaryRow?.successfulRequests || 0),
+      uniqueModels: Number(summaryRow?.uniqueModels || 0) + imageModelKeys.size,
+      uniqueAccounts: Number(summaryRow?.uniqueAccounts || 0) + imageAccountKeys.size,
+      uniqueApiKeys: Number(summaryRow?.uniqueApiKeys || 0) + imageApiKeyKeys.size,
+      successfulRequests: combinedSuccessfulRequests,
       successRatePct:
-        Number(summaryRow?.totalRequests || 0) > 0
-          ? Number(
-              (
-                (Number(summaryRow?.successfulRequests || 0) /
-                  Number(summaryRow?.totalRequests || 1)) *
-                100
-              ).toFixed(2)
-            )
+        combinedRequestCount > 0
+          ? Number(((combinedSuccessfulRequests / combinedRequestCount) * 100).toFixed(2))
           : 0,
-      avgLatencyMs: Math.round(Number(summaryRow?.avgLatencyMs || 0)),
+      avgLatencyMs: combinedAvgLatencyMs,
       totalCost: 0,
-      firstRequest: summaryRow?.firstRequest || "",
-      lastRequest: summaryRow?.lastRequest || "",
+      firstRequest: combinedFirstRequest,
+      lastRequest: combinedLastRequest,
       fallbackCount: Number(fallbackRow?.fallbacks || 0),
       fastRequests: 0,
       standardRequests: 0,
@@ -737,18 +806,52 @@ export async function GET(request: Request) {
       allModels.add(model);
     }
 
-    const dailyTrend = dailyRows.map((row) => ({
-      date: row.date,
-      requests: Number(row.requests),
-      promptTokens: Number(row.promptTokens),
-      completionTokens: Number(row.completionTokens),
-      totalTokens: Number(row.totalTokens),
-      cost: roundCost(dailyCostByDate.get(toStringValue(row.date)) || 0),
-    }));
+    const dailyRowsByDate = new Map<string, Record<string, number | string>>();
+    for (const row of dailyRows) {
+      const date = toStringValue(row.date);
+      if (!date) continue;
+      dailyRowsByDate.set(date, {
+        date,
+        requests: Number(row.requests),
+        promptTokens: Number(row.promptTokens),
+        completionTokens: Number(row.completionTokens),
+        totalTokens: Number(row.totalTokens),
+      });
+    }
+    for (const row of imageCostRows) {
+      const date = toStringValue(row.date);
+      if (!date) continue;
+      dailyCostByDate.set(date, (dailyCostByDate.get(date) || 0) + Number(row.cost || 0));
+      const existing = dailyRowsByDate.get(date) || {
+        date,
+        requests: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+      };
+      existing.requests = Number(existing.requests || 0) + Number(row.requests || 0);
+      dailyRowsByDate.set(date, existing);
+    }
+
+    const dailyTrend = Array.from(dailyRowsByDate.values())
+      .sort((left, right) => String(left.date).localeCompare(String(right.date)))
+      .map((row) => ({
+        date: row.date,
+        requests: Number(row.requests),
+        promptTokens: Number(row.promptTokens),
+        completionTokens: Number(row.completionTokens),
+        totalTokens: Number(row.totalTokens),
+        cost: roundCost(dailyCostByDate.get(toStringValue(row.date)) || 0),
+      }));
 
     const activityMap: Record<string, number> = {};
     for (const row of heatmapRows) {
       activityMap[row.date as string] = Number(row.totalTokens);
+    }
+    for (const row of imageCostRows) {
+      const date = toStringValue(row.date);
+      if (!date) continue;
+      activityMap[date] = (activityMap[date] || 0) + Number(row.requests || 0);
     }
     summary.streak = computeActivityStreak(activityMap);
 
@@ -795,6 +898,36 @@ export async function GET(request: Request) {
       modelMap.set(key, existing);
     }
 
+    for (const row of imageCostRows) {
+      const model = toStringValue(row.model);
+      const provider = toStringValue(row.provider);
+      if (!model || !provider) continue;
+      const short = normalizeModelName(model);
+      const key = `${provider}::${model}`;
+      const existing = modelMap.get(key) || {
+        model: short,
+        provider,
+        rawModel: model,
+        requests: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        latencyWeightedTotal: 0,
+        successfulRequests: 0,
+        lastUsed: "",
+        cost: 0,
+      };
+      const requests = Number(row.requests || 0);
+      existing.requests = Number(existing.requests || 0) + requests;
+      existing.latencyWeightedTotal =
+        Number(existing.latencyWeightedTotal || 0) + Number(row.avgLatencyMs || 0) * requests;
+      existing.successfulRequests = Number(existing.successfulRequests || 0) + requests;
+      if (!existing.lastUsed || String(row.lastUsed || "") > String(existing.lastUsed || "")) {
+        existing.lastUsed = row.lastUsed;
+      }
+      existing.cost = Number(existing.cost || 0) + Number(row.cost || 0);
+      modelMap.set(key, existing);
+    }
     const byModel = Array.from(modelMap.values())
       .map((row) => ({
         model: row.model,
@@ -835,19 +968,57 @@ export async function GET(request: Request) {
       providerCostByProvider.set(provider, (providerCostByProvider.get(provider) || 0) + cost);
     }
 
-    const byProvider = providerRows.map((row) => ({
-      provider: row.provider,
-      requests: Number(row.requests),
-      promptTokens: Number(row.promptTokens),
-      completionTokens: Number(row.completionTokens),
-      totalTokens: Number(row.totalTokens),
-      avgLatencyMs: Math.round(Number(row.avgLatencyMs)),
-      successRatePct:
-        Number(row.requests) > 0
-          ? Number((Number(row.successfulRequests) / Number(row.requests)) * 100).toFixed(2)
-          : 0,
-      cost: roundCost(providerCostByProvider.get(toStringValue(row.provider)) || 0),
-    }));
+    const providerMap = new Map<string, Record<string, unknown>>();
+    for (const row of providerRows) {
+      const provider = toStringValue(row.provider);
+      providerMap.set(provider, {
+        provider: row.provider,
+        requests: Number(row.requests),
+        promptTokens: Number(row.promptTokens),
+        completionTokens: Number(row.completionTokens),
+        totalTokens: Number(row.totalTokens),
+        avgLatencyMs: Math.round(Number(row.avgLatencyMs)),
+        successRatePct:
+          Number(row.requests) > 0
+            ? Number((Number(row.successfulRequests) / Number(row.requests)) * 100).toFixed(2)
+            : 0,
+        cost: roundCost(providerCostByProvider.get(provider) || 0),
+      });
+    }
+    for (const row of imageCostRows) {
+      const provider = toStringValue(row.provider);
+      if (!provider) continue;
+      const requests = Number(row.requests || 0);
+      const existing = providerMap.get(provider) || {
+        provider,
+        requests: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        avgLatencyMs: 0,
+        successRatePct: 0,
+        cost: 0,
+      };
+      const previousRequests = Number(existing.requests || 0);
+      const nextRequests = previousRequests + requests;
+      const previousSuccesses = (Number(existing.successRatePct || 0) / 100) * previousRequests;
+      existing.requests = nextRequests;
+      existing.avgLatencyMs =
+        nextRequests > 0
+          ? Math.round(
+              (Number(existing.avgLatencyMs || 0) * previousRequests +
+                Number(row.avgLatencyMs || 0) * requests) /
+                nextRequests
+            )
+          : 0;
+      existing.successRatePct =
+        nextRequests > 0
+          ? Number((((previousSuccesses + requests) / nextRequests) * 100).toFixed(2))
+          : 0;
+      existing.cost = roundCost(Number(existing.cost || 0) + Number(row.cost || 0));
+      providerMap.set(provider, existing);
+    }
+    const byProvider = Array.from(providerMap.values());
 
     const accountCostByAccount = new Map<string, number>();
     for (const row of accountCostRows) {
@@ -862,16 +1033,51 @@ export async function GET(request: Request) {
       accountCostByAccount.set(account, (accountCostByAccount.get(account) || 0) + cost);
     }
 
-    const byAccount = accountRows.map((row) => ({
-      account: toStringValue(row.account, "unknown"),
-      requests: Number(row.requests),
-      promptTokens: Number(row.promptTokens),
-      completionTokens: Number(row.completionTokens),
-      totalTokens: Number(row.totalTokens),
-      avgLatencyMs: Math.round(Number(row.avgLatencyMs)),
-      lastUsed: row.lastUsed,
-      cost: roundCost(accountCostByAccount.get(toStringValue(row.account, "unknown")) || 0),
-    }));
+    const accountMap = new Map<string, Record<string, unknown>>();
+    for (const row of accountRows) {
+      const account = toStringValue(row.account, "unknown");
+      accountMap.set(account, {
+        account,
+        requests: Number(row.requests),
+        promptTokens: Number(row.promptTokens),
+        completionTokens: Number(row.completionTokens),
+        totalTokens: Number(row.totalTokens),
+        avgLatencyMs: Math.round(Number(row.avgLatencyMs)),
+        lastUsed: row.lastUsed,
+        cost: roundCost(accountCostByAccount.get(account) || 0),
+      });
+    }
+    for (const row of imageCostRows) {
+      const account = toStringValue(row.account, "unknown");
+      const requests = Number(row.requests || 0);
+      const existing = accountMap.get(account) || {
+        account,
+        requests: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        avgLatencyMs: 0,
+        lastUsed: "",
+        cost: 0,
+      };
+      const previousRequests = Number(existing.requests || 0);
+      const nextRequests = previousRequests + requests;
+      existing.requests = nextRequests;
+      existing.avgLatencyMs =
+        nextRequests > 0
+          ? Math.round(
+              (Number(existing.avgLatencyMs || 0) * previousRequests +
+                Number(row.avgLatencyMs || 0) * requests) /
+                nextRequests
+            )
+          : 0;
+      if (!existing.lastUsed || String(row.lastUsed || "") > String(existing.lastUsed || "")) {
+        existing.lastUsed = row.lastUsed;
+      }
+      existing.cost = roundCost(Number(existing.cost || 0) + Number(row.cost || 0));
+      accountMap.set(account, existing);
+    }
+    const byAccount = Array.from(accountMap.values());
 
     const apiKeyMap = new Map<
       string,
@@ -921,6 +1127,33 @@ export async function GET(request: Request) {
         normalizeModelName,
         computeCostFromPricing
       );
+      apiKeyMap.set(key, existing);
+    }
+    for (const row of imageCostRows) {
+      const apiKeyId = toStringValue(row.apiKeyId);
+      const apiKeyNameValue = toStringValue(row.apiKeyName);
+      if (!apiKeyId && !apiKeyNameValue) continue;
+      const apiKeyGroupKey = toStringValue(row.apiKeyGroupKey, "unknown");
+      const key = makeApiKeyUsageGroup(apiKeyId, apiKeyGroupKey);
+      const apiKeyName =
+        (apiKeyId ? currentApiKeyNames.get(apiKeyId) : undefined) ||
+        apiKeyNameValue ||
+        apiKeyId ||
+        apiKeyGroupKey ||
+        "Unknown API key";
+      const existing = apiKeyMap.get(key) || {
+        apiKey: apiKeyId && apiKeyName !== apiKeyId ? `${apiKeyName} (${apiKeyId})` : apiKeyName,
+        apiKeyId: apiKeyId || null,
+        apiKeyName,
+        historicalApiKeyNames: apiKeyNameValue ? [apiKeyNameValue] : [],
+        requests: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        cost: 0,
+      };
+      existing.requests += Number(row.requests || 0);
+      existing.cost += Number(row.cost || 0);
       apiKeyMap.set(key, existing);
     }
     const byApiKey = Array.from(apiKeyMap.values())
@@ -1081,6 +1314,20 @@ export async function GET(request: Request) {
           );
         }
 
+        const presetImageWhere = appendWhereCondition(
+          presetWhere,
+          "path IN ('/v1/images/generations', '/v1/images/edits') AND cost_usd IS NOT NULL AND cost_usd > 0"
+        );
+        const presetImageCostRow = db
+          .prepare(
+            `
+            SELECT COALESCE(SUM(cost_usd), 0) as cost
+            FROM call_logs
+            ${presetImageWhere}
+          `
+          )
+          .get(presetParams) as Record<string, unknown>;
+        presetTotalCost += Number(presetImageCostRow?.cost || 0);
         presetSummaries[presetRange] = {
           totalCost: roundCost(presetTotalCost),
         };

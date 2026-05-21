@@ -251,6 +251,7 @@ export async function POST(request: Request) {
     imageBytes,
     imageMime,
     credentials,
+    apiKeyInfo: policy.apiKeyInfo,
     log,
     signal: request.signal,
     clientHeaders: publicBaseUrlHeaders(request.headers),

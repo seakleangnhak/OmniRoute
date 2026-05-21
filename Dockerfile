@@ -31,11 +31,12 @@ LABEL org.opencontainers.image.title="omniroute" \
 ENV NODE_ENV=production
 ENV PORT=20128
 ENV HOSTNAME=0.0.0.0
-ENV OMNIROUTE_MEMORY_MB=1024
-ENV NODE_OPTIONS="--max-old-space-size=1024"
+ENV OMNIROUTE_MEMORY_MB=2048
+ENV NODE_OPTIONS="--max-old-space-size=2048"
 
 # Data directory inside Docker — must match the volume mount in docker-compose.yml
 ENV DATA_DIR=/app/data
+ENV SQLITE_MAX_SIZE_MB=2048
 RUN apt-get update \
   && apt-get install -y --no-install-recommends libsecret-1-0 ca-certificates \
   && rm -rf /var/lib/apt/lists/*

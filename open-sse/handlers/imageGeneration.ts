@@ -176,6 +176,7 @@ export async function handleImageGeneration({
   resolvedProvider = null,
   signal = null,
   clientHeaders = null,
+  apiKeyInfo = null,
 }) {
   let provider, model;
 
@@ -329,6 +330,7 @@ export async function handleImageGeneration({
       log,
       signal,
       clientHeaders,
+      apiKeyInfo,
     });
   }
 
@@ -1032,8 +1034,10 @@ async function handleChatGptWebImageGeneration({
   log,
   signal,
   clientHeaders,
+  apiKeyInfo = null,
 }) {
   const startTime = Date.now();
+  const logMetadata = buildImageCallLogMetadata(credentials, apiKeyInfo);
   const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
   if (!prompt) {
     return saveImageErrorResult({
@@ -1178,6 +1182,8 @@ async function handleChatGptWebImageGeneration({
     requestBody,
     responseBody: { images_count: images.length },
     images,
+    tokens: buildImageUsageTokens(images),
+    ...logMetadata,
   });
 }
 
@@ -1205,6 +1211,7 @@ export async function handleImageEdit({
   body,
   imageBytes = null,
   credentials,
+  apiKeyInfo = null,
   log,
   signal = null,
   clientHeaders = null,
@@ -1215,11 +1222,13 @@ export async function handleImageEdit({
   imageBytes?: Buffer | null;
   imageMime?: string; // accepted for symmetry with route layer; not used
   credentials: any;
+  apiKeyInfo?: { id?: string | null; name?: string | null } | null;
   log: any;
   signal?: AbortSignal | null;
   clientHeaders?: Record<string, string> | null;
 }) {
   const startTime = Date.now();
+  const logMetadata = buildImageCallLogMetadata(credentials, apiKeyInfo);
   const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
   if (!prompt) {
     return saveImageErrorResult({
@@ -1392,6 +1401,9 @@ export async function handleImageEdit({
     requestBody,
     responseBody: { images_count: images.length, edit_match: Boolean(cached?.entry.context) },
     images,
+    tokens: buildImageUsageTokens(images),
+    path: "/v1/images/edits",
+    ...logMetadata,
   });
 }
 
@@ -2455,6 +2467,19 @@ async function handleCodexImageGeneration({
   });
 }
 
+function buildImageUsageTokens(images) {
+  const imageCount = Array.isArray(images) ? images.length : 0;
+  return imageCount > 0 ? { images: imageCount, image_count: imageCount } : undefined;
+}
+
+function buildImageCallLogMetadata(credentials, apiKeyInfo) {
+  return {
+    connectionId: credentials?.connectionId || null,
+    apiKeyId: apiKeyInfo?.id || null,
+    apiKeyName: apiKeyInfo?.name || null,
+  };
+}
+
 function saveImageSuccessResult({
   provider,
   model,
@@ -2463,14 +2488,23 @@ function saveImageSuccessResult({
   responseBody = null,
   created = null,
   images,
+  tokens = null,
+  path = "/v1/images/generations",
+  connectionId = null,
+  apiKeyId = null,
+  apiKeyName = null,
 }) {
   saveCallLog({
     method: "POST",
-    path: "/v1/images/generations",
+    path,
     status: 200,
     model: `${provider}/${model}`,
     provider,
+    connectionId,
+    apiKeyId,
+    apiKeyName,
     duration: Date.now() - startTime,
+    tokens,
     requestBody,
     responseBody,
   }).catch(() => {});
@@ -2484,13 +2518,27 @@ function saveImageSuccessResult({
   };
 }
 
-function saveImageErrorResult({ provider, model, status, startTime, error, requestBody = null }) {
+function saveImageErrorResult({
+  provider,
+  model,
+  status,
+  startTime,
+  error,
+  requestBody = null,
+  path = "/v1/images/generations",
+  connectionId = null,
+  apiKeyId = null,
+  apiKeyName = null,
+}) {
   saveCallLog({
     method: "POST",
-    path: "/v1/images/generations",
+    path,
     status,
     model: `${provider}/${model}`,
     provider,
+    connectionId,
+    apiKeyId,
+    apiKeyName,
     duration: Date.now() - startTime,
     error: typeof error === "string" ? error.slice(0, 500) : String(error).slice(0, 500),
     requestBody,

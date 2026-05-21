@@ -247,6 +247,48 @@ test("GET /api/usage/analytics filters by range parameter", async () => {
   assert.equal(body.range, "1d");
 });
 
+test("GET /api/usage/analytics includes image generation call log costs", async () => {
+  const db = core.getDbInstance();
+  const timestamp = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO call_logs (
+      id, timestamp, method, path, status, model, provider, account, connection_id,
+      api_key_id, api_key_name, duration, images_count, cost_usd
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    "image-call",
+    timestamp,
+    "POST",
+    "/v1/images/generations",
+    200,
+    "chatgpt-web/gpt-5.5-pro",
+    "chatgpt-web",
+    "ChatGPT Account",
+    "chatgpt-conn",
+    "image-key-id",
+    "Image Key",
+    1200,
+    2,
+    0.08
+  );
+
+  const response = await analyticsRoute.GET(makeRequest("http://localhost/api/usage/analytics"));
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.summary.totalRequests, 1);
+  assertClose(body.summary.totalCost, 0.08);
+  assert.equal(body.byProvider[0].provider, "chatgpt-web");
+  assertClose(body.byProvider[0].cost, 0.08);
+  assert.equal(body.byModel[0].model, "gpt-5.5-pro");
+  assertClose(body.byModel[0].cost, 0.08);
+  assert.equal(body.byApiKey[0].apiKeyId, "image-key-id");
+  assertClose(body.byApiKey[0].cost, 0.08);
+  assert.equal(body.byAccount[0].account, "ChatGPT Account");
+  assertClose(body.byAccount[0].cost, 0.08);
+  assertClose(body.dailyTrend[0].cost, 0.08);
+});
+
 test("GET /api/usage/analytics includes byProvider array with cost data", async () => {
   await seedAnalyticsData();
 

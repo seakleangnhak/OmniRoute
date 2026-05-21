@@ -1337,6 +1337,7 @@ type ProviderPricingTable = Record<string, Record<string, unknown>>;
 type PricingRow = {
   input: number;
   output: number;
+  image?: number;
   cached?: number;
   reasoning?: number;
   cache_creation?: number;
@@ -1416,6 +1417,12 @@ export function calculateCostFromTokens(
   if (cacheCreationTokens > 0) {
     const cacheCreationRate = pricing.cache_creation || pricing.input; // Fallback to input rate
     cost += cacheCreationTokens * (cacheCreationRate / 1000000);
+  }
+
+  // Generated images are billed as a fixed price per image, not per million tokens.
+  const imageCount = tokens.images || tokens.image_count || tokens.images_count || 0;
+  if (imageCount > 0 && pricing.image) {
+    cost += imageCount * pricing.image;
   }
 
   return cost;

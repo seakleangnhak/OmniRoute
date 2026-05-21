@@ -53,9 +53,9 @@ test("runtime env helpers normalize runtime ports and conflicting color flags", 
 test("runtime env helpers derive NODE_OPTIONS from OMNIROUTE_MEMORY_MB", async () => {
   const runtimeEnv = await loadRuntimeEnv("memory");
 
-  assert.deepEqual(runtimeEnv.withNodeMemoryEnv({ OMNIROUTE_MEMORY_MB: "1024" }), {
-    OMNIROUTE_MEMORY_MB: "1024",
-    NODE_OPTIONS: "--max-old-space-size=1024",
+  assert.deepEqual(runtimeEnv.withNodeMemoryEnv({ OMNIROUTE_MEMORY_MB: "2048" }), {
+    OMNIROUTE_MEMORY_MB: "2048",
+    NODE_OPTIONS: "--max-old-space-size=2048",
   });
 
   assert.deepEqual(

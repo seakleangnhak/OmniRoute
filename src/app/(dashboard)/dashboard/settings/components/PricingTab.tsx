@@ -13,10 +13,18 @@ type SortKey = "modelsDesc" | "coverageDesc" | "coverageAsc" | "nameAsc";
 const INITIAL_VISIBLE = 20;
 const VISIBLE_INCREMENT = 30;
 
-const PRICING_FIELDS = ["input", "output", "cached", "reasoning", "cache_creation"] as const;
+const PRICING_FIELDS = [
+  "input",
+  "output",
+  "image",
+  "cached",
+  "reasoning",
+  "cache_creation",
+] as const;
 const FIELD_LABEL_KEYS: Record<(typeof PRICING_FIELDS)[number], string> = {
   input: "input",
   output: "output",
+  image: "image",
   cached: "cached",
   reasoning: "reasoning",
   cache_creation: "cacheCreation",
@@ -464,7 +472,7 @@ export default function PricingTab() {
               {t("modelPricing")}
             </h2>
             <InfoTooltip
-              text={`${t("pricingDescInput")} · ${t("pricingDescOutput")} · ${t("pricingDescCached")} · ${t("pricingDescReasoning")} · ${t("pricingDescCacheWrite")} · ${t("pricingDescFormula")}`}
+              text={`${t("pricingDescInput")} · ${t("pricingDescOutput")} · ${t("pricingDescImage")} · ${t("pricingDescCached")} · ${t("pricingDescReasoning")} · ${t("pricingDescCacheWrite")} · ${t("pricingDescFormula")}`}
             />
           </div>
           <p className="text-text-muted text-xs hidden sm:block self-center">

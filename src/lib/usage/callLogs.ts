@@ -61,6 +61,7 @@ type CallLogSummaryRow = {
   tokens_reasoning: number | null;
   cost_usd: number | null;
   tokens_compressed: number | null;
+  images_count: number | null;
   cache_source: string | null;
   request_type: string | null;
   source_format: string | null;
@@ -116,6 +117,38 @@ function toNumberOrNull(value: unknown): number | null {
     return Number.isFinite(numeric) ? numeric : null;
   }
   return null;
+}
+
+function getImageCountFromTokens(tokens: unknown): number | null {
+  const record = asRecord(tokens);
+  for (const key of ["images", "image_count", "images_count", "imageCount"]) {
+    const count = toNumber(record[key]);
+    if (count > 0) return count;
+  }
+  return null;
+}
+
+function hasBillableUsage(tokens: unknown): boolean {
+  const record = asRecord(tokens);
+  return [
+    "input",
+    "prompt_tokens",
+    "input_tokens",
+    "output",
+    "completion_tokens",
+    "output_tokens",
+    "cacheRead",
+    "cached_tokens",
+    "cache_read_input_tokens",
+    "cacheCreation",
+    "cache_creation_input_tokens",
+    "reasoning",
+    "reasoning_tokens",
+    "images",
+    "image_count",
+    "images_count",
+    "imageCount",
+  ].some((key) => toNumber(record[key]) > 0);
 }
 
 function toStringOrNull(value: unknown): string | null {
@@ -306,6 +339,7 @@ function buildArtifact(
     tokensReasoning: number | null;
     costUsd: number | null;
     tokensCompressed: number | null;
+    imagesCount: number | null;
     requestType: string | null;
     sourceFormat: string | null;
     targetFormat: string | null;
@@ -341,6 +375,7 @@ function buildArtifact(
         cacheWrite: logEntry.tokensCacheCreation,
         reasoning: logEntry.tokensReasoning,
         compressed: logEntry.tokensCompressed,
+        images: logEntry.imagesCount,
       },
       costUsd: logEntry.costUsd,
       requestType: logEntry.requestType,
@@ -569,6 +604,7 @@ function mapSummaryRow(row: CallLogSummaryRow) {
       cacheWrite: row.tokens_cache_creation != null ? toNumber(row.tokens_cache_creation) : null,
       reasoning: row.tokens_reasoning != null ? toNumber(row.tokens_reasoning) : null,
       compressed: row.tokens_compressed != null ? toNumber(row.tokens_compressed) : null,
+      images: row.images_count != null ? toNumber(row.images_count) : null,
     },
     costUsd: row.cost_usd != null ? toNumber(row.cost_usd) : null,
     cacheSource: row.cache_source || "upstream",
@@ -661,8 +697,13 @@ export async function saveCallLog(entry: any) {
       tokensReasoning: getReasoningTokensOrNull(entry.tokens),
       costUsd:
         toNumberOrNull(entry.costUsd ?? entry.cost_usd) ??
-        (entry.tokens ? await calculateCost(rawProvider, entry.model || "-", entry.tokens) : 0),
+        (hasBillableUsage(entry.tokens)
+          ? await calculateCost(rawProvider, entry.model || "-", entry.tokens)
+          : 0),
       tokensCompressed: entry.tokensCompressed != null ? toNumber(entry.tokensCompressed) : null,
+      imagesCount:
+        toNumberOrNull(entry.imagesCount ?? entry.images_count) ??
+        getImageCountFromTokens(entry.tokens),
       cacheSource: entry.cacheSource === "semantic" ? "semantic" : "upstream",
       requestType: entry.requestType || null,
       sourceFormat: entry.sourceFormat || null,
@@ -716,7 +757,7 @@ export async function saveCallLog(entry: any) {
         id, timestamp, method, path, status, model, requested_model, provider,
         account, connection_id, duration, tokens_in, tokens_out,
         tokens_cache_read, tokens_cache_creation, tokens_reasoning, cost_usd, tokens_compressed,
-        cache_source, request_type, source_format, target_format, api_key_id, api_key_name,
+        images_count, cache_source, request_type, source_format, target_format, api_key_id, api_key_name,
         combo_name, combo_step_id, combo_execution_key, error_summary, detail_state,
         artifact_relpath, artifact_size_bytes, artifact_sha256,
         has_request_body, has_response_body, has_pipeline_details, request_summary
@@ -725,7 +766,7 @@ export async function saveCallLog(entry: any) {
         @id, @timestamp, @method, @path, @status, @model, @requestedModel, @provider,
         @account, @connectionId, @duration, @tokensIn, @tokensOut,
         @tokensCacheRead, @tokensCacheCreation, @tokensReasoning, @costUsd, @tokensCompressed,
-        @cacheSource, @requestType, @sourceFormat, @targetFormat, @apiKeyId, @apiKeyName,
+        @imagesCount, @cacheSource, @requestType, @sourceFormat, @targetFormat, @apiKeyId, @apiKeyName,
         @comboName, @comboStepId, @comboExecutionKey, @errorSummary, @detailState,
         @artifactRelPath, @artifactSizeBytes, @artifactSha256,
         @hasRequestBody, @hasResponseBody, @hasPipelineDetails, @requestSummary
