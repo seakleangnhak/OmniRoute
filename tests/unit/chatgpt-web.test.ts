@@ -1,5 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "omniroute-chatgpt-web-"));
 
 const { ChatGptWebExecutor, __derivePublicBaseUrlForTesting, __resetChatGptWebCachesForTesting } =
   await import("../../open-sse/executors/chatgpt-web.ts");
@@ -1976,6 +1981,42 @@ test("Image gen: image_url input uploads reference image and sends multimodal pa
   }
 });
 
+test("Image gen handler: aspect_ratio maps to ChatGPT Web native layout prompt", async () => {
+  reset();
+  const m = installMockFetch({
+    conv: { status: 200, events: imageGenEvents({ pointer: "file-service://file-portrait" }) },
+  });
+  try {
+    const { handleImageGeneration } = await import("../../open-sse/handlers/imageGeneration.ts");
+    const result = await handleImageGeneration({
+      body: {
+        model: "cgpt-web/gpt-5.3-instant",
+        prompt: "Create a product poster",
+        aspect_ratio: "3:4",
+        response_format: "url",
+      },
+      credentials: { apiKey: "test" },
+      log: null,
+    });
+
+    assert.equal(result.success, true);
+    const generatedImage = (result as any).data.data[0];
+    assert.match(generatedImage.cache_id, /^[a-f0-9]{16,64}$/);
+    assert.equal(typeof generatedImage.cache_expires_at, "number");
+    assert.ok(generatedImage.cache_expires_at > Date.now());
+    assert.equal(typeof generatedImage.cache_ttl_seconds, "number");
+    assert.ok(generatedImage.cache_ttl_seconds > 0);
+    const convIdx = m.calls.urls.findIndex((u) => u.endsWith("/backend-api/f/conversation"));
+    const sentBody = JSON.parse(m.calls.bodies[convIdx]);
+    const userMessage = sentBody.messages[sentBody.messages.length - 1];
+    const promptText = userMessage.content.parts[0];
+    assert.match(promptText, /Requested aspect ratio: portrait \(3:4\)\./);
+    assert.match(promptText, /Requested size: 1024x1365\./);
+  } finally {
+    m.restore();
+  }
+});
+
 test("Image gen: file-service:// pointer resolves to download URL and is appended as markdown (non-streaming)", async () => {
   reset();
   const m = installMockFetch({
@@ -2625,6 +2666,40 @@ test("Image gen: bytes-fetch failure drops markdown (no signed-URL fallback)", a
   }
 });
 
+test("Image cache: persistent store repopulates memory by cache id and sha256", async () => {
+  reset();
+  const { createHash } = await import("node:crypto");
+  const cacheMod = await import("../../open-sse/services/chatgptImageCache.ts");
+  cacheMod.__resetChatGptImageCacheForTesting();
+
+  const bytes = Buffer.from([9, 8, 7, 6, 5, 4]);
+  const imageId = cacheMod.storeChatGptImage(bytes, "image/png", 60_000, {
+    conversationId: "conv-persist-cache",
+    parentMessageId: "msg-persist-cache",
+  });
+
+  cacheMod.__resetChatGptImageCacheForTesting({ preservePersistent: true });
+  assert.equal(cacheMod.__getChatGptImageCacheBytesForTesting(), 0);
+
+  const fromId = cacheMod.getChatGptImage(imageId);
+  assert.ok(fromId, "persistent cache entry loads by id after memory reset");
+  assert.equal(fromId.mime, "image/png");
+  assert.deepEqual(Array.from(fromId.bytes), Array.from(bytes));
+  assert.deepEqual(fromId.context, {
+    conversationId: "conv-persist-cache",
+    parentMessageId: "msg-persist-cache",
+  });
+  assert.equal(cacheMod.__getChatGptImageCacheBytesForTesting(), bytes.length);
+
+  cacheMod.__resetChatGptImageCacheForTesting({ preservePersistent: true });
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  const fromHash = cacheMod.findChatGptImageBySha256(hash);
+  assert.equal(fromHash?.id, imageId);
+  assert.deepEqual(Array.from(fromHash?.entry.bytes ?? []), Array.from(bytes));
+
+  cacheMod.__resetChatGptImageCacheForTesting();
+});
+
 test("Image cache: byte cap evicts oldest before count cap kicks in", async () => {
   reset();
   const cacheMod = await import("../../open-sse/services/chatgptImageCache.ts");
@@ -2641,8 +2716,12 @@ test("Image cache: byte cap evicts oldest before count cap kicks in", async () =
     assert.ok(cacheMod.getChatGptImage(id1), "id1 still resident after id2");
     assert.ok(cacheMod.getChatGptImage(id2), "id2 resident");
     const id3 = cacheMod.storeChatGptImage(big, "image/png");
-    assert.equal(cacheMod.getChatGptImage(id1), null, "id1 evicted to make room for id3");
-    assert.ok(cacheMod.getChatGptImage(id2), "id2 still resident");
+    assert.equal(
+      cacheMod.__hasChatGptImageMemoryEntryForTesting(id1),
+      false,
+      "id1 evicted from hot memory to make room for id3"
+    );
+    assert.ok(cacheMod.getChatGptImage(id1), "id1 still loads from persistent cache");
     assert.ok(cacheMod.getChatGptImage(id3), "id3 resident");
     // Total bytes never exceeds the cap once we've evicted.
     const bytes = cacheMod.__getChatGptImageCacheBytesForTesting();
@@ -2795,6 +2874,8 @@ test("Image edit handler: bytes-hash match drives executor with cached conversat
       log: null,
     });
     assert.equal(result.success, true, `expected success, got error: ${(result as any).error}`);
+    const generatedImage = (result as any).data.data[0];
+    assert.match(generatedImage.cache_id, /^[a-f0-9]{16,64}$/);
     const convIdx = m.calls.urls.findIndex((u) => u.endsWith("/backend-api/f/conversation"));
     assert.ok(convIdx >= 0, "conversation request was sent");
     const sentBody = JSON.parse(m.calls.bodies[convIdx]);
@@ -2802,6 +2883,49 @@ test("Image edit handler: bytes-hash match drives executor with cached conversat
     assert.equal(sentBody.parent_message_id, "msg-edit-handler");
     assert.equal(sentBody.history_and_training_disabled, false);
     assert.match(sentBody.messages[sentBody.messages.length - 1].content.parts[0], /day time/);
+  } finally {
+    m.restore();
+  }
+});
+
+test("Image edit handler: cache id drives executor without uploaded image bytes", async () => {
+  reset();
+  const cacheMod = await import("../../open-sse/services/chatgptImageCache.ts");
+  cacheMod.__resetChatGptImageCacheForTesting();
+  const imageId = cacheMod.storeChatGptImage(Buffer.from([1, 2, 3]), "image/png", 60_000, {
+    conversationId: "conv-edit-cache-id",
+    parentMessageId: "msg-edit-cache-id",
+  });
+
+  const m = installMockFetch({
+    conv: {
+      status: 200,
+      events: imageGenEvents({ pointer: "file-service://file-edited-cache-id", text: "Done:" }),
+    },
+  });
+  try {
+    const { handleImageEdit } = await import("../../open-sse/handlers/imageGeneration.ts");
+    const result = await handleImageEdit({
+      provider: "chatgpt-web",
+      model: "gpt-5.3-instant",
+      body: { prompt: "add a red label", cache_id: imageId },
+      imageBytes: null,
+      credentials: { apiKey: "test" },
+      log: null,
+    });
+    assert.equal(result.success, true, `expected success, got error: ${(result as any).error}`);
+    const generatedImage = (result as any).data.data[0];
+    assert.match(generatedImage.cache_id, /^[a-f0-9]{16,64}$/);
+    assert.equal(typeof generatedImage.cache_expires_at, "number");
+    assert.ok(generatedImage.cache_expires_at > Date.now());
+    assert.equal(typeof generatedImage.cache_ttl_seconds, "number");
+    assert.ok(generatedImage.cache_ttl_seconds > 0);
+    const convIdx = m.calls.urls.findIndex((u) => u.endsWith("/backend-api/f/conversation"));
+    assert.ok(convIdx >= 0, "conversation request was sent");
+    const sentBody = JSON.parse(m.calls.bodies[convIdx]);
+    assert.equal(sentBody.conversation_id, "conv-edit-cache-id");
+    assert.equal(sentBody.parent_message_id, "msg-edit-cache-id");
+    assert.match(sentBody.messages[sentBody.messages.length - 1].content.parts[0], /red label/);
   } finally {
     m.restore();
   }

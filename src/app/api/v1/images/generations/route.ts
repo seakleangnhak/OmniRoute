@@ -117,13 +117,102 @@ function publicBaseUrlHeaders(headers: Headers): Record<string, string> {
   return out;
 }
 
-export async function POST(request) {
-  let rawBody;
-  try {
-    rawBody = await request.json();
-  } catch {
-    log.warn("IMAGE", "Invalid JSON body");
-    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
+const MULTIPART_IMAGE_URL_FIELDS = ["image_url", "image_urls", "imageUrls"] as const;
+const MULTIPART_IMAGE_FILE_FIELDS = ["image", "image[]"] as const;
+const MULTIPART_IMAGE_FIELDS = new Set<string>([
+  ...MULTIPART_IMAGE_URL_FIELDS,
+  ...MULTIPART_IMAGE_FILE_FIELDS,
+]);
+const MULTIPART_NUMBER_FIELDS = new Set(["n", "timeout_ms", "poll_interval_ms"]);
+
+function isMultipartRequest(request: Request) {
+  return (
+    request.headers.get("content-type")?.toLowerCase().includes("multipart/form-data") === true
+  );
+}
+
+function setMultipartField(body: Record<string, unknown>, key: string, value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return;
+
+  let parsedValue: unknown = trimmed;
+  if (MULTIPART_NUMBER_FIELDS.has(key)) {
+    const numeric = Number(trimmed);
+    parsedValue = Number.isFinite(numeric) ? numeric : trimmed;
+  }
+
+  const existing = body[key];
+  if (existing === undefined) {
+    body[key] = parsedValue;
+  } else if (Array.isArray(existing)) {
+    existing.push(parsedValue);
+  } else {
+    body[key] = [existing, parsedValue];
+  }
+}
+
+async function fileToDataUrl(file: File): Promise<string> {
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const mime = file.type || "application/octet-stream";
+  return `data:${mime};base64,${buffer.toString("base64")}`;
+}
+
+async function readMultipartImageGenerationBody(formData: FormData) {
+  const body: Record<string, unknown> = {};
+  const imageUrls: string[] = [];
+
+  for (const [key, value] of formData.entries()) {
+    if (MULTIPART_IMAGE_FIELDS.has(key) || typeof value !== "string") continue;
+    setMultipartField(body, key, value);
+  }
+
+  for (const key of MULTIPART_IMAGE_URL_FIELDS) {
+    for (const value of formData.getAll(key)) {
+      if (typeof value !== "string") continue;
+      const trimmed = value.trim();
+      if (trimmed) imageUrls.push(trimmed);
+    }
+  }
+
+  for (const key of MULTIPART_IMAGE_FILE_FIELDS) {
+    for (const value of formData.getAll(key)) {
+      if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (trimmed) imageUrls.push(trimmed);
+        continue;
+      }
+      imageUrls.push(await fileToDataUrl(value));
+    }
+  }
+
+  if (imageUrls.length > 0) {
+    body.image_url = imageUrls[0];
+    body.image_urls = imageUrls;
+    body.imageUrls = imageUrls;
+  }
+
+  return body;
+}
+
+export async function POST(request: Request) {
+  let rawBody: Record<string, unknown>;
+  if (isMultipartRequest(request)) {
+    try {
+      rawBody = await readMultipartImageGenerationBody(await request.formData());
+    } catch (err) {
+      log.warn(
+        "IMAGE",
+        `Invalid multipart body: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid multipart body");
+    }
+  } else {
+    try {
+      rawBody = await request.json();
+    } catch {
+      log.warn("IMAGE", "Invalid JSON body");
+      return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
+    }
   }
 
   const validation = validateBody(v1ImageGenerationSchema, rawBody);

@@ -10,6 +10,7 @@ import {
   AUDIO_SPEECH_PROVIDERS,
   AUDIO_TRANSCRIPTION_PROVIDERS,
 } from "@omniroute/open-sse/config/audioRegistry.ts";
+import { SegmentedControl } from "@/shared/components";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
 
 type Modality = "image" | "video" | "music" | "speech" | "transcription";
@@ -329,6 +330,19 @@ const VOICE_PRESETS: Record<string, { id: string; label: string }[]> = {
 
 const SPEECH_FORMATS = ["mp3", "wav", "opus", "flac", "pcm"];
 
+const IMAGE_ASPECT_RATIO_OPTIONS = [
+  { value: "auto", label: "Auto", icon: "aspect_ratio" },
+  { value: "1:1", label: "Square 1:1", icon: "crop_square", size: "1024x1024" },
+  { value: "3:4", label: "Portrait 3:4", icon: "crop_portrait", size: "1024x1365" },
+  { value: "9:16", label: "Story 9:16", icon: "stay_current_portrait", size: "1024x1792" },
+  { value: "4:3", label: "Landscape 4:3", icon: "crop_landscape", size: "1365x1024" },
+  { value: "16:9", label: "Widescreen 16:9", icon: "crop_16_9", size: "1792x1024" },
+];
+
+function getImageAspectRatioSize(aspectRatio: string): string | undefined {
+  return IMAGE_ASPECT_RATIO_OPTIONS.find((option) => option.value === aspectRatio)?.size;
+}
+
 function getSpeechFormats(providerId: string): string[] {
   const providerFormats = AUDIO_SPEECH_PROVIDERS[providerId]?.supportedFormats;
   return providerFormats?.length ? providerFormats : SPEECH_FORMATS;
@@ -411,9 +425,19 @@ function fileToDataUrl(file: File): Promise<string> {
 }
 
 /** Render image result thumbnails */
-function ImageResults({ data }: { data: any }) {
-  const images: Array<{ url?: string; b64_json?: string; revised_prompt?: string }> =
-    data?.data || [];
+function ImageResults({
+  data,
+  onEditCacheId,
+}: {
+  data: any;
+  onEditCacheId?: (cacheId: string) => void;
+}) {
+  const images: Array<{
+    url?: string;
+    b64_json?: string;
+    revised_prompt?: string;
+    cache_id?: string;
+  }> = data?.data || [];
   if (images.length === 0) {
     return (
       <p className="text-sm text-text-muted italic">
@@ -445,6 +469,31 @@ function ImageResults({ data }: { data: any }) {
               <span className="material-symbols-outlined text-[13px]">download</span>
               Save
             </a>
+            {img.cache_id && (
+              <div className="flex items-center gap-1 border-t border-black/10 dark:border-white/10 bg-surface/90 px-2 py-1.5">
+                <code className="min-w-0 flex-1 truncate text-[11px] text-text-muted">
+                  {img.cache_id}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => navigator.clipboard?.writeText(img.cache_id || "")}
+                  className="inline-flex size-6 items-center justify-center rounded text-text-muted hover:bg-black/5 hover:text-text-main dark:hover:bg-white/10"
+                  title="Copy cache ID"
+                >
+                  <span className="material-symbols-outlined text-[14px]">content_copy</span>
+                </button>
+                {onEditCacheId && (
+                  <button
+                    type="button"
+                    onClick={() => onEditCacheId(img.cache_id || "")}
+                    className="inline-flex size-6 items-center justify-center rounded text-primary hover:bg-primary/10"
+                    title="Edit from cache ID"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">edit</span>
+                  </button>
+                )}
+              </div>
+            )}
             {img.revised_prompt && (
               <p
                 className="text-[11px] text-text-muted px-2 py-1 bg-surface/80 truncate"
@@ -479,6 +528,8 @@ export default function MediaPageClient() {
   // Speech-specific
   const [speechVoice, setSpeechVoice] = useState("alloy");
   const [speechFormat, setSpeechFormat] = useState("mp3");
+  const [imageAspectRatio, setImageAspectRatio] = useState("auto");
+  const [imageEditCacheId, setImageEditCacheId] = useState("");
 
   // Transcription-specific
   const MAX_TRANSCRIPTION_FILE_SIZE = 4 * 1024 * 1024 * 1024; // 4 GB
@@ -547,6 +598,8 @@ export default function MediaPageClient() {
     setAudioFile(null);
     setImageInputFile(null);
     setImageMaskFile(null);
+    setImageAspectRatio("auto");
+    setImageEditCacheId("");
     // Pick first provider and first model automatically
     const providers = PROVIDER_MODELS[tab] ?? [];
     const firstProvider = providers[0];
@@ -564,6 +617,9 @@ export default function MediaPageClient() {
     const models = PROVIDER_MODELS[activeTab]?.find((p) => p.id === providerId)?.models ?? [];
     const firstModel = models[0]?.id ?? "";
     setSelectedModel(firstModel);
+    if (activeTab === "image" && providerId !== "chatgpt-web") {
+      setImageEditCacheId("");
+    }
     if (activeTab === "speech") {
       setSpeechVoice(getVoiceList(providerId)[0]?.id ?? "alloy");
       const formats = getSpeechFormats(providerId);
@@ -657,7 +713,19 @@ export default function MediaPageClient() {
         return;
       }
 
-      if (activeTab === "image" && selectedProvider === "topaz" && !imageInputFile) {
+      const editCacheId = activeTab === "image" ? imageEditCacheId.trim() : "";
+      if (editCacheId && selectedProvider !== "chatgpt-web") {
+        setError("Cache ID image edit is only supported by ChatGPT Web image models.");
+        setLoading(false);
+        return;
+      }
+
+      if (
+        activeTab === "image" &&
+        selectedProvider === "topaz" &&
+        !imageInputFile &&
+        !editCacheId
+      ) {
         setError("Topaz requires an input image.");
         setLoading(false);
         return;
@@ -671,12 +739,47 @@ export default function MediaPageClient() {
         }
       }
 
+      if (activeTab === "image" && editCacheId) {
+        const form = new FormData();
+        form.append("model", modelId);
+        form.append("prompt", promptValue);
+        form.append("cache_id", editCacheId);
+        form.append("response_format", "url");
+        if (imageAspectRatio !== "auto") {
+          const size = getImageAspectRatioSize(imageAspectRatio);
+          if (size) form.append("size", size);
+        }
+
+        const res = await fetch("/api/v1/images/edits", { method: "POST", body: form });
+        if (!res.ok) {
+          const raw = await res.json().catch(() => ({}));
+          const { message, isCredentials } = parseApiError(raw, res.status);
+          setIsCredentialsError(isCredentials);
+          throw new Error(message);
+        }
+        const data = await res.json();
+        setResult({ type: "image", data, timestamp: Date.now() });
+        setLoading(false);
+        return;
+      }
+
       const payload: Record<string, unknown> = {
         model: modelId,
         prompt:
           promptValue ||
           (activeTab === "image" && selectedProvider === "topaz" ? "Enhance this image" : ""),
-        ...(activeTab === "image" ? { size: "1024x1024", n: 1 } : {}),
+        ...(activeTab === "image"
+          ? {
+              n: 1,
+              response_format: "url",
+              ...(imageAspectRatio === "auto"
+                ? {}
+                : {
+                    size: getImageAspectRatioSize(imageAspectRatio),
+                    aspect_ratio: imageAspectRatio,
+                  }),
+            }
+          : {}),
       };
 
       if (activeTab === "image" && imageInputFile) {
@@ -714,14 +817,18 @@ export default function MediaPageClient() {
   const voiceList = getVoiceList(selectedProvider);
   const currentSpeechFormats = getSpeechFormats(selectedProvider);
   const isTopazImageFlow = activeTab === "image" && selectedProvider === "topaz";
+  const isChatGptWebImageFlow = activeTab === "image" && selectedProvider === "chatgpt-web";
+  const hasImageEditCacheId = activeTab === "image" && imageEditCacheId.trim().length > 0;
   const isGenerateDisabled =
     loading ||
     (activeTab === "transcription"
       ? !audioFile
       : activeTab === "image"
-        ? isTopazImageFlow
-          ? !imageInputFile
-          : !prompt.trim()
+        ? hasImageEditCacheId
+          ? !prompt.trim()
+          : isTopazImageFlow
+            ? !imageInputFile
+            : !prompt.trim()
         : !prompt.trim());
 
   return (
@@ -797,6 +904,48 @@ export default function MediaPageClient() {
               Providers
             </Link>
           </p>
+        )}
+
+        {activeTab === "image" && (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-text-main mb-2">Aspect ratio</label>
+              <SegmentedControl
+                aria-label="Image aspect ratio"
+                size="sm"
+                value={imageAspectRatio}
+                onChange={setImageAspectRatio}
+                options={IMAGE_ASPECT_RATIO_OPTIONS.map(({ value, label, icon }) => ({
+                  value,
+                  label,
+                  icon,
+                }))}
+                className="w-full overflow-x-auto"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-text-main mb-2">Edit cache ID</label>
+              <div className="flex gap-2">
+                <input
+                  value={imageEditCacheId}
+                  onChange={(e) => setImageEditCacheId(e.target.value)}
+                  placeholder="cache_id from a ChatGPT Web image response"
+                  disabled={!isChatGptWebImageFlow}
+                  className="min-w-0 flex-1 px-3 py-2 rounded-lg bg-surface border border-black/10 dark:border-white/10 text-text-main text-sm placeholder:text-text-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
+                />
+                {imageEditCacheId && (
+                  <button
+                    type="button"
+                    onClick={() => setImageEditCacheId("")}
+                    className="inline-flex size-10 items-center justify-center rounded-lg border border-black/10 text-text-muted hover:text-text-main dark:border-white/10"
+                    title="Clear cache ID"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">close</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Speech: voice + format */}
@@ -975,7 +1124,9 @@ export default function MediaPageClient() {
                 ? "Synthesize Speech"
                 : activeTab === "transcription"
                   ? "Transcribe Audio"
-                  : `${t("generate")} ${config.label}`}
+                  : activeTab === "image" && hasImageEditCacheId
+                    ? "Edit Image"
+                    : `${t("generate")} ${config.label}`}
             </>
           )}
         </button>
@@ -1039,7 +1190,15 @@ export default function MediaPageClient() {
               </a>
             </div>
           ) : result.type === "image" ? (
-            <ImageResults data={result.data} />
+            <ImageResults
+              data={result.data}
+              onEditCacheId={(cacheId) => {
+                setSelectedProvider("chatgpt-web");
+                setSelectedModel("chatgpt-web/gpt-5.3-instant");
+                setImageEditCacheId(cacheId);
+                setPrompt("");
+              }}
+            />
           ) : result.type === "transcription" ? (
             <div className="space-y-3">
               <div className="bg-surface rounded-lg p-4 text-sm text-text-main leading-relaxed whitespace-pre-wrap">

@@ -849,6 +849,145 @@ async function handleOpenAIImageGeneration({
 
 const CHATGPT_WEB_IMAGE_MARKDOWN_RE = /!\[[^\]]*\]\(([^)\s]+)\)/g;
 const CHATGPT_WEB_IMAGE_ID_RE = /\/v1\/chatgpt-web\/image\/([a-f0-9]{16,64})(?=[?\s"'<>)]|$)/i;
+const CHATGPT_WEB_CACHE_ID_RE = /^[a-f0-9]{16,64}$/i;
+
+function extractChatGptWebCacheId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const urlMatch = trimmed.match(CHATGPT_WEB_IMAGE_ID_RE)?.[1];
+  if (urlMatch) return urlMatch.toLowerCase();
+  if (CHATGPT_WEB_CACHE_ID_RE.test(trimmed)) return trimmed.toLowerCase();
+  return null;
+}
+
+function getChatGptWebEditCacheId(body: Record<string, unknown>): string | null {
+  return (
+    extractChatGptWebCacheId(body.cache_id) ||
+    extractChatGptWebCacheId(body.image_cache_id) ||
+    extractChatGptWebCacheId(body.imageCacheId) ||
+    extractChatGptWebCacheId(body.image_url) ||
+    extractChatGptWebCacheId(body.url)
+  );
+}
+
+type ChatGptWebImageResult = {
+  url?: string;
+  b64_json?: string;
+  cache_id?: string;
+  cache_expires_at?: number;
+  cache_ttl_seconds?: number;
+};
+
+function withChatGptWebCacheMetadata<T extends { url?: string; b64_json?: string }>(
+  image: T,
+  source: unknown
+): T & ChatGptWebImageResult {
+  const cacheId = extractChatGptWebCacheId(source);
+  if (!cacheId) return image;
+  const cached = getChatGptImage(cacheId);
+  if (!cached) return { ...image, cache_id: cacheId };
+  return {
+    ...image,
+    cache_id: cacheId,
+    cache_expires_at: cached.expiresAt,
+    cache_ttl_seconds: Math.max(0, Math.floor((cached.expiresAt - Date.now()) / 1000)),
+  };
+}
+
+const CHATGPT_WEB_NATIVE_LAYOUTS = [
+  { aspectRatio: "1:1", size: "1024x1024", label: "square", ratio: 1 },
+  { aspectRatio: "3:4", size: "1024x1365", label: "portrait", ratio: 3 / 4 },
+  { aspectRatio: "9:16", size: "1024x1792", label: "story", ratio: 9 / 16 },
+  { aspectRatio: "4:3", size: "1365x1024", label: "landscape", ratio: 4 / 3 },
+  { aspectRatio: "16:9", size: "1792x1024", label: "widescreen", ratio: 16 / 9 },
+] as const;
+
+const CHATGPT_WEB_LAYOUT_ALIASES = new Map([
+  ["square", "1:1"],
+  ["squared", "1:1"],
+  ["1:1", "1:1"],
+  ["1024x1024", "1:1"],
+  ["portrait", "3:4"],
+  ["vertical", "3:4"],
+  ["tall", "3:4"],
+  ["3:4", "3:4"],
+  ["2:3", "3:4"],
+  ["1024x1365", "3:4"],
+  ["1024x1366", "3:4"],
+  ["1024x1536", "3:4"],
+  ["story", "9:16"],
+  ["phone", "9:16"],
+  ["9:16", "9:16"],
+  ["1024x1792", "9:16"],
+  ["landscape", "4:3"],
+  ["horizontal", "4:3"],
+  ["4:3", "4:3"],
+  ["3:2", "4:3"],
+  ["1365x1024", "4:3"],
+  ["1366x1024", "4:3"],
+  ["1536x1024", "4:3"],
+  ["wide", "16:9"],
+  ["widescreen", "16:9"],
+  ["16:9", "16:9"],
+  ["1792x1024", "16:9"],
+]);
+
+function getChatGptWebRequestedAspectRatio(body) {
+  return typeof body.aspect_ratio === "string"
+    ? body.aspect_ratio
+    : typeof body.aspectRatio === "string"
+      ? body.aspectRatio
+      : null;
+}
+
+function isChatGptWebAutoLayout(value: unknown) {
+  return typeof value === "string" && ["auto", "default"].includes(value.trim().toLowerCase());
+}
+
+function findChatGptWebLayout(aspectRatio: string) {
+  return CHATGPT_WEB_NATIVE_LAYOUTS.find((layout) => layout.aspectRatio === aspectRatio) || null;
+}
+
+function closestChatGptWebLayout(width: number, height: number) {
+  const ratio = width / height;
+  return CHATGPT_WEB_NATIVE_LAYOUTS.reduce((best, layout) => {
+    const bestDistance = Math.abs(Math.log(ratio / best.ratio));
+    const distance = Math.abs(Math.log(ratio / layout.ratio));
+    return distance < bestDistance ? layout : best;
+  }, CHATGPT_WEB_NATIVE_LAYOUTS[0]);
+}
+
+function normalizeChatGptWebLayout(value: unknown) {
+  if (typeof value !== "string") return null;
+  const raw = value.trim();
+  if (!raw) return null;
+
+  const key = raw.toLowerCase().replace(/\s+/g, "-");
+  if (isChatGptWebAutoLayout(key)) return null;
+
+  const aliased = CHATGPT_WEB_LAYOUT_ALIASES.get(key);
+  if (aliased) return findChatGptWebLayout(aliased);
+
+  const sizeMatch = key.match(/^(\d+)x(\d+)$/);
+  if (sizeMatch) {
+    return closestChatGptWebLayout(Number(sizeMatch[1]), Number(sizeMatch[2]));
+  }
+
+  const ratioMatch = key.match(/^(\d+):(\d+)$/);
+  if (ratioMatch) {
+    return closestChatGptWebLayout(Number(ratioMatch[1]), Number(ratioMatch[2]));
+  }
+
+  return null;
+}
+
+function getChatGptWebImageLayout(body) {
+  const requestedAspectRatio = getChatGptWebRequestedAspectRatio(body);
+  if (isChatGptWebAutoLayout(requestedAspectRatio)) return null;
+  if (requestedAspectRatio) return normalizeChatGptWebLayout(requestedAspectRatio);
+  return normalizeChatGptWebLayout(body.size);
+}
 
 function extractMarkdownImageUrls(text: string): string[] {
   const urls: string[] = [];
@@ -863,13 +1002,17 @@ function extractMarkdownImageUrls(text: string): string[] {
 function buildChatGptWebImagePrompt(body, referenceImageCount = 0): string {
   const prompt = String(body.prompt || "").trim();
   const details: string[] = [];
+  const layout = getChatGptWebImageLayout(body);
   if (referenceImageCount > 0) {
     details.push(
       `Use the attached reference image${referenceImageCount === 1 ? "" : "s"} as visual guidance.`
     );
   }
   details.push(`Create an image for this prompt: ${prompt}`);
-  if (typeof body.size === "string" && body.size.trim()) {
+  if (layout) {
+    details.push(`Requested aspect ratio: ${layout.label} (${layout.aspectRatio}).`);
+    details.push(`Requested size: ${layout.size}.`);
+  } else if (typeof body.size === "string" && body.size.trim()) {
     details.push(`Requested size: ${body.size.trim()}.`);
   }
   if (typeof body.quality === "string" && body.quality.trim()) {
@@ -937,11 +1080,17 @@ async function handleChatGptWebImageGeneration({
   const wantsBase64 = body.response_format === "b64_json";
   const imageInputs = extractImageInputs(body);
   const referenceImageUrls = imageInputs.imageUrls;
-  const images: Array<{ url?: string; b64_json?: string }> = [];
+  const layout = getChatGptWebImageLayout(body);
+  const requestedAspectRatio = getChatGptWebRequestedAspectRatio(body);
+  const isAutoLayout = isChatGptWebAutoLayout(requestedAspectRatio);
+  const images: ChatGptWebImageResult[] = [];
   const requestBody = {
     model,
     prompt: prompt.slice(0, 500),
-    size: body.size || undefined,
+    size: layout?.size || (isAutoLayout ? undefined : body.size) || undefined,
+    aspect_ratio: isAutoLayout
+      ? "auto"
+      : layout?.aspectRatio || body.aspect_ratio || body.aspectRatio || undefined,
     quality: body.quality || undefined,
     reference_images: referenceImageUrls.length || undefined,
   };
@@ -1003,7 +1152,7 @@ async function handleChatGptWebImageGeneration({
 
     for (const url of urls) {
       if (!wantsBase64) {
-        images.push({ url });
+        images.push(withChatGptWebCacheMetadata({ url }, url));
         continue;
       }
       const id = url.match(CHATGPT_WEB_IMAGE_ID_RE)?.[1];
@@ -1018,7 +1167,7 @@ async function handleChatGptWebImageGeneration({
           requestBody,
         });
       }
-      images.push({ b64_json: cached.bytes.toString("base64") });
+      images.push(withChatGptWebCacheMetadata({ b64_json: cached.bytes.toString("base64") }, id));
     }
   }
 
@@ -1034,7 +1183,8 @@ async function handleChatGptWebImageGeneration({
 
 /**
  * Handle a multipart /v1/images/edits request for chatgpt-web. Open WebUI
- * uploads the prior image's bytes; we hash them and look up our cache.
+ * uploads the prior image's bytes; we hash them and look up our cache. Native
+ * OmniRoute clients can skip the upload and send the short-lived cache id.
  *
  * The hash match is reliable because Open WebUI's image-gen pipeline
  * downloads our /v1/chatgpt-web/image/<id> URL byte-for-byte and re-serves
@@ -1053,7 +1203,7 @@ export async function handleImageEdit({
   provider,
   model,
   body,
-  imageBytes,
+  imageBytes = null,
   credentials,
   log,
   signal = null,
@@ -1061,8 +1211,8 @@ export async function handleImageEdit({
 }: {
   provider: string;
   model: string;
-  body: Record<string, any>;
-  imageBytes: Buffer;
+  body: Record<string, unknown>;
+  imageBytes?: Buffer | null;
   imageMime?: string; // accepted for symmetry with route layer; not used
   credentials: any;
   log: any;
@@ -1091,16 +1241,31 @@ export async function handleImageEdit({
     });
   }
 
-  const imageHash = createHash("sha256").update(imageBytes).digest("hex");
-  const cached = findChatGptImageBySha256(imageHash);
+  const imageCacheId = getChatGptWebEditCacheId(body);
+  let imageHash: string | null = null;
+  let cached = imageCacheId
+    ? (() => {
+        const entry = getChatGptImage(imageCacheId);
+        return entry ? { id: imageCacheId, entry } : null;
+      })()
+    : null;
+  let lookupMethod = imageCacheId ? "cache_id" : "sha256";
+
+  if (!cached && imageBytes?.length) {
+    imageHash = createHash("sha256").update(imageBytes).digest("hex");
+    cached = findChatGptImageBySha256(imageHash);
+    lookupMethod = imageCacheId ? "cache_id_then_sha256" : "sha256";
+  }
 
   const wantsBase64 = body.response_format === "b64_json";
   const requestBody = {
     model,
     prompt: prompt.slice(0, 500),
     size: body.size || undefined,
-    image_hash: imageHash.slice(0, 16),
-    image_bytes: imageBytes.length,
+    cache_id: imageCacheId ? imageCacheId.slice(0, 16) : undefined,
+    image_hash: imageHash ? imageHash.slice(0, 16) : undefined,
+    image_bytes: imageBytes?.length || undefined,
+    lookup_method: lookupMethod,
     cached_match: Boolean(cached?.entry.context),
   };
 
@@ -1112,7 +1277,9 @@ export async function handleImageEdit({
     // unrelated image and confusing the user.
     log?.warn?.(
       "IMAGE",
-      `chatgpt-web edit: no cached match for sha256=${imageHash.slice(0, 16)} (bytes=${imageBytes.length}); returning 400`
+      imageCacheId && !imageBytes?.length
+        ? `chatgpt-web edit: no cached match for cache_id=${imageCacheId.slice(0, 16)}; returning 400`
+        : `chatgpt-web edit: no cached match for sha256=${imageHash?.slice(0, 16) ?? "none"} (bytes=${imageBytes?.length ?? 0}); returning 400`
     );
     return saveImageErrorResult({
       provider,
@@ -1120,9 +1287,9 @@ export async function handleImageEdit({
       status: 400,
       startTime,
       error:
-        "chatgpt-web image edit only works for images recently generated through this OmniRoute instance " +
-        "(cache window: 30 minutes). Re-generate the image and try the edit immediately, or disable image-edit " +
-        "in your client to use plain chat-completion edit prompts instead.",
+        "chatgpt-web image edit only works for images generated through this OmniRoute instance " +
+        "while the persistent cache entry is still available. Send a valid cache_id/image_cache_id " +
+        "from the generation response, or upload the original image bytes.",
       requestBody,
     });
   }
@@ -1197,10 +1364,10 @@ export async function handleImageEdit({
     });
   }
 
-  const images: Array<{ url?: string; b64_json?: string }> = [];
+  const images: ChatGptWebImageResult[] = [];
   for (const url of urls) {
     if (!wantsBase64) {
-      images.push({ url });
+      images.push(withChatGptWebCacheMetadata({ url }, url));
       continue;
     }
     const id = url.match(CHATGPT_WEB_IMAGE_ID_RE)?.[1];
@@ -1215,7 +1382,7 @@ export async function handleImageEdit({
         requestBody,
       });
     }
-    images.push({ b64_json: cachedNew.bytes.toString("base64") });
+    images.push(withChatGptWebCacheMetadata({ b64_json: cachedNew.bytes.toString("base64") }, id));
   }
 
   return saveImageSuccessResult({

@@ -67,6 +67,86 @@ Content-Type: application/json
 }
 
 ###
+# @name Omniroute - ChatGPT Web image with native aspect ratio and reference image
+POST {{omniroute-address}}/v1/images/generations
+Authorization: Bearer {{OMNIROUTE_API_KEY}}
+Content-Type: application/json
+
+{
+  "model": "cgpt-web/gpt-5.3-instant",
+  "prompt": "Create a similar product image with cleaner lighting",
+  "image_url": "data:image/png;base64,REPLACE_WITH_BASE64_IMAGE",
+  "aspect_ratio": "3:4",
+  "response_format": "url"
+}
+
+###
+# @name Omniroute - ChatGPT Web image with multipart reference image
+POST {{omniroute-address}}/v1/images/generations
+Authorization: Bearer {{OMNIROUTE_API_KEY}}
+Content-Type: multipart/form-data; boundary=omniroute-image-boundary
+
+--omniroute-image-boundary
+Content-Disposition: form-data; name="model"
+
+cgpt-web/gpt-5.3-instant
+--omniroute-image-boundary
+Content-Disposition: form-data; name="prompt"
+
+Create a similar product image with cleaner lighting
+--omniroute-image-boundary
+Content-Disposition: form-data; name="aspect_ratio"
+
+3:4
+--omniroute-image-boundary
+Content-Disposition: form-data; name="response_format"
+
+url
+--omniroute-image-boundary
+Content-Disposition: form-data; name="image"; filename="sample.png"
+Content-Type: image/png
+
+< ./sample.png
+--omniroute-image-boundary--
+
+###
+# @name Omniroute - ChatGPT Web edit using cache id
+POST {{omniroute-address}}/v1/images/edits
+Authorization: Bearer {{OMNIROUTE_API_KEY}}
+Content-Type: multipart/form-data; boundary=omniroute-edit-boundary
+
+--omniroute-edit-boundary
+Content-Disposition: form-data; name="model"
+
+cgpt-web/gpt-5.3-instant
+--omniroute-edit-boundary
+Content-Disposition: form-data; name="prompt"
+
+Add a red product label to the generated image
+--omniroute-edit-boundary
+Content-Disposition: form-data; name="cache_id"
+
+REPLACE_WITH_CACHE_ID
+--omniroute-edit-boundary
+Content-Disposition: form-data; name="response_format"
+
+url
+--omniroute-edit-boundary--
+
+###
+# @name Omniroute - ChatGPT Web edit using cache id (JSON)
+POST {{omniroute-address}}/v1/images/edits
+Authorization: Bearer {{OMNIROUTE_API_KEY}}
+Content-Type: application/json
+
+{
+  "model": "cgpt-web/gpt-5.3-instant",
+  "prompt": "Add a red product label to the generated image",
+  "cache_id": "REPLACE_WITH_CACHE_ID",
+  "response_format": "url"
+}
+
+###
 # @name Omniroute - Codex hosted image_generation (Responses API)
 # Requires a Codex provider connection authenticated via ChatGPT OAuth.
 # Expect SSE stream to include `response.output_item.done` with

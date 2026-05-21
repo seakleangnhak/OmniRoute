@@ -50,6 +50,30 @@ test("runtime env helpers normalize runtime ports and conflicting color flags", 
   assert.deepEqual(runtimeEnv.sanitizeColorEnv({ FORCE_COLOR: "1" }), { FORCE_COLOR: "1" });
 });
 
+test("runtime env helpers derive NODE_OPTIONS from OMNIROUTE_MEMORY_MB", async () => {
+  const runtimeEnv = await loadRuntimeEnv("memory");
+
+  assert.deepEqual(runtimeEnv.withNodeMemoryEnv({ OMNIROUTE_MEMORY_MB: "1024" }), {
+    OMNIROUTE_MEMORY_MB: "1024",
+    NODE_OPTIONS: "--max-old-space-size=1024",
+  });
+
+  assert.deepEqual(
+    runtimeEnv.withNodeMemoryEnv({
+      OMNIROUTE_MEMORY_MB: "1536",
+      NODE_OPTIONS: "--enable-source-maps --max-old-space-size=256",
+    }),
+    {
+      OMNIROUTE_MEMORY_MB: "1536",
+      NODE_OPTIONS: "--enable-source-maps --max-old-space-size=1536",
+    }
+  );
+
+  assert.deepEqual(runtimeEnv.withNodeMemoryEnv({ OMNIROUTE_MEMORY_MB: "bad" }), {
+    OMNIROUTE_MEMORY_MB: "bad",
+  });
+});
+
 test("spawnWithForwardedSignals forwards process signals and exit status", async () => {
   const signalHandlers = new Map();
   const childKillSignals = [];

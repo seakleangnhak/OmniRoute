@@ -83,6 +83,7 @@ export {
 
 export * from "./db/compressionCacheStats";
 export * from "./db/compressionCombos";
+export * from "./db/chatgptImageCache";
 
 export {
   // API Keys

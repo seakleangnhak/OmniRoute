@@ -20,12 +20,43 @@ export function resolveRuntimePorts(fromEnv = process.env) {
 export function withRuntimePortEnv(env, runtimePorts) {
   const { basePort, apiPort, dashboardPort } = runtimePorts;
 
-  return {
+  return withNodeMemoryEnv({
     ...env,
     OMNIROUTE_PORT: String(basePort),
     PORT: String(dashboardPort),
     DASHBOARD_PORT: String(dashboardPort),
     API_PORT: String(apiPort),
+  });
+}
+
+export function parseMemoryMb(value, fallback = null) {
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isFinite(parsed) && parsed >= 64 && parsed <= 16384 ? parsed : fallback;
+}
+
+function withoutMaxOldSpaceSize(nodeOptions = "") {
+  const tokens = String(nodeOptions).trim().split(/\s+/).filter(Boolean);
+  const out = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token === "--max-old-space-size") {
+      i++;
+      continue;
+    }
+    if (token.startsWith("--max-old-space-size=")) continue;
+    out.push(token);
+  }
+  return out.join(" ");
+}
+
+export function withNodeMemoryEnv(env) {
+  const memoryMb = parseMemoryMb(env.OMNIROUTE_MEMORY_MB, null);
+  if (!memoryMb) return env;
+
+  const nodeOptions = withoutMaxOldSpaceSize(env.NODE_OPTIONS);
+  return {
+    ...env,
+    NODE_OPTIONS: `${nodeOptions} --max-old-space-size=${memoryMb}`.trim(),
   };
 }
 

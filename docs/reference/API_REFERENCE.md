@@ -109,9 +109,24 @@ Content-Type: application/json
 {
   "model": "openai/gpt-image-2",
   "prompt": "A beautiful sunset over mountains",
-  "size": "1024x1024"
+  "aspect_ratio": "auto"
 }
 ```
+
+Reference-image generation also accepts `multipart/form-data` with uploaded files using `image`
+or `image[]`:
+
+```bash
+curl -X POST http://localhost:20128/v1/images/generations \
+  -H "Authorization: Bearer your-api-key" \
+  -F "model=cgpt-web/gpt-5.3-instant" \
+  -F "prompt=Create a similar product image with cleaner lighting" \
+  -F "aspect_ratio=3:4" \
+  -F "response_format=url" \
+  -F "image=@sample.png;type=image/png"
+```
+
+For ChatGPT Web image models, `aspect_ratio` accepts `auto`, `1:1`, `3:4`, `9:16`, `4:3`, or `16:9` and maps to the matching native layout. ChatGPT Web image result objects include `cache_id`, `cache_expires_at` (epoch milliseconds), and `cache_ttl_seconds` while the generated image remains editable through OmniRoute.
 
 Available providers: OpenAI (GPT Image 2), xAI (Grok Image), Together AI (FLUX), Fireworks AI, Nebius (FLUX), Hyperbolic, NanoBanana, **OpenRouter**, SD WebUI (local), ComfyUI (local).
 
@@ -169,6 +184,10 @@ POST /v1/audio/speech { "model": "openai/tts-1", "input": "Hello", "voice": "all
 
 # Image edit (multipart)
 POST /v1/images/edits  -F image=@input.png -F prompt="..." -F mask=@mask.png
+# OmniRoute-native ChatGPT Web edit can skip the upload with the generation response cache_id.
+# cache_id is persisted across restarts until the configured image-cache TTL expires.
+POST /v1/images/edits  -F cache_id=<cache_id> -F prompt="..."
+POST /v1/images/edits  { "model": "cgpt-web/gpt-5.3-instant", "prompt": "...", "cache_id": "..." }
 
 # Video / music generation (provider-prefixed model id)
 POST /v1/videos/generations { "model": "runway/gen-3", "prompt": "..." }

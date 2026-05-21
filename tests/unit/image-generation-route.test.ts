@@ -101,6 +101,49 @@ test("v1 image generation POST accepts promptless requests for image-only models
   assert.equal(body.data[0].b64_json, "BwcH");
 });
 
+test("v1 image generation POST accepts multipart image uploads for image-input models", async () => {
+  await seedConnection("topaz", { apiKey: "topaz-key" });
+
+  globalThis.fetch = async (url, options = {}) => {
+    const stringUrl = String(url);
+    if (stringUrl === "https://api.topazlabs.com/image/v1/enhance") {
+      const upstreamForm = options.body as FormData;
+      const upstreamImage = upstreamForm.get("image");
+      assert.ok(upstreamImage instanceof File);
+      assert.equal(upstreamImage.type, "image/png");
+      assert.deepEqual(
+        new Uint8Array(await upstreamImage.arrayBuffer()),
+        new Uint8Array([1, 2, 3])
+      );
+      assert.equal(upstreamForm.get("output_width"), "2048");
+      assert.equal(upstreamForm.get("output_height"), "2048");
+      return new Response(new Uint8Array([7, 7, 7]), {
+        status: 200,
+        headers: { "content-type": "image/jpeg" },
+      });
+    }
+
+    throw new Error(`Unexpected URL: ${stringUrl}`);
+  };
+
+  const formData = new FormData();
+  formData.set("model", "topaz/topaz-enhance");
+  formData.set("size", "2048x2048");
+  formData.set("response_format", "b64_json");
+  formData.set("image", new File([new Uint8Array([1, 2, 3])], "source.png", { type: "image/png" }));
+
+  const response = await imageRoute.POST(
+    new Request("http://localhost/api/v1/images/generations", {
+      method: "POST",
+      body: formData,
+    })
+  );
+  const body = (await response.json()) as any;
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data[0].b64_json, "BwcH");
+});
+
 test("v1 image generation POST still requires prompts for text-input models", async () => {
   const response = await imageRoute.POST(
     new Request("http://localhost/api/v1/images/generations", {
@@ -138,6 +181,46 @@ test("v1 image edit POST enforces disabled API key policy", async () => {
 
   assert.equal(response.status, 403);
   assert.match(body.error.message, /disabled/);
+});
+
+test("v1 image edit POST accepts cache_id instead of uploaded image", async () => {
+  const formData = new FormData();
+  formData.set("prompt", "make the background lighter");
+  formData.set("model", "cgpt-web/gpt-5.3-instant");
+  formData.set("cache_id", "0123456789abcdef0123456789abcdef");
+
+  const response = await imageEditRoute.POST(
+    new Request("http://localhost/api/v1/images/edits", {
+      method: "POST",
+      body: formData,
+    })
+  );
+  const body = (await response.json()) as any;
+
+  assert.equal(response.status, 401);
+  assert.doesNotMatch(body.error.message, /Missing required field: image/);
+  assert.match(body.error.message, /No credentials for provider: chatgpt-web/);
+});
+
+test("v1 image edit POST accepts JSON cache_id without multipart", async () => {
+  const response = await imageEditRoute.POST(
+    new Request("http://localhost/api/v1/images/edits", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: "make the background lighter",
+        model: "cgpt-web/gpt-5.3-instant",
+        cache_id: "0123456789abcdef0123456789abcdef",
+        response_format: "url",
+      }),
+    })
+  );
+  const body = (await response.json()) as any;
+
+  assert.equal(response.status, 401);
+  assert.doesNotMatch(body.error.message, /Invalid multipart body/);
+  assert.doesNotMatch(body.error.message, /Missing required field: image/);
+  assert.match(body.error.message, /No credentials for provider: chatgpt-web/);
 });
 
 test("v1 image generation POST resolves proxy and executes with proxy context when credentials.connectionId exists", async () => {

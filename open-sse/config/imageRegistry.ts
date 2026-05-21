@@ -144,7 +144,7 @@ export const IMAGE_PROVIDERS: Record<string, ImageProviderConfig> = {
     authHeader: "cookie",
     format: "chatgpt-web",
     models: [{ id: "gpt-5.3-instant", name: "GPT-5.3 Instant (ChatGPT Web Image)" }],
-    supportedSizes: ["1024x1024", "1024x1536", "1536x1024"],
+    supportedSizes: ["auto", "1024x1024", "1024x1365", "1024x1792", "1365x1024", "1792x1024"],
   },
 
   xai: {

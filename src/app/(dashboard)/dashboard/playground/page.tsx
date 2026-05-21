@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useTranslations } from "next-intl";
-import { Card, Button, Select, Badge } from "@/shared/components";
+import { Card, Button, Select, Badge, SegmentedControl } from "@/shared/components";
 import { ALIAS_TO_ID } from "@/shared/constants/providers";
-import { pickMaskedDisplayValue, pickDisplayValue } from "@/shared/utils/maskEmail";
+import { pickDisplayValue } from "@/shared/utils/maskEmail";
 import useEmailPrivacyStore from "@/store/emailPrivacyStore";
 import dynamic from "next/dynamic";
 import Editor from "@/shared/components/MonacoEditor";
@@ -53,7 +53,8 @@ const DEFAULT_BODIES: Record<string, object> = {
     model: "",
     prompt: "A beautiful sunset over mountains",
     n: 1,
-    size: "1024x1024",
+    aspect_ratio: "auto",
+    response_format: "url",
   },
   embeddings: {
     model: "",
@@ -97,6 +98,53 @@ const DEFAULT_BODIES: Record<string, object> = {
     search_type: "web",
   },
 };
+
+const IMAGE_ASPECT_RATIO_OPTIONS = [
+  { value: "auto", label: "Auto", icon: "aspect_ratio" },
+  { value: "1:1", label: "Square 1:1", icon: "crop_square", size: "1024x1024" },
+  { value: "3:4", label: "Portrait 3:4", icon: "crop_portrait", size: "1024x1365" },
+  { value: "9:16", label: "Story 9:16", icon: "stay_current_portrait", size: "1024x1792" },
+  { value: "4:3", label: "Landscape 4:3", icon: "crop_landscape", size: "1365x1024" },
+  { value: "16:9", label: "Widescreen 16:9", icon: "crop_16_9", size: "1792x1024" },
+];
+
+function normalizeImageAspectRatio(value: unknown) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  if (["auto", "default"].includes(normalized)) return "auto";
+  if (["square", "1:1", "1024x1024"].includes(normalized)) return "1:1";
+  if (
+    ["portrait", "vertical", "3:4", "2:3", "1024x1365", "1024x1366", "1024x1536"].includes(
+      normalized
+    )
+  ) {
+    return "3:4";
+  }
+  if (["story", "phone", "9:16", "1024x1792"].includes(normalized)) return "9:16";
+  if (
+    ["landscape", "horizontal", "4:3", "3:2", "1365x1024", "1366x1024", "1536x1024"].includes(
+      normalized
+    )
+  ) {
+    return "4:3";
+  }
+  if (["wide", "widescreen", "16:9", "1792x1024"].includes(normalized)) return "16:9";
+  return null;
+}
+
+function getImageAspectRatioFromBody(requestBody: string) {
+  try {
+    const parsed = JSON.parse(requestBody || "{}");
+    return (
+      normalizeImageAspectRatio(parsed.aspect_ratio) ||
+      normalizeImageAspectRatio(parsed.aspectRatio) ||
+      normalizeImageAspectRatio(parsed.size) ||
+      "auto"
+    );
+  } catch {
+    return "auto";
+  }
+}
 
 const ENDPOINT_PATHS: Record<string, string> = {
   chat: "/v1/chat/completions",
@@ -148,8 +196,12 @@ async function fileToBase64(file: File): Promise<string> {
 /** Render image results from OpenAI-compatible format */
 function ImageResultsInline({ data }: { data: any }) {
   const t = useTranslations("playground");
-  const images: Array<{ url?: string; b64_json?: string; revised_prompt?: string }> =
-    data?.data || [];
+  const images: Array<{
+    url?: string;
+    b64_json?: string;
+    revised_prompt?: string;
+    cache_id?: string;
+  }> = data?.data || [];
   if (images.length === 0) return null;
   return (
     <div className="p-4 space-y-3">
@@ -176,6 +228,21 @@ function ImageResultsInline({ data }: { data: any }) {
                 <span className="material-symbols-outlined text-[13px]">download</span>
                 {t("save")}
               </a>
+              {img.cache_id && (
+                <div className="flex items-center gap-1 border-t border-border bg-surface/90 px-2 py-1.5">
+                  <code className="min-w-0 flex-1 truncate text-[11px] text-text-muted">
+                    {img.cache_id}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard?.writeText(img.cache_id || "")}
+                    className="inline-flex size-6 items-center justify-center rounded text-text-muted hover:bg-black/5 hover:text-text-main dark:hover:bg-white/10"
+                    title="Copy cache ID"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">content_copy</span>
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
@@ -232,6 +299,9 @@ export default function PlaygroundPage() {
   const isChatEndpoint = selectedEndpoint === "chat";
   const isImageEndpoint = selectedEndpoint === "images";
   const supportsVision = isChatEndpoint && isVisionModel(selectedModel);
+  const selectedImageAspectRatio = isImageEndpoint
+    ? getImageAspectRatioFromBody(requestBody)
+    : "1:1";
 
   useEffect(() => {
     return () => {
@@ -351,6 +421,39 @@ export default function PlaygroundPage() {
     setUploadedImages((prev) => [...prev, ...base64s].slice(0, 4)); // max 4 images
   };
 
+  const handleImageAspectRatioChange = (aspectRatio: string) => {
+    const option = IMAGE_ASPECT_RATIO_OPTIONS.find((item) => item.value === aspectRatio);
+    if (!option) return;
+
+    setRequestBody((prev) => {
+      try {
+        const parsed = JSON.parse(prev || "{}");
+        if (!option.size) delete parsed.size;
+        return JSON.stringify(
+          {
+            ...parsed,
+            aspect_ratio: option.value,
+            ...(option.size ? { size: option.size } : {}),
+          },
+          null,
+          2
+        );
+      } catch {
+        return JSON.stringify(
+          {
+            ...DEFAULT_BODIES.images,
+            model: selectedModel,
+            aspect_ratio: option.value,
+            ...(option.size ? { size: option.size } : {}),
+          },
+          null,
+          2
+        );
+      }
+    });
+    clearResults();
+  };
+
   /** Inject uploaded images into chat messages body */
   const buildChatBodyWithImages = (parsed: any, imageBase64s: string[]): any => {
     if (!imageBase64s.length) return parsed;
@@ -411,6 +514,9 @@ export default function PlaygroundPage() {
         });
       } else {
         let parsed = JSON.parse(requestBody);
+        if (isImageEndpoint && uploadedImages.length > 0) {
+          parsed = { ...parsed, image_urls: uploadedImages };
+        }
         // Inject vision images if available
         if (supportsVision && uploadedImages.length > 0) {
           parsed = buildChatBodyWithImages(parsed, uploadedImages);
@@ -620,8 +726,33 @@ export default function PlaygroundPage() {
         />
       ) : (
         <>
-          {/* File Upload Zone — shown for transcription and vision models */}
-          {(isTranscriptionEndpoint || supportsVision) && (
+          {isImageEndpoint && (
+            <Card>
+              <div className="p-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[18px] text-text-muted">
+                    aspect_ratio
+                  </span>
+                  <h3 className="text-sm font-semibold text-text-main">Aspect ratio</h3>
+                </div>
+                <SegmentedControl
+                  aria-label="Image aspect ratio"
+                  size="sm"
+                  value={selectedImageAspectRatio}
+                  onChange={handleImageAspectRatioChange}
+                  options={IMAGE_ASPECT_RATIO_OPTIONS.map(({ value, label, icon }) => ({
+                    value,
+                    label,
+                    icon,
+                  }))}
+                  className="w-full overflow-x-auto lg:w-auto"
+                />
+              </div>
+            </Card>
+          )}
+
+          {/* File Upload Zone — shown for transcription, vision, and image reference inputs */}
+          {(isTranscriptionEndpoint || supportsVision || isImageEndpoint) && (
             <Card>
               <div className="p-4 space-y-3">
                 <div className="flex items-center gap-2">
@@ -636,7 +767,7 @@ export default function PlaygroundPage() {
                       {t("multipartFormData")}
                     </Badge>
                   )}
-                  {supportsVision && (
+                  {(supportsVision || isImageEndpoint) && (
                     <Badge variant="info" size="sm">
                       {t("upToImages")}
                     </Badge>
@@ -666,7 +797,7 @@ export default function PlaygroundPage() {
                     )}
                   </div>
                 )}
-                {supportsVision && (
+                {(supportsVision || isImageEndpoint) && (
                   <div>
                     <input
                       type="file"

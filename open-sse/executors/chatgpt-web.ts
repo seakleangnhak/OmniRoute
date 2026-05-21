@@ -2481,7 +2481,7 @@ async function fetchDownloadUrl(endpoint: string, ctx: ResolverContext): Promise
 
 /**
  * Download a chatgpt.com signed image URL and re-serve it from OmniRoute's
- * short-lived image cache. The URLs returned by /files/<id>/download and
+ * persistent image cache. The URLs returned by /files/<id>/download and
  * /conversation/<cid>/attachment/<fid>/download point at chatgpt.com's
  * estuary endpoint, which 403s for any request without the user's session
  * cookie. Downstream clients (Open WebUI, OpenAI-compatible apps) won't
@@ -2863,7 +2863,7 @@ function makeImageResolver(ctx: ResolverContext): ImageResolver {
       // user's current session — that URL 403s without the cookie, so
       // downstream clients can't fetch it directly. We download once via
       // the authenticated TLS client and expose the bytes through
-      // OmniRoute's short-lived image cache.
+      // OmniRoute's persistent image cache.
       //
       // /files/{id}/download is the historical path. It works for
       // chat-uploaded files and the older image_gen output format

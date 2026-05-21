@@ -8,10 +8,11 @@ import { toJsonErrorPayload } from "@/shared/utils/upstreamError";
 import { enforceApiKeyPolicy } from "@/shared/utils/apiKeyPolicy";
 
 /**
- * /v1/images/edits — multipart edit endpoint matching OpenAI's images-edit API.
+ * /v1/images/edits — image edit endpoint matching OpenAI's images-edit API.
  *
- * Open WebUI's "Image Edit" toggle (images.edit.engine = "openai") posts here
- * with `prompt` + `image` (file). For chatgpt-web, an "edit" only makes sense
+ * Open WebUI's "Image Edit" toggle (images.edit.engine = "openai") posts multipart
+ * with `prompt` + `image` (file). OmniRoute-native clients may also post JSON
+ * with `prompt` + `cache_id`. For chatgpt-web, an "edit" only makes sense
  * if the uploaded image was originally generated through OmniRoute — we then
  * have its `{conversationId, parentMessageId}` cached and can continue the
  * saved chatgpt.com conversation node, which is the only way to actually edit
@@ -42,14 +43,64 @@ function publicBaseUrlHeaders(headers: Headers): Record<string, string> {
   return out;
 }
 
-async function readMultipartImage(formData: FormData): Promise<{
+interface ImageEditInput {
   prompt: string;
   model: string | null;
   size: string | null;
   responseFormat: string | null;
+  imageCacheId: string | null;
   imageBytes: Buffer | null;
   imageMime: string | null;
-}> {
+  rawBody?: Record<string, unknown>;
+}
+
+function isMultipartRequest(request: Request) {
+  return (
+    request.headers.get("content-type")?.toLowerCase().includes("multipart/form-data") === true
+  );
+}
+
+function pickString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function pickCacheId(body: Record<string, unknown>): string | null {
+  return (
+    pickString(body.cache_id) ||
+    pickString(body.image_cache_id) ||
+    pickString(body.imageCacheId) ||
+    pickString(body.image_url) ||
+    pickString(body.url)
+  );
+}
+
+function parseDataUrlImage(value: string): { bytes: Buffer; mime: string } | null {
+  const match = value.match(/^data:([^;,]+);base64,(.+)$/i);
+  if (!match) return null;
+  const bytes = Buffer.from(match[2].replace(/\s+/g, ""), "base64");
+  if (bytes.length === 0) return null;
+  return { bytes, mime: match[1] || "image/png" };
+}
+
+function parseJsonImageBytes(body: Record<string, unknown>): {
+  imageBytes: Buffer | null;
+  imageMime: string | null;
+} {
+  const image = pickString(body.image);
+  if (image) {
+    const dataUrl = parseDataUrlImage(image);
+    if (dataUrl) return { imageBytes: dataUrl.bytes, imageMime: dataUrl.mime };
+  }
+
+  const b64 = pickString(body.b64_json);
+  if (!b64) return { imageBytes: null, imageMime: null };
+  const bytes = Buffer.from(b64.replace(/\s+/g, ""), "base64");
+  if (bytes.length === 0) return { imageBytes: null, imageMime: null };
+  const mime = pickString(body.mime_type) || pickString(body.image_mime_type) || "image/png";
+  return { imageBytes: bytes, imageMime: mime };
+}
+
+async function readMultipartImage(formData: FormData): Promise<ImageEditInput> {
   const promptRaw = formData.get("prompt");
   const prompt = typeof promptRaw === "string" ? promptRaw.trim() : "";
   const modelRaw = formData.get("model");
@@ -58,40 +109,87 @@ async function readMultipartImage(formData: FormData): Promise<{
   const size = typeof sizeRaw === "string" ? sizeRaw.trim() : null;
   const respRaw = formData.get("response_format");
   const responseFormat = typeof respRaw === "string" ? respRaw.trim() : null;
+  const cacheIdRaw =
+    formData.get("cache_id") ?? formData.get("image_cache_id") ?? formData.get("imageCacheId");
+  const imageCacheId = typeof cacheIdRaw === "string" ? cacheIdRaw.trim() : null;
 
   // OpenAI's API and Open WebUI both accept either a single `image` field or
   // an `image[]` array. We use the first image when multiple are sent — the
   // chatgpt-web edit tool can only edit one image per conversation node.
   const imageEntry = formData.get("image") ?? formData.get("image[]");
   if (!imageEntry || typeof imageEntry === "string") {
-    return { prompt, model, size, responseFormat, imageBytes: null, imageMime: null };
+    return { prompt, model, size, responseFormat, imageCacheId, imageBytes: null, imageMime: null };
   }
   const file = imageEntry as File;
   const imageBytes = Buffer.from(await file.arrayBuffer());
   const imageMime = file.type || "image/png";
-  return { prompt, model, size, responseFormat, imageBytes, imageMime };
+  return { prompt, model, size, responseFormat, imageCacheId, imageBytes, imageMime };
+}
+
+async function readJsonImage(request: Request): Promise<ImageEditInput> {
+  const parsed = await request.json();
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("JSON body must be an object");
+  }
+  const rawBody = parsed as Record<string, unknown>;
+  const prompt = pickString(rawBody.prompt) || "";
+  const model = pickString(rawBody.model);
+  const size = pickString(rawBody.size);
+  const responseFormat = pickString(rawBody.response_format) || pickString(rawBody.responseFormat);
+  const imageCacheId = pickCacheId(rawBody);
+  const { imageBytes, imageMime } = parseJsonImageBytes(rawBody);
+  return {
+    prompt,
+    model,
+    size,
+    responseFormat,
+    imageCacheId,
+    imageBytes,
+    imageMime,
+    rawBody,
+  };
+}
+
+async function readImageEditInput(request: Request): Promise<ImageEditInput> {
+  if (isMultipartRequest(request)) {
+    try {
+      return await readMultipartImage(await request.formData());
+    } catch (err) {
+      log.warn(
+        "IMAGE",
+        `Invalid multipart body: ${err instanceof Error ? err.message : String(err)}`
+      );
+      throw new Error("Invalid multipart body");
+    }
+  }
+
+  try {
+    return await readJsonImage(request);
+  } catch (err) {
+    log.warn("IMAGE", `Invalid JSON body: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error("Invalid JSON body");
+  }
 }
 
 export async function POST(request: Request) {
-  let formData: FormData;
+  let input: ImageEditInput;
   try {
-    formData = await request.formData();
+    input = await readImageEditInput(request);
   } catch (err) {
-    log.warn(
-      "IMAGE",
-      `Invalid multipart body: ${err instanceof Error ? err.message : String(err)}`
+    return errorResponse(
+      HTTP_STATUS.BAD_REQUEST,
+      err instanceof Error ? err.message : "Invalid image edit body"
     );
-    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid multipart body");
   }
 
-  const { prompt, model, size, responseFormat, imageBytes, imageMime } =
-    await readMultipartImage(formData);
+  const { prompt, model, size, responseFormat, imageCacheId, imageBytes, imageMime, rawBody } =
+    input;
 
   if (!prompt) {
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing required field: prompt");
   }
-  if (!imageBytes || imageBytes.length === 0) {
-    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing required field: image");
+  if ((!imageBytes || imageBytes.length === 0) && !imageCacheId) {
+    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing required field: image or cache_id");
   }
 
   const fullModel = model || "cgpt-web/gpt-5.3-instant";
@@ -143,9 +241,11 @@ export async function POST(request: Request) {
     provider: parsed.provider,
     model: parsed.model,
     body: {
+      ...(rawBody ?? {}),
       prompt,
       size: size ?? undefined,
       response_format: responseFormat ?? undefined,
+      cache_id: imageCacheId ?? undefined,
       n: 1,
     },
     imageBytes,

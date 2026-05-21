@@ -272,9 +272,109 @@ paths:
                 size:
                   type: string
                   default: 1024x1024
+                aspect_ratio:
+                  type: string
+                  description: Native image layout hint. ChatGPT Web supports auto, 1:1, 3:4, 9:16, 4:3, and 16:9.
+                  enum: [auto, "1:1", "3:4", "9:16", "4:3", "16:9"]
+                  default: auto
+                response_format:
+                  type: string
+                  enum: [url, b64_json]
+                  default: url
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                prompt:
+                  type: string
+                model:
+                  type: string
+                image:
+                  type: string
+                  format: binary
+                  description: Reference image upload. Repeat `image` or use `image[]` for multiple references.
+                image_url:
+                  type: string
+                  description: Reference image URL or data URL.
+                n:
+                  type: integer
+                  default: 1
+                size:
+                  type: string
+                  default: 1024x1024
+                aspect_ratio:
+                  type: string
+                  description: Native image layout hint. ChatGPT Web supports auto, 1:1, 3:4, 9:16, 4:3, and 16:9.
+                  enum: [auto, "1:1", "3:4", "9:16", "4:3", "16:9"]
+                  default: auto
+                response_format:
+                  type: string
+                  enum: [url, b64_json]
+                  default: url
       responses:
         "200":
-          description: Generated images
+          description: Generated images. ChatGPT Web image items include cache_id, cache_expires_at (epoch milliseconds), and cache_ttl_seconds.
+
+  /api/v1/images/edits:
+    post:
+      tags: [Images]
+      summary: Edit a ChatGPT Web image
+      description: Image edit endpoint. ChatGPT Web accepts multipart image uploads or JSON cache_id edits from a prior OmniRoute image generation response without re-uploading the image.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt:
+                  type: string
+                model:
+                  type: string
+                  default: cgpt-web/gpt-5.3-instant
+                image:
+                  type: string
+                  format: binary
+                  description: Source image upload. Optional when cache_id is provided.
+                cache_id:
+                  type: string
+                  description: Persistent ChatGPT Web image cache id returned by /v1/images/generations.
+                response_format:
+                  type: string
+                  enum: [url, b64_json]
+                  default: url
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt:
+                  type: string
+                model:
+                  type: string
+                  default: cgpt-web/gpt-5.3-instant
+                cache_id:
+                  type: string
+                  description: Persistent ChatGPT Web image cache id returned by /v1/images/generations.
+                image_url:
+                  type: string
+                  description: OmniRoute ChatGPT Web cached image URL. Optional alternative to cache_id.
+                image:
+                  type: string
+                  description: Data URL source image. Optional when cache_id is provided.
+                b64_json:
+                  type: string
+                  description: Base64 source image bytes. Optional when cache_id is provided.
+                response_format:
+                  type: string
+                  enum: [url, b64_json]
+                  default: url
+      responses:
+        "200":
+          description: Edited images. ChatGPT Web image items include cache_id, cache_expires_at (epoch milliseconds), and cache_ttl_seconds.
 
   /api/v1/providers/{provider}/images/generations:
     post:
