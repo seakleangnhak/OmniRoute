@@ -33,6 +33,10 @@ import {
   supportsApiKeyOnFreeProvider,
   supportsBulkApiKey,
 } from "@/shared/constants/providers";
+import {
+  ANTIGRAVITY_CLIENT_PROFILE_OPTIONS,
+  normalizeAntigravityClientProfileSetting,
+} from "@/shared/constants/antigravityClientProfile";
 import { parseBulkApiKeys } from "@/shared/utils/bulkApiKeyParser";
 import { getModelsByProviderId } from "@/shared/constants/models";
 import {
@@ -610,10 +614,26 @@ interface EditConnectionModalConnection {
   maxConcurrent?: number | null;
   authType?: string;
   provider?: string;
+  apiKey?: string;
   providerSpecificData?: Record<string, unknown>;
   healthCheckInterval?: number;
   projectId?: string | null;
 }
+
+const formatTimeAgo = (dateStr: string): string => {
+  const now = Date.now();
+  const date = new Date(dateStr).getTime();
+  const diff = now - date;
+  if (diff < 0) return "just now";
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(dateStr).toLocaleDateString();
+};
 
 interface EditConnectionModalProps {
   isOpen: boolean;
@@ -1044,6 +1064,10 @@ export default function ProviderDetailPage() {
   >({});
   const [importingModels, setImportingModels] = useState(false);
   const [importingZed, setImportingZed] = useState(false);
+  const [showZedManual, setShowZedManual] = useState(false);
+  const [zedManualProvider, setZedManualProvider] = useState("openai");
+  const [zedManualToken, setZedManualToken] = useState("");
+  const [importingZedManual, setImportingZedManual] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [importProgress, setImportProgress] = useState({
     current: 0,
@@ -1324,6 +1348,9 @@ export default function ProviderDetailPage() {
       const res = await fetch("/api/providers/zed/import", { method: "POST" });
       const data = await res.json();
       if (!res.ok || !data.success) {
+        if (data.zedDockerEnvironment) {
+          setShowZedManual(true);
+        }
         notify.error(data.error || "Zed import failed");
       } else if (!data.count) {
         const found = data.credentials?.length ?? 0;
@@ -1346,6 +1373,30 @@ export default function ProviderDetailPage() {
       setImportingZed(false);
     }
   }, [importingZed, notify, fetchConnections]);
+
+  const handleZedManualImport = useCallback(async () => {
+    if (importingZedManual || !zedManualToken.trim()) return;
+    setImportingZedManual(true);
+    try {
+      const res = await fetch("/api/providers/zed/manual-import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: zedManualProvider, token: zedManualToken.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        notify.error(data.error?.message ?? data.error ?? "Manual import failed");
+      } else {
+        notify.success(`Imported ${zedManualProvider} token from Zed`);
+        setZedManualToken("");
+        await fetchConnections();
+      }
+    } catch (e: any) {
+      notify.error(e?.message || "Manual import failed");
+    } finally {
+      setImportingZedManual(false);
+    }
+  }, [importingZedManual, zedManualProvider, zedManualToken, notify, fetchConnections]);
 
   useEffect(() => {
     if (providerId !== "codex") return;
@@ -3317,30 +3368,89 @@ export default function ProviderDetailPage() {
       </div>
 
       {providerId === "zed" && (
-        <Card>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex-1 min-w-0">
-              <h2 className="text-lg font-semibold flex items-center gap-2">
-                <span className="material-symbols-outlined text-[20px]">download</span>
-                Import from Zed Keychain
-              </h2>
-              <p className="text-sm text-text-muted mt-1">
-                Discover AI provider credentials (OpenAI, Anthropic, Google, Mistral, xAI) that Zed
-                IDE stored in the OS keychain and import them as connections. Requires Zed IDE
-                installed on this machine.
-              </p>
+        <>
+          <Card>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex-1 min-w-0">
+                <h2 className="text-lg font-semibold flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[20px]">download</span>
+                  Import from Zed Keychain
+                </h2>
+                <p className="text-sm text-text-muted mt-1">
+                  Discover AI provider credentials (OpenAI, Anthropic, Google, Mistral, xAI) that
+                  Zed IDE stored in the OS keychain and import them as connections. Requires Zed IDE
+                  installed on this machine.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={importingZed ? "sync" : "download"}
+                onClick={handleZedImport}
+                disabled={importingZed}
+              >
+                {importingZed ? "Importing…" : "Import from Zed"}
+              </Button>
             </div>
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={importingZed ? "sync" : "download"}
-              onClick={handleZedImport}
-              disabled={importingZed}
-            >
-              {importingZed ? "Importing…" : "Import from Zed"}
-            </Button>
-          </div>
-        </Card>
+          </Card>
+          <Card>
+            <div className="flex flex-col gap-3">
+              <button
+                className="flex items-center justify-between w-full text-left"
+                onClick={() => setShowZedManual((v) => !v)}
+              >
+                <h2 className="text-lg font-semibold flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[20px]">edit</span>
+                  Manual Token Import
+                </h2>
+                <span className="material-symbols-outlined text-[18px] text-text-muted">
+                  {showZedManual ? "expand_less" : "expand_more"}
+                </span>
+              </button>
+              {showZedManual && (
+                <div className="flex flex-col gap-3 mt-1">
+                  <p className="text-sm text-text-muted">
+                    Use this when OmniRoute runs in Docker or the keychain is unavailable. Paste the
+                    API key that Zed stored under{" "}
+                    <code className="font-mono text-xs">~/.config/zed/settings.json</code> or copy
+                    it from the Zed AI settings panel.
+                  </p>
+                  <div className="flex gap-2 flex-col sm:flex-row">
+                    <select
+                      className="input input-sm"
+                      value={zedManualProvider}
+                      onChange={(e) => setZedManualProvider(e.target.value)}
+                    >
+                      <option value="openai">OpenAI</option>
+                      <option value="anthropic">Anthropic</option>
+                      <option value="google">Google</option>
+                      <option value="mistral">Mistral</option>
+                      <option value="xai">xAI</option>
+                      <option value="openrouter">OpenRouter</option>
+                      <option value="deepseek">DeepSeek</option>
+                    </select>
+                    <input
+                      type="password"
+                      className="input input-sm flex-1"
+                      placeholder="Paste API key…"
+                      value={zedManualToken}
+                      onChange={(e) => setZedManualToken(e.target.value)}
+                    />
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon={importingZedManual ? "sync" : "upload"}
+                      onClick={handleZedManualImport}
+                      disabled={importingZedManual || !zedManualToken.trim()}
+                    >
+                      {importingZedManual ? "Saving…" : "Import"}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </Card>
+        </>
       )}
 
       {isCompatible && providerNode && (
@@ -3424,13 +3534,13 @@ export default function ProviderDetailPage() {
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <h2 className="text-lg font-semibold">{t("connections")}</h2>
               {providerId === "codex" && (
-                <div title="Apply Codex Fast tier to all Codex connections by default">
+                <div title={t("providerDetailFastTierTooltip")}>
                   <Toggle
                     size="sm"
                     checked={codexGlobalFastServiceTier}
                     onChange={handleToggleCodexGlobalFastServiceTier}
                     disabled={savingCodexGlobalFastServiceTier}
-                    label="Fast default"
+                    label={t("providerDetailFastDefaultLabel")}
                     ariaLabel="Toggle Codex Fast default"
                     className="rounded-lg border border-sky-500/20 bg-sky-500/5 px-2 py-1"
                   />
@@ -6746,6 +6856,7 @@ function AddApiKeyModal({
   const isPerplexityWeb = provider === "perplexity-web";
   const isBlackboxWeb = provider === "blackbox-web";
   const isMuseSparkWeb = provider === "muse-spark-web";
+  const isDeepSeekWeb = provider === "deepseek-web";
   const isWebSessionProvider = isGrokWeb || isPerplexityWeb || isBlackboxWeb || isMuseSparkWeb;
   const apiKeyOptional = providerAllowsOptionalApiKey(provider);
   const commandCodeAuthPhaseLabel = commandCodeAuthState
@@ -6798,43 +6909,49 @@ function AddApiKeyModal({
   const [bulkWarnings, setBulkWarnings] = useState<string[]>([]);
   const apiCredentialLabel = isQoder
     ? t("personalAccessTokenLabel")
-    : isWebSessionProvider
-      ? t("sessionCookieLabel")
-      : apiKeyOptional
-        ? `${t("apiKeyLabel")} (${t("optional").toLowerCase()})`
-        : t("apiKeyLabel");
+    : isDeepSeekWeb
+      ? "User Token"
+      : isWebSessionProvider
+        ? t("sessionCookieLabel")
+        : apiKeyOptional
+          ? `${t("apiKeyLabel")} (${t("optional").toLowerCase()})`
+          : t("apiKeyLabel");
   const apiCredentialPlaceholder = isVertex
     ? t("vertexServiceAccountPlaceholder")
-    : isGrokWeb
-      ? t("grokWebCookiePlaceholder")
-      : isPerplexityWeb
-        ? t("perplexityWebCookiePlaceholder")
-        : isBlackboxWeb
-          ? t("blackboxWebCookiePlaceholder")
-          : isMuseSparkWeb
-            ? t("museSparkWebCookiePlaceholder")
-            : isQoder
-              ? t("qoderPatPlaceholder")
-              : apiKeyOptional
-                ? t("optional")
-                : undefined;
+    : isDeepSeekWeb
+      ? "Paste userToken value from localStorage"
+      : isGrokWeb
+        ? t("grokWebCookiePlaceholder")
+        : isPerplexityWeb
+          ? t("perplexityWebCookiePlaceholder")
+          : isBlackboxWeb
+            ? t("blackboxWebCookiePlaceholder")
+            : isMuseSparkWeb
+              ? t("museSparkWebCookiePlaceholder")
+              : isQoder
+                ? t("qoderPatPlaceholder")
+                : apiKeyOptional
+                  ? t("optional")
+                  : undefined;
   const apiCredentialHint = isQoder
     ? t("qoderPatHint")
-    : isGrokWeb
-      ? t("grokWebCookieHint")
-      : isPerplexityWeb
-        ? t("perplexityWebCookieHint")
-        : isBlackboxWeb
-          ? t("blackboxWebCookieHint")
-          : isMuseSparkWeb
-            ? t("museSparkWebCookieHint")
-            : isLocalSelfHostedProvider
-              ? t("localProviderApiKeyOptionalHint", {
-                  provider: localProviderMetadata?.name || providerName || provider || "",
-                })
-              : apiKeyOptional
-                ? t("apiKeyOptionalHint")
-                : undefined;
+    : isDeepSeekWeb
+      ? "Found in browser DevTools → Application → Local Storage → chat.deepseek.com → userToken"
+      : isGrokWeb
+        ? t("grokWebCookieHint")
+        : isPerplexityWeb
+          ? t("perplexityWebCookieHint")
+          : isBlackboxWeb
+            ? t("blackboxWebCookieHint")
+            : isMuseSparkWeb
+              ? t("museSparkWebCookieHint")
+              : isLocalSelfHostedProvider
+                ? t("localProviderApiKeyOptionalHint", {
+                    provider: localProviderMetadata?.name || providerName || provider || "",
+                  })
+                : apiKeyOptional
+                  ? t("apiKeyOptionalHint")
+                  : undefined;
 
   const handleValidate = async () => {
     setValidating(true);
@@ -7168,7 +7285,9 @@ function AddApiKeyModal({
                     open_in_new
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="font-medium text-text-main">Browser/manual connect</p>
+                    <p className="font-medium text-text-main">
+                      {t("providerDetailBrowserManualConnect")}
+                    </p>
                     <p className="mt-1 text-xs text-text-muted">
                       Open Command Code Studio, then paste the returned key/JSON/URL into the API
                       key field below.
@@ -7181,7 +7300,9 @@ function AddApiKeyModal({
                     {commandCodeAuthState?.authUrl && (
                       <div className="mt-3 space-y-2">
                         <div>
-                          <p className="mb-1 text-xs font-medium text-text-main">Auth URL</p>
+                          <p className="mb-1 text-xs font-medium text-text-main">
+                            {t("providerDetailAuthUrl")}
+                          </p>
                           <div className="flex gap-2">
                             <Input
                               value={commandCodeAuthState.authUrl}
@@ -7200,7 +7321,9 @@ function AddApiKeyModal({
                         </div>
                         {commandCodeAuthState.callbackUrl && (
                           <div>
-                            <p className="mb-1 text-xs font-medium text-text-main">Callback URL</p>
+                            <p className="mb-1 text-xs font-medium text-text-main">
+                              {t("providerDetailCallbackUrl")}
+                            </p>
                             <div className="flex gap-2">
                               <Input
                                 value={commandCodeAuthState.callbackUrl}
@@ -7491,7 +7614,13 @@ function extractEmailFromJwtLocal(idToken: string): string | null {
 function previewCodexJson(json: unknown): { valid: boolean; email: string | null } {
   try {
     const doc = json && typeof json === "object" ? (json as Record<string, unknown>) : null;
-    if (!doc || doc.auth_mode !== "chatgpt") return { valid: false, email: null };
+    // Codex CLI no longer writes auth_mode — accept both with and without it.
+    // Only reject when auth_mode is explicitly set to something other than "chatgpt".
+    if (
+      !doc ||
+      (doc.auth_mode !== undefined && doc.auth_mode !== null && doc.auth_mode !== "chatgpt")
+    )
+      return { valid: false, email: null };
     const tokens =
       doc.tokens && typeof doc.tokens === "object" ? (doc.tokens as Record<string, unknown>) : null;
     if (!tokens?.id_token || typeof tokens.id_token !== "string")
@@ -8147,9 +8276,7 @@ function ApplyCodexAuthModal({
           <code className="block rounded bg-sidebar px-2 py-1.5 text-xs font-mono text-text-main">
             ~/.codex/auth.json
           </code>
-          <p className="mt-1 text-xs text-text-muted">
-            Path is auto-detected per OS (Linux/Mac/Windows).
-          </p>
+          <p className="mt-1 text-xs text-text-muted">{t("providerDetailPathAutoDetectedAllOs")}</p>
         </div>
         <div>
           <div className="text-xs uppercase text-text-muted mb-1">{backupLabel}</div>
@@ -8603,7 +8730,9 @@ function ImportClaudeAuthModal({ onClose, onSuccess }: ImportClaudeAuthModalProp
                   className="block w-full text-sm"
                 />
                 {singleJson && previewClaudeJson(singleJson).valid && (
-                  <p className="mt-1 text-xs text-emerald-500">Valid Claude credentials file</p>
+                  <p className="mt-1 text-xs text-emerald-500">
+                    {t("providerDetailValidClaudeCredentialsFile")}
+                  </p>
                 )}
                 {singleJson && !previewClaudeJson(singleJson).valid && (
                   <p className="mt-1 text-xs text-red-500">
@@ -8959,6 +9088,7 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }: EditConnec
     consoleApiKey: "",
     ccCompatibleContext1m: false,
     cloudCodeProjectId: "",
+    antigravityClientProfile: "ide",
     blockExtraUsage:
       connection?.provider === "claude"
         ? isClaudeExtraUsageBlockEnabled(connection?.provider, connection?.providerSpecificData)
@@ -8973,6 +9103,18 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }: EditConnec
   const [saveError, setSaveError] = useState<string | null>(null);
   const [extraApiKeys, setExtraApiKeys] = useState<string[]>([]);
   const [newExtraKey, setNewExtraKey] = useState("");
+  const [apiKeyHealth, setApiKeyHealth] = useState<
+    Record<
+      string,
+      {
+        status: "active" | "warning" | "invalid";
+        failures: number;
+        lastFailure: string | null;
+        totalRequests?: number;
+        totalFailures?: number;
+      }
+    >
+  >({});
   const [showAdvanced, setShowAdvanced] = useState(false);
   const { emailsVisible: showEmail, toggleEmailVisibility: toggleShowEmail } =
     useEmailPrivacyStore();
@@ -9049,6 +9191,9 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }: EditConnec
         ccCompatibleContext1m: ccRequestDefaults.context1m,
         cloudCodeProjectId:
           (connection.providerSpecificData?.projectId as string) || connection.projectId || "",
+        antigravityClientProfile: normalizeAntigravityClientProfileSetting(
+          connection.providerSpecificData?.clientProfile
+        ),
         blockExtraUsage: isClaudeExtraUsageBlockEnabled(
           connection.provider,
           connection.providerSpecificData
@@ -9058,6 +9203,20 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }: EditConnec
       // Load existing extra keys from providerSpecificData
       const existing = connection.providerSpecificData?.extraApiKeys;
       setExtraApiKeys(Array.isArray(existing) ? existing : []);
+      // Load API key health status
+      const health = connection.providerSpecificData?.apiKeyHealth as
+        | Record<
+            string,
+            {
+              status: "active" | "warning" | "invalid";
+              failures: number;
+              lastFailure: string | null;
+              totalRequests?: number;
+              totalFailures?: number;
+            }
+          >
+        | undefined;
+      setApiKeyHealth(health || {});
       setNewExtraKey("");
       setShowAdvanced(!!existingCustomUserAgent);
       // email visibility controlled by global store
@@ -9288,6 +9447,15 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }: EditConnec
           updates.providerSpecificData.projectId = trimmedCloudCodeProjectId || null;
         }
       }
+      if (isAntigravity) {
+        updates.providerSpecificData = {
+          ...(connection.providerSpecificData || {}),
+          ...(updates.providerSpecificData || {}),
+          clientProfile: normalizeAntigravityClientProfileSetting(
+            formData.antigravityClientProfile
+          ),
+        };
+      }
       const error = (await onSave(updates)) as void | unknown;
       if (error) {
         setSaveError(typeof error === "string" ? error : t("failedSaveConnection"));
@@ -9383,6 +9551,20 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }: EditConnec
         )}
         {supportsGoogleProjectId && (
           <div className="flex flex-col gap-4 rounded-lg border border-border/50 bg-surface/20 p-4">
+            {isAntigravity && (
+              <Select
+                label={t("antigravityClientProfileLabel")}
+                value={formData.antigravityClientProfile}
+                options={ANTIGRAVITY_CLIENT_PROFILE_OPTIONS.map((option) => ({
+                  value: option.value,
+                  label: t(option.labelKey),
+                }))}
+                onChange={(e) =>
+                  setFormData({ ...formData, antigravityClientProfile: e.target.value })
+                }
+                hint={t("antigravityClientProfileHint")}
+              />
+            )}
             <Input
               label={isAntigravity ? t("antigravityProjectIdLabel") : t("geminiCliProjectIdLabel")}
               value={formData.cloudCodeProjectId}
@@ -9607,6 +9789,57 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }: EditConnec
           </div>
         )}
 
+        {/* T07: API Key Health Status */}
+        {!isOAuth && connection?.apiKey && (
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium text-text-main">{t("apiKeyHealthLabel")}</label>
+            <div className="flex flex-col gap-1.5">
+              {/* Primary Key Health */}
+              {(() => {
+                const keyId = "primary";
+                const health = apiKeyHealth[keyId];
+                const statusColor =
+                  health?.status === "invalid"
+                    ? "text-red-400"
+                    : health?.status === "warning"
+                      ? "text-yellow-400"
+                      : "text-text-muted";
+                const statusIcon =
+                  health?.status === "invalid" ? "🔴" : health?.status === "warning" ? "🟡" : "🟢";
+                const statusLabel =
+                  health?.status === "invalid"
+                    ? t("apiKeyStatusInvalid")
+                    : health?.status === "warning"
+                      ? t("apiKeyStatusWarning", { count: health.failures })
+                      : t("apiKeyStatusActive");
+
+                return (
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`flex-1 font-mono text-xs bg-sidebar/50 px-3 py-2 rounded border border-border truncate ${statusColor}`}
+                    >
+                      {statusIcon} {t("primaryKey")}: {connection.apiKey.slice(0, 6)}...
+                      {connection.apiKey.slice(-4)}
+                    </span>
+                    {health && (
+                      <span
+                        className="text-[10px] text-text-muted whitespace-nowrap"
+                        title={statusLabel}
+                      >
+                        {health.failures}x
+                        {health.lastFailure ? ` · ${formatTimeAgo(health.lastFailure)}` : ""}
+                        {health.totalRequests != null
+                          ? ` · (${health.totalRequests} req${health.totalFailures != null ? `, ${health.totalFailures} fail` : ""})`
+                          : ""}
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+
         {/* T07: Extra API Keys for round-robin rotation */}
         {!isOAuth && (
           <div className="flex flex-col gap-2">
@@ -9629,24 +9862,64 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }: EditConnec
             </div>
             {extraApiKeys.length > 0 && (
               <div className="flex flex-col gap-1.5">
-                {extraApiKeys.map((key, idx) => (
-                  <div key={idx} className="flex items-center gap-2">
-                    <span className="flex-1 font-mono text-xs bg-sidebar/50 px-3 py-2 rounded border border-border text-text-muted truncate">
-                      {t("extraApiKeyMasked", {
-                        index: idx + 2,
-                        prefix: key.slice(0, 6),
-                        suffix: key.slice(-4),
-                      })}
-                    </span>
-                    <button
-                      onClick={() => setExtraApiKeys(extraApiKeys.filter((_, i) => i !== idx))}
-                      className="p-1.5 rounded hover:bg-red-500/10 text-red-400 hover:text-red-500"
-                      title={t("removeThisKey")}
-                    >
-                      <span className="material-symbols-outlined text-[16px]">close</span>
-                    </button>
-                  </div>
-                ))}
+                {extraApiKeys.map((key, idx) => {
+                  const keyId = `extra_${idx}`;
+                  const health = apiKeyHealth[keyId];
+                  const statusColor =
+                    health?.status === "invalid"
+                      ? "text-red-400"
+                      : health?.status === "warning"
+                        ? "text-yellow-400"
+                        : "text-text-muted";
+                  const statusIcon =
+                    health?.status === "invalid"
+                      ? "🔴"
+                      : health?.status === "warning"
+                        ? "🟡"
+                        : "🟢";
+                  const statusLabel =
+                    health?.status === "invalid"
+                      ? t("apiKeyStatusInvalid")
+                      : health?.status === "warning"
+                        ? t("apiKeyStatusWarning", { count: health.failures })
+                        : t("apiKeyStatusActive");
+
+                  return (
+                    <div key={idx} className="flex items-center gap-2">
+                      <span
+                        className={`flex-1 font-mono text-xs bg-sidebar/50 px-3 py-2 rounded border border-border truncate ${statusColor}`}
+                      >
+                        {statusIcon}{" "}
+                        {t("extraApiKeyMasked", {
+                          index: idx + 2,
+                          prefix: key.slice(0, 6),
+                          suffix: key.slice(-4),
+                        })}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        {health && (
+                          <span
+                            className="text-[10px] text-text-muted whitespace-nowrap"
+                            title={statusLabel}
+                          >
+                            {health.failures}x
+                            {health.lastFailure ? ` · ${formatTimeAgo(health.lastFailure)}` : ""}
+                            {health.totalRequests != null
+                              ? ` · (${health.totalRequests} req${health.totalFailures != null ? `, ${health.totalFailures} fail` : ""})`
+                              : ""}
+                          </span>
+                        )}
+                        <button
+                          onClick={() => setExtraApiKeys(extraApiKeys.filter((_, i) => i !== idx))}
+                          className="p-1.5 rounded hover:bg-red-500/10 text-red-400 hover:text-red-500"
+                          title={t("removeThisKey")}
+                        >
+                          <span className="material-symbols-outlined text-[16px]">close</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
             <div className="flex gap-2">

@@ -176,6 +176,7 @@ const VISION_MODELS = [
   "qwen-vl",
   "qvq",
   "mistral-pixtral",
+  "kimi",
 ];
 
 function isVisionModel(modelId: string): boolean {
@@ -329,6 +330,7 @@ export default function PlaygroundPage() {
 
         const providerSet = new Set<string>();
         modelList.forEach((m) => {
+          if (typeof m?.id !== "string") return;
           const parts = m.id.split("/");
           if (parts.length >= 2) providerSet.add(parts[0]);
         });
@@ -340,7 +342,9 @@ export default function PlaygroundPage() {
           setSelectedProvider(providerOpts[0].value);
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.error("[playground] Failed to load models:", err);
+      });
 
     // Fetch ALL connections (once)
     fetch("/api/providers/client")
@@ -361,9 +365,18 @@ export default function PlaygroundPage() {
       .catch(() => {});
   }, []);
 
-  const filteredModels = models
-    .filter((m) => !selectedProvider || m.id.startsWith(selectedProvider + "/"))
-    .map((m) => ({ value: m.id, label: m.id }));
+  const filteredModels = (() => {
+    const seen = new Set<string>();
+    const out: Array<{ value: string; label: string }> = [];
+    for (const m of models) {
+      if (typeof m?.id !== "string") continue;
+      if (selectedProvider && !m.id.startsWith(selectedProvider + "/")) continue;
+      if (seen.has(m.id)) continue;
+      seen.add(m.id);
+      out.push({ value: m.id, label: m.id });
+    }
+    return out;
+  })();
 
   const generateDefaultBody = (endpoint: string, model: string) => {
     const template = { ...DEFAULT_BODIES[endpoint] };
@@ -377,7 +390,9 @@ export default function PlaygroundPage() {
     setSelectedProvider(newProvider);
     setSelectedConnection("");
     const providerModels = models
-      .filter((m) => !newProvider || m.id.startsWith(newProvider + "/"))
+      .filter(
+        (m) => typeof m?.id === "string" && (!newProvider || m.id.startsWith(newProvider + "/"))
+      )
       .map((m) => m.id);
     const firstModel = providerModels[0] || "";
     setSelectedModel(firstModel);

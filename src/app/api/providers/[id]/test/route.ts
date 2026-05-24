@@ -22,6 +22,7 @@ import {
   resolveGitLabOAuthBaseUrl,
 } from "@/lib/oauth/gitlab";
 import { providerAllowsOptionalApiKey } from "@/shared/constants/providers";
+import { removeConnectionHealth } from "@omniroute/open-sse/services/apiKeyRotator.ts";
 
 // OAuth provider test endpoints
 const OAUTH_TEST_CONFIG = {
@@ -102,11 +103,7 @@ const OAUTH_TEST_CONFIG = {
   },
 };
 
-const CLI_RUNTIME_PROVIDER_MAP = {
-  cline: "cline",
-  kilocode: "kilo",
-  qoder: "qoder",
-};
+import { CLI_RUNTIME_PROVIDER_MAP } from "./cliRuntimeProviderMap";
 
 /** POST body is optional; when present, only known fields are validated. */
 const providerConnectionTestBodySchema = z.object({
@@ -224,7 +221,10 @@ function hasQoderToken(connection: any): boolean {
   if (typeof connection?.apiKey === "string" && connection.apiKey.trim().length > 0) return true;
   const psd = connection?.providerSpecificData;
   if (psd && typeof psd === "object") {
-    const pat = (psd as any).personalAccessToken ?? (psd as any).pat ?? (psd as any).accessToken;
+    const pat =
+      (psd as Record<string, unknown>).personalAccessToken ??
+      (psd as Record<string, unknown>).pat ??
+      (psd as Record<string, unknown>).accessToken;
     if (typeof pat === "string" && pat.trim().length > 0) return true;
   }
   return false;
@@ -680,6 +680,16 @@ export async function testSingleConnection(connectionId: string, validationModel
 
   if (result.valid) {
     updateData.backoffLevel = 0;
+
+    const psd = connection?.providerSpecificData as Record<string, unknown> | undefined;
+    updateData.providerSpecificData = {
+      ...(psd || {}),
+      apiKeyHealth: {},
+    };
+
+    try {
+      removeConnectionHealth(connectionId);
+    } catch {}
   }
 
   // If token was refreshed, update tokens in DB

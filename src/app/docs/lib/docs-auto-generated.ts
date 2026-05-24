@@ -76,6 +76,11 @@ export const autoNavSections: AutoGenNavSection[] = [
         fileName: "guides/I18N.md",
       },
       {
+        slug: "kiro-setup",
+        title: "Kiro Setup Guide",
+        fileName: "guides/KIRO_SETUP.md",
+      },
+      {
         slug: "pwa-guide",
         title: "Progressive Web App (PWA) Guide",
         fileName: "guides/PWA_GUIDE.md",
@@ -159,6 +164,11 @@ export const autoNavSections: AutoGenNavSection[] = [
         slug: "evals",
         title: "Evaluations (Evals)",
         fileName: "frameworks/EVALS.md",
+      },
+      {
+        slug: "gamification",
+        title: "Gamification & Leaderboard System",
+        fileName: "frameworks/GAMIFICATION.md",
       },
       {
         slug: "mcp-server",
@@ -284,6 +294,11 @@ export const autoNavSections: AutoGenNavSection[] = [
         slug: "coverage-plan",
         title: "Test Coverage Plan",
         fileName: "ops/COVERAGE_PLAN.md",
+      },
+      {
+        slug: "e2e-dashboard-shakedown-v3.8.0",
+        title: "E2E Dashboard Shakedown — v3.8.0",
+        fileName: "ops/E2E_DASHBOARD_SHAKEDOWN_v3.8.0.md",
       },
       {
         slug: "fly-io-deployment-guide",
@@ -499,6 +514,26 @@ export const autoSearchIndex: AutoGenSearchItem[] = [
     ],
   },
   {
+    slug: "kiro-setup",
+    title: "Kiro Setup Guide",
+    fileName: "guides/KIRO_SETUP.md",
+    section: "Guides",
+    content:
+      "This guide covers adding Kiro (AWS-hosted AI coding assistant) accounts to OmniRoute, with a focus on running multiple accounts simultaneously without session conflicts. Starting with v3.8.0, OmniRoute calls registerClient() (AWS SSO OIDC) during every Kiro connection import. This gives each OmniRou",
+    headings: [
+      "Background: Why Kiro Accounts Can Conflict",
+      "How OmniRoute Solves This (v3.8.0+)",
+      "Migration Note for Connections Created Before v3.8.0",
+      "Adding Two Kiro Accounts Side by Side",
+      "Prerequisites",
+      "Step 1: Import the first account",
+      "Step 2: Import the second account",
+      "Step 3: Verify both connections are active",
+      "Step 4: Use a combo to route between accounts",
+      "Enterprise / IDC Users",
+    ],
+  },
+  {
     slug: "pwa-guide",
     title: "Progressive Web App (PWA) Guide",
     fileName: "guides/PWA_GUIDE.md",
@@ -684,7 +719,7 @@ export const autoSearchIndex: AutoGenSearchItem[] = [
     fileName: "reference/FREE_TIERS.md",
     section: "Reference",
     content:
-      "Last consolidated: 2026-05-13 — OmniRoute v3.8.0 Source of truth: src/shared/constants/providers.ts (FREEPROVIDERS, OAUTHPROVIDERS, and APIKEYPROVIDERS entries flagged with hasFree: true + freeNote) This page lists providers with usable free tiers shipped in OmniRoute v3.8.0. The data is derived fro",
+      "Last consolidated: 2026-05-13 — OmniRoute v3.8.2 Source of truth: src/shared/constants/providers.ts (FREEPROVIDERS, OAUTHPROVIDERS, and APIKEYPROVIDERS entries flagged with hasFree: true + freeNote) This page lists providers with usable free tiers shipped in OmniRoute v3.8.2. The data is derived fro",
     headings: [
       "How free providers are wired",
       "Quick reference (API key providers with hasFree: true)",
@@ -709,7 +744,7 @@ export const autoSearchIndex: AutoGenSearchItem[] = [
       "Categories",
       "Free Tier (OAuth-first or no-key) (5)",
       "OAuth Providers (11)",
-      "Web Cookie Providers (6)",
+      "Web Cookie Providers (7)",
       "API Key Providers (paid / paid-with-free-credits) (122)",
       "Local Providers (10)",
       "Search Providers (11)",
@@ -799,6 +834,26 @@ export const autoSearchIndex: AutoGenSearchItem[] = [
     ],
   },
   {
+    slug: "gamification",
+    title: "Gamification & Leaderboard System",
+    fileName: "frameworks/GAMIFICATION.md",
+    section: "Frameworks",
+    content:
+      "Source of truth: src/lib/gamification/, src/lib/db/gamification.ts, src/app/api/gamification/ Last updated: 2026-05-19 — v3.8.0 OmniRoute includes a local-first gamification layer that rewards users for engaging with the platform — making requests, switching providers, creating combos, sharing token",
+    headings: [
+      "Overview",
+      "Purpose",
+      "Scope",
+      "Design Principles",
+      "Architecture",
+      "High-Level Flow",
+      "Module Dependency Graph",
+      "Data Layer",
+      "Database Tables",
+      "Domain Module: src/lib/db/gamification.ts",
+    ],
+  },
+  {
     slug: "mcp-server",
     title: "OmniRoute MCP Server Documentation",
     fileName: "frameworks/MCP-SERVER.md",
@@ -808,6 +863,7 @@ export const autoSearchIndex: AutoGenSearchItem[] = [
     headings: [
       "Installation",
       "Transports",
+      "Remote access (manage-scope bypass)",
       "IDE Configuration",
       "Essential Tools (8) — Phase 1",
       "Phase 1 — Search",
@@ -815,7 +871,6 @@ export const autoSearchIndex: AutoGenSearchItem[] = [
       "Cache Tools (2)",
       "Compression Tools (5)",
       "MCP Accessibility Tree Filter (v3.8.0)",
-      "1Proxy Tools (3)",
     ],
   },
   {
@@ -1002,8 +1057,8 @@ export const autoSearchIndex: AutoGenSearchItem[] = [
       "4. Forbidden patterns",
       "Coverage in CI",
       "Related controls",
+      "Upstream details passthrough",
       "Known CodeQL limitation: custom sanitizers not recognized",
-      "References",
     ],
   },
   {
@@ -1050,17 +1105,18 @@ export const autoSearchIndex: AutoGenSearchItem[] = [
     fileName: "security/ROUTE_GUARD_TIERS.md",
     section: "Security",
     content:
-      "All OmniRoute management API routes are classified into one of three protection tiers. Classification is static, defined in src/server/authz/routeGuard.ts, and evaluated unconditionally on every request before any auth logic runs. Enforced by: isLocalOnlyPath(path) → loopback host check Bypass: None",
+      "All OmniRoute management API routes are classified into one of three protection tiers. Classification is static, defined in src/server/authz/routeGuard.ts, and evaluated before any other auth branch runs. Enforced by: isLocalOnlyPath(path) → loopback host check Bypass: None by default. Narrow carve-",
     headings: [
       "Overview",
       "Tiers",
       "Tier 1 — LOCAL_ONLY",
+      "Manage-scope carve-out",
       "Tier 2 — ALWAYS_PROTECTED",
       "Tier 3 — MANAGEMENT (default)",
       "Evaluation order",
       "Adding a new spawn-capable route",
+      "Adding a manage-scope-bypassable path",
       "Files",
-      "See also",
     ],
   },
   {
@@ -1194,6 +1250,26 @@ export const autoSearchIndex: AutoGenSearchItem[] = [
       "Phase 2: 60% -> 65%",
       "Phase 3: 65% -> 70%",
       "Phase 4: 70% -> 75%",
+    ],
+  },
+  {
+    slug: "e2e-dashboard-shakedown-v3.8.0",
+    title: "E2E Dashboard Shakedown — v3.8.0",
+    fileName: "ops/E2E_DASHBOARD_SHAKEDOWN_v3.8.0.md",
+    section: "Ops",
+    content:
+      "Branch alvo: release/v3.8.0 Objetivo: validar manualmente, em modo dev (Turbopack), que toda página renderiza sem erro de runtime ou de backend antes de fechar a versão 3.8.0. Para cada erro encontrado, o operador corrige na própria página e segue para a próxima — esse documento é o roteiro vivo da ",
+    headings: [
+      "0. Pré-requisitos (rodar uma vez)",
+      "0.1 Estado do repositório",
+      "0.2 Conflito conhecido — diretório app/ na raiz",
+      "0.3 Cache do Turbopack",
+      "0.4 Dev server",
+      "0.5 Browser",
+      "0.6 Side-channel — busca por erros no backend",
+      '1. O que conta como "passou"',
+      "2. Categorias de erro mais comuns e padrão de correção",
+      "3. Checklist de páginas (ordem sugerida)",
     ],
   },
   {
@@ -1331,6 +1407,7 @@ export const autoAllSlugs: string[] = [
   "electron-guide",
   "features",
   "i18n",
+  "kiro-setup",
   "pwa-guide",
   "setup-guide",
   "termux-guide",
@@ -1346,6 +1423,7 @@ export const autoAllSlugs: string[] = [
   "agent-protocols-guide",
   "cloud-agent",
   "evals",
+  "gamification",
   "mcp-server",
   "memory",
   "opencode",
@@ -1367,6 +1445,7 @@ export const autoAllSlugs: string[] = [
   "compression-rules-format",
   "rtk-compression",
   "coverage-plan",
+  "e2e-dashboard-shakedown-v3.8.0",
   "fly-io-deployment-guide",
   "proxy-guide",
   "release-checklist",

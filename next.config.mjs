@@ -96,6 +96,8 @@ const nextConfig = {
       "./src/mitm/server.cjs",
       "./open-sse/services/compression/engines/rtk/filters/**/*.json",
       "./open-sse/services/compression/rules/**/*.json",
+      "./open-sse/lib/sha3_wasm_bg.wasm",
+      "./open-sse/lib/deepseek-pow-solver.cjs",
     ],
   },
   outputFileTracingExcludes: {
@@ -145,7 +147,7 @@ const nextConfig = {
     "process",
   ],
   transpilePackages: ["@omniroute/open-sse", "@lobehub/icons"],
-  allowedDevOrigins: ["localhost", "127.0.0.1", "192.168.0.250"],
+  allowedDevOrigins: ["localhost", "127.0.0.1", "192.168.0.250", "192.168.0.111"],
   typescript: {
     // TODO: Re-enable after fixing all sub-component useTranslations scope issues
     ignoreBuildErrors: true,

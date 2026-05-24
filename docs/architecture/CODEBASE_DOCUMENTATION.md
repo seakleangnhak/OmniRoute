@@ -1,6 +1,6 @@
 ---
 title: "OmniRoute Codebase Documentation"
-version: 3.8.0
+version: 3.8.2
 lastUpdated: 2026-05-13
 ---
 
@@ -411,7 +411,7 @@ open-sse/
 ├── types.d.ts
 ├── config/                 Provider registries, header profiles, identity, …
 ├── handlers/               Request handlers (chat, embeddings, audio, image, …)
-├── executors/              31 provider-specific HTTP executors
+├── executors/              38 provider-specific HTTP executors
 ├── translator/             Format conversion (OpenAI ↔ Claude ↔ Gemini ↔ Cursor ↔ Kiro)
 ├── transformer/            Responses API ↔ Chat Completions stream transformer
 ├── services/               80+ service modules (combos, fallback, quotas, identity, …)
@@ -441,7 +441,7 @@ open-sse/
 
 ### 4.2 `open-sse/executors/`
 
-31 provider executors, each extending `BaseExecutor` (`base.ts`):
+38 provider executors, each extending `BaseExecutor` (`base.ts`):
 
 `antigravity`, `azure-openai`, `blackbox-web`, `chatgpt-web`, `cliproxyapi`,
 `cloudflare-ai`, `codex`, `commandCode`, `cursor`, `default`, `devin-cli`,
@@ -493,7 +493,7 @@ Highlights (full list under `open-sse/services/`):
 | Routing intelligence      | `intentClassifier.ts`, `taskAwareRouter.ts`, `backgroundTaskDetector.ts`, `volumeDetector.ts`, `wildcardRouter.ts`, `workflowFSM.ts`, `specificityDetector.ts`, `specificityRules.ts`, `specificityTypes.ts`                                                                                                                                                                                                                                                                                                                                                                                                             |
 | Model handling            | `modelCapabilities.ts`, `modelDeprecation.ts`, `modelFamilyFallback.ts`, `modelStrip.ts`, `model.ts`, `provider.ts`, `providerRequestDefaults.ts`, `providerCostData.ts`, `payloadRules.ts`                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | Compression               | `compression/` — full compression engine wiring                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Token + session           | `tokenRefresh.ts`, `sessionManager.ts`, `apiKeyRotator.ts`, `contextManager.ts`, `contextHandoff.ts`, `systemPrompt.ts`, `roleNormalizer.ts`, `responsesInputSanitizer.ts`, `responsesToolCallState.ts`, `toolSchemaSanitizer.ts`, `toolLimitDetector.ts`, `thinkingBudget.ts`                                                                                                                                                                                                                                                                                                                                           |
+| Token + session           | `tokenRefresh.ts`, `sessionManager.ts`, `apiKeyRotator.ts`, `contextManager.ts`, `contextHandoff.ts`, `systemPrompt.ts`, `roleNormalizer.ts`, `responsesInputSanitizer.ts`, `toolSchemaSanitizer.ts`, `toolLimitDetector.ts`, `thinkingBudget.ts`                                                                                                                                                                                                                                                                                                                                                                        |
 | Tier / manifest           | `tierResolver.ts`, `tierConfig.ts`, `tierDefaults.json`, `tierTypes.ts`, `manifestAdapter.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | IP / network              | `ipFilter.ts`, `webSearchFallback.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | Batches                   | `batchProcessor.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |

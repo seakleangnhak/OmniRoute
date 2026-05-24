@@ -324,6 +324,7 @@ async function exchangeSession(
   try {
     data = JSON.parse(response.text || "{}");
   } catch {
+    console.warn("[chatgpt-web] session response JSON parse failed");
     /* empty body or non-JSON */
   }
   if (!data.accessToken) {
@@ -624,6 +625,7 @@ async function prepareChatRequirements(
   try {
     prepData = JSON.parse(prepResp.text || "{}") as ChatRequirements;
   } catch {
+    console.warn("[chatgpt-web] chat requirements prep JSON parse failed");
     /* keep empty */
   }
   // Stage 2: POST /chat-requirements with the prepare_token in the body. This
@@ -653,6 +655,7 @@ async function prepareChatRequirements(
     // Merge: prepare_token from stage 1, everything else from stage 2.
     return { ...crData, prepare_token: prepData.prepare_token };
   } catch {
+    console.warn("[chatgpt-web] chat requirements response JSON parse failed");
     return prepData;
   }
 }
@@ -1680,6 +1683,7 @@ async function* readChatGptSseEvents(
     try {
       return JSON.parse(trimmed) as ChatGptStreamEvent;
     } catch {
+      console.warn("[chatgpt-web] stream event JSON parse failed");
       return null;
     }
   }
@@ -2106,6 +2110,7 @@ function buildStreamingResponse(
             } catch {
               // Controller may already be closed if the client disconnected
               // — just stop firing.
+              console.warn("[chatgpt-web] heartbeat enqueue failed - controller closed");
               clearInterval(timer);
             }
           }, intervalMs);
@@ -2181,6 +2186,7 @@ function buildStreamingResponse(
             controller.enqueue(bytes);
             return true;
           } catch {
+            console.warn("[chatgpt-web] controller enqueue failed");
             return false;
           }
         };
@@ -2380,6 +2386,7 @@ function isLocalBaseUrl(baseUrl: string): boolean {
     const host = new URL(baseUrl).hostname.toLowerCase();
     return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0";
   } catch {
+    console.warn("[chatgpt-web] URL parse failed, falling back to regex");
     return /\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0)\b/i.test(baseUrl);
   }
 }
@@ -2500,6 +2507,7 @@ async function fetchDownloadUrl(endpoint: string, ctx: ResolverContext): Promise
   try {
     parsed = JSON.parse(response.text || "{}");
   } catch {
+    console.warn("[chatgpt-web] image download URL parse failed");
     return null;
   }
   return parsed.download_url ?? null;
@@ -2667,6 +2675,7 @@ async function registerWebSocket(ctx: ResolverContext): Promise<string | null> {
           return ws;
         }
       } catch {
+        console.warn("[chatgpt-web] WebSocket URL parse failed, falling through");
         /* fall through */
       }
     }
@@ -2706,6 +2715,7 @@ async function waitForImageViaWebSocket(
       try {
         ws.close();
       } catch {
+        console.warn("[chatgpt-web] ws.close failed");
         /* ignore */
       }
       resolve({
@@ -2744,6 +2754,7 @@ async function waitForImageViaWebSocket(
       try {
         payload = JSON.parse(raw);
       } catch {
+        console.warn("[chatgpt-web] WebSocket event JSON parse failed");
         return;
       }
       // chatgpt.com's celsius WS frames look like:

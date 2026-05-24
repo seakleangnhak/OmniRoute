@@ -17,6 +17,7 @@ import { addBufferToUsage, filterUsageForFormat, estimateUsage } from "../utils/
 import { refreshWithRetry, isUnrecoverableRefreshError } from "../services/tokenRefresh.ts";
 import { createRequestLogger } from "../utils/requestLogger.ts";
 import { getModelTargetFormat, PROVIDER_ID_TO_ALIAS } from "../config/providerModels.ts";
+import { DEFAULT_THINKING_CLAUDE_SIGNATURE } from "../config/defaultThinkingSignature.ts";
 import {
   getStripTypesForProviderModel,
   stripIncompatibleMessageContent,
@@ -39,6 +40,7 @@ import {
   SSE_HEARTBEAT_INTERVAL_MS,
   STREAM_IDLE_TIMEOUT_MS,
   STREAM_READINESS_TIMEOUT_MS,
+  ANTIGRAVITY_PRE_RESPONSE_TIMEOUT_CODE,
 } from "../config/constants.ts";
 import {
   classifyProviderError,
@@ -46,6 +48,14 @@ import {
   isEmptyContentResponse,
 } from "../services/errorClassifier.ts";
 import { updateProviderConnection } from "@/lib/db/providers";
+import {
+  recordKeyFailure,
+  recordKeySuccess,
+  getInvalidKeyCount,
+  trackConnectionExtraKeys,
+  connectionHasExtraKeys,
+  type KeyHealth,
+} from "../services/apiKeyRotator.ts";
 import { isDetailedLoggingEnabled } from "@/lib/db/detailedLogs";
 import {
   getCallLogPipelineCaptureStreamChunks,
@@ -91,6 +101,10 @@ import {
 } from "../utils/cacheControlPolicy.ts";
 import { getCachedSettings } from "@/lib/db/readCache";
 import { applyCodexGlobalFastServiceTier } from "@/lib/providers/codexFastTier";
+import {
+  CPA_FORCE_FAST_MODE_HEADER,
+  shouldRequestClaudeFastMode,
+} from "@/lib/providers/claudeFastMode";
 import {
   getCodexRequestDefaults,
   normalizeCodexServiceTier,
@@ -420,6 +434,36 @@ export function shouldUseNativeCodexPassthrough({
   while (normalizedEndpoint.endsWith("/")) normalizedEndpoint = normalizedEndpoint.slice(0, -1);
   const segments = normalizedEndpoint.split("/");
   return segments.includes("responses");
+}
+
+/**
+ * Convert all historical `thinking` / `redacted_thinking` blocks in assistant
+ * messages to `redacted_thinking` carrying a synthetic default signature.
+ *
+ * A thinking block's `signature` is cryptographically bound to the auth token
+ * that generated it. In Anthropic-native Claude OAuth passthrough, when a session
+ * starts on one model (token A) and then switches model or falls over (token B),
+ * Anthropic rejects every historical signature with 400 "Invalid signature in
+ * thinking block" (issue #2454). `redacted_thinking` bypasses signature validation.
+ *
+ * ALL assistant turns are converted, including the last — under a different token
+ * every signature is invalid, so there is no "preserve latest" exception. Returns a
+ * new messages array (original is not mutated) only touching messages that changed.
+ */
+export function redactPassthroughThinkingSignatures(messages: unknown, signature: string): unknown {
+  if (!Array.isArray(messages)) return messages;
+  return (messages as Record<string, unknown>[]).map((msg) => {
+    if (!msg || msg.role !== "assistant" || !Array.isArray(msg.content)) return msg;
+    let modified = false;
+    const newContent = (msg.content as Record<string, unknown>[]).map((block) => {
+      if (block && (block.type === "thinking" || block.type === "redacted_thinking")) {
+        modified = true;
+        return { type: "redacted_thinking", data: signature };
+      }
+      return block;
+    });
+    return modified ? { ...msg, content: newContent } : msg;
+  });
 }
 
 export function isClaudeCodeSemanticPassthroughRequest({
@@ -851,10 +895,18 @@ function isSemaphoreCapacityError(error: unknown): error is Error & { code: stri
   );
 }
 
-function createStreamingErrorResult(statusCode: number, message: string, code?: string) {
+function createStreamingErrorResult(
+  statusCode: number,
+  message: string,
+  code?: string,
+  type?: string
+) {
   const errorBody = buildErrorBody(statusCode, message);
   if (code) {
     errorBody.error.code = code;
+  }
+  if (type) {
+    errorBody.error.type = type;
   }
 
   const body = `data: ${JSON.stringify(errorBody)}\n\ndata: [DONE]\n\n`;
@@ -873,6 +925,12 @@ function createStreamingErrorResult(statusCode: number, message: string, code?: 
       },
     }),
   };
+}
+
+function getUpstreamErrorIdentifier(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const value = (error as { code?: unknown }).code;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function wrapReadableStreamWithFinalize<T>(
@@ -1230,6 +1288,44 @@ function isCopilotClient(
   return false;
 }
 
+export function extractSystemRoleMessages(payload: Record<string, unknown>): void {
+  if (!Array.isArray(payload.messages)) return;
+  const messages = payload.messages as Array<{ role?: unknown; content?: unknown }>;
+  // Treat both `system` and `developer` as system-equivalent (OpenAI's Responses
+  // API renamed system → developer). Anthropic rejects either as a chat role, so
+  // both must be lifted into the top-level `system` field — parity with the
+  // normal-path extractSystemMessagesToBody closure.
+  const isSystemRole = (role: unknown): boolean =>
+    typeof role === "string" &&
+    (role.toLowerCase() === "system" || role.toLowerCase() === "developer");
+  const systemMessages = messages.filter((m) => isSystemRole(m.role));
+  if (systemMessages.length === 0) return;
+
+  const extraBlocks: Array<Record<string, unknown>> = [];
+  for (const sm of systemMessages) {
+    if (typeof sm.content === "string" && sm.content.length > 0) {
+      extraBlocks.push({ type: "text", text: sm.content });
+    } else if (Array.isArray(sm.content)) {
+      for (const block of sm.content as Array<Record<string, unknown>>) {
+        if (block?.type === "text" && typeof block.text === "string" && block.text.length > 0) {
+          extraBlocks.push({ ...block });
+        }
+      }
+    }
+  }
+  if (extraBlocks.length > 0) {
+    const existingSystem = payload.system;
+    if (typeof existingSystem === "string" && existingSystem.length > 0) {
+      payload.system = [{ type: "text", text: existingSystem }, ...extraBlocks];
+    } else if (Array.isArray(existingSystem)) {
+      payload.system = [...(existingSystem as Array<Record<string, unknown>>), ...extraBlocks];
+    } else {
+      payload.system = extraBlocks;
+    }
+  }
+  payload.messages = messages.filter((m) => !isSystemRole(m.role));
+}
+
 export async function handleChatCore({
   body,
   modelInfo,
@@ -1250,6 +1346,7 @@ export async function handleChatCore({
   comboExecutionKey = null,
   disableEmergencyFallback = false,
   cachedSettings = null,
+  skipUpstreamRetry = false,
 }) {
   let { provider, model, extendedContext } = modelInfo;
   // apiFormat is an optional custom-model marker injected by getModelInfo for
@@ -1307,6 +1404,63 @@ export async function handleChatCore({
       apiKeyName: apiKeyInfo?.name || undefined,
       serviceTier: effectiveServiceTier,
     }).catch(() => {});
+  };
+
+  const recordKeyHealthStatus = (
+    status: number,
+    creds: Record<string, unknown> | null | undefined
+  ): void => {
+    const connId = creds?.connectionId as string | undefined;
+    if (!connId) return;
+
+    const psd = creds.providerSpecificData as Record<string, unknown> | undefined;
+    const extraKeys = (psd?.extraApiKeys as string[] | undefined) ?? [];
+    const health = psd?.apiKeyHealth as Record<string, KeyHealth> | undefined;
+    const currentKeyId = (psd?.selectedKeyId as string | undefined) ?? "primary";
+
+    trackConnectionExtraKeys(connId, extraKeys);
+
+    if (status === 401) {
+      const updatedHealth = recordKeyFailure(connId, currentKeyId);
+      log?.warn?.(
+        "AUTH",
+        `401 on connection ${connId.slice(0, 8)} - key marked as failed (failure #${updatedHealth.failures})`
+      );
+
+      // Persist health status to DB on every failure (not just invalid transitions)
+      // This ensures in-memory state survives process restarts
+      const prevStatus = health?.[currentKeyId]?.status;
+      const prevFailures = health?.[currentKeyId]?.failures ?? 0;
+      if (updatedHealth.status !== prevStatus || updatedHealth.failures !== prevFailures) {
+        updateProviderConnection(connId, {
+          providerSpecificData: {
+            ...psd,
+            apiKeyHealth: { ...health, [currentKeyId]: updatedHealth },
+          },
+        }).catch((err: unknown) => {
+          log?.error?.(
+            "DB",
+            `Failed to persist apiKeyHealth: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+      }
+    } else if (status >= 200 && status < 300) {
+      const updatedHealth = recordKeySuccess(connId, currentKeyId);
+      const prevStatus = health?.[currentKeyId]?.status;
+      if (prevStatus === "warning" || prevStatus === "invalid") {
+        updateProviderConnection(connId, {
+          providerSpecificData: {
+            ...psd,
+            apiKeyHealth: { ...health, [currentKeyId]: updatedHealth },
+          },
+        }).catch((err: unknown) => {
+          log?.error?.(
+            "DB",
+            `Failed to persist apiKeyHealth: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
+      }
+    }
   };
 
   const persistCodexQuotaState = async (
@@ -1686,6 +1840,22 @@ export async function handleChatCore({
       }
     }
 
+    // Claude Fast Mode opt-in. When the user has enabled this in
+    // Settings > AI AND the target provider is the canonical Anthropic
+    // `claude` provider (Claude Code-compatible CPA bridges are excluded
+    // since they already select their own entrypoint) AND the model id
+    // matches the configured list, signal to a paired CLIProxyAPI build to
+    // rewrite the cc_entrypoint so the request can reach Anthropic Fast
+    // Mode (speed:"fast"). CPA builds that do not understand the header
+    // forward it harmlessly.
+    if (
+      provider === "claude" &&
+      typeof settings !== "undefined" &&
+      shouldRequestClaudeFastMode(settings, modelToCall)
+    ) {
+      upstreamHeaders[CPA_FORCE_FAST_MODE_HEADER] = "1";
+    }
+
     return upstreamHeaders;
   };
 
@@ -1721,7 +1891,10 @@ export async function handleChatCore({
       ? false
       : resolveStreamFlag(body?.stream, acceptHeader, sourceFormat);
   const settings = cachedSettings ?? (await getCachedSettings());
-  credentials = applyCodexGlobalFastServiceTier(provider, credentials, settings);
+  credentials = applyCodexGlobalFastServiceTier(provider, credentials, settings, {
+    model: requestedModel,
+    body: body && typeof body === "object" ? (body as Record<string, unknown>) : null,
+  });
   effectiveServiceTier = resolveEffectiveServiceTier(body);
   setGeminiThoughtSignatureMode(settings.antigravitySignatureCacheMode);
   const semanticCacheEnabled = settings.semanticCacheEnabled !== false;
@@ -2488,6 +2661,45 @@ export async function handleChatCore({
     content?: unknown;
   };
 
+  // Shared helper: lift any system/developer role messages out of the messages
+  // array into the top-level system parameter. Anthropic's Messages API rejects
+  // system/developer roles inside messages[]. Case-insensitive to be defensive.
+  const extractSystemMessagesToBody = (payload: Record<string, unknown>) => {
+    if (!Array.isArray(payload.messages)) return;
+    const messages = payload.messages as ClaudeMessage[];
+    const systemMessages = messages.filter((m) => {
+      const role = String(m.role || "").toLowerCase();
+      return role === "system" || role === "developer";
+    });
+    if (systemMessages.length === 0) return;
+    const extraBlocks: ClaudeContentBlock[] = [];
+    for (const sm of systemMessages) {
+      if (typeof sm.content === "string" && sm.content.length > 0) {
+        extraBlocks.push({ type: "text", text: sm.content });
+      } else if (Array.isArray(sm.content)) {
+        for (const block of sm.content as ClaudeContentBlock[]) {
+          if (block?.type === "text" && typeof block.text === "string" && block.text.length > 0) {
+            extraBlocks.push(block);
+          }
+        }
+      }
+    }
+    if (extraBlocks.length > 0) {
+      const existingSystem = payload.system;
+      if (typeof existingSystem === "string" && existingSystem.length > 0) {
+        payload.system = [{ type: "text", text: existingSystem }, ...extraBlocks];
+      } else if (Array.isArray(existingSystem)) {
+        payload.system = [...(existingSystem as ClaudeContentBlock[]), ...extraBlocks];
+      } else {
+        payload.system = extraBlocks;
+      }
+    }
+    payload.messages = messages.filter((m) => {
+      const role = String(m.role || "").toLowerCase();
+      return role !== "system" && role !== "developer";
+    });
+  };
+
   const normalizeClaudeUpstreamMessages = (
     payload: Record<string, unknown>,
     options?: { preserveToolResultBlocks?: boolean }
@@ -2496,34 +2708,9 @@ export async function handleChatCore({
     if (!Array.isArray(payload.messages)) return;
     let messages = payload.messages as ClaudeMessage[];
 
-    // Extract system role messages (Issue #1797)
-    const systemMessages = messages.filter((m) => m.role === "system");
-    if (systemMessages.length > 0) {
-      const extraBlocks: ClaudeContentBlock[] = [];
-      for (const sm of systemMessages) {
-        if (typeof sm.content === "string" && sm.content.length > 0) {
-          extraBlocks.push({ type: "text", text: sm.content });
-        } else if (Array.isArray(sm.content)) {
-          for (const block of sm.content as ClaudeContentBlock[]) {
-            if (block?.type === "text" && typeof block.text === "string" && block.text.length > 0) {
-              extraBlocks.push(block);
-            }
-          }
-        }
-      }
-      if (extraBlocks.length > 0) {
-        const existingSystem = payload.system;
-        if (typeof existingSystem === "string" && existingSystem.length > 0) {
-          payload.system = [{ type: "text", text: existingSystem }, ...extraBlocks];
-        } else if (Array.isArray(existingSystem)) {
-          payload.system = [...(existingSystem as ClaudeContentBlock[]), ...extraBlocks];
-        } else {
-          payload.system = extraBlocks;
-        }
-      }
-      messages = messages.filter((m) => m.role !== "system");
-      payload.messages = messages;
-    }
+    // Extract system/developer role messages into top-level system parameter.
+    extractSystemMessagesToBody(payload);
+    messages = payload.messages as ClaudeMessage[];
 
     // Anthropic rejects empty text blocks in native Messages payloads.
     for (const msg of messages) {
@@ -2645,6 +2832,12 @@ export async function handleChatCore({
         preserveClaudeMessages: sourceFormat === FORMATS.CLAUDE && isClaudeCodeSemanticPassthrough,
       });
       log?.debug?.("FORMAT", "claude-code-compatible bridge enabled");
+
+      // Fix #2468: extract role:"system" from messages → top-level system
+      // in the compatible bridge path. The preserveClaudeMessages flag
+      // skips the OpenAI round-trip but may leave system-role messages in
+      // the array, which Anthropic's Messages API now rejects (400).
+      normalizeClaudeUpstreamMessages(translatedBody, { preserveToolResultBlocks: true });
     } else if (isClaudePassthrough) {
       // Pure passthrough: forward the body as-is without OpenAI round-trip.
       // The Claude→OpenAI→Claude double translation was lossy and corrupted
@@ -2653,11 +2846,23 @@ export async function handleChatCore({
       // regardless of combo strategy or cache_control settings.
       translatedBody = { ...body };
       translatedBody._disableToolPrefix = true;
-      if (!isClaudeCodeSemanticPassthrough) {
-        normalizeClaudeUpstreamMessages(translatedBody, { preserveToolResultBlocks: true });
-      } else {
-        log?.debug?.("FORMAT", "claude-code semantic passthrough enabled");
+
+      // Sanitize historical thinking-block signatures for Anthropic-native Claude OAuth.
+      // Only Anthropic's first-party API validates these signatures (token-bound); third-party
+      // Claude-shape providers do not. See redactPassthroughThinkingSignatures + issue #2454.
+      if (provider === "claude") {
+        translatedBody.messages = redactPassthroughThinkingSignatures(
+          translatedBody.messages,
+          DEFAULT_THINKING_CLAUDE_SIGNATURE
+        ) as typeof translatedBody.messages;
       }
+
+      // Fix #2468: always extract role:"system" → top-level system.
+      // The semantic passthrough correctly skips the Claude→OpenAI→Claude
+      // round-trip, but even pure Claude bodies may carry system content as
+      // role:"system" messages rather than the top-level system field, which
+      // Anthropic's Messages API now rejects with a 400.
+      normalizeClaudeUpstreamMessages(translatedBody, { preserveToolResultBlocks: true });
 
       log?.debug?.("FORMAT", `claude passthrough (preserveCache=${preserveCacheControl})`);
 
@@ -2754,7 +2959,12 @@ export async function handleChatCore({
         credentials,
         provider,
         reqLogger,
-        { normalizeToolCallId, preserveDeveloperRole, preserveCacheControl }
+        {
+          normalizeToolCallId,
+          preserveDeveloperRole,
+          preserveCacheControl,
+          signatureNamespace: connectionId,
+        }
       );
     }
   } catch (error) {
@@ -3005,7 +3215,6 @@ export async function handleChatCore({
   // Create stream controller for disconnect detection
   const streamController = createStreamController({
     onDisconnect,
-    log,
     provider,
     model,
     connectionId,
@@ -3019,6 +3228,8 @@ export async function handleChatCore({
   const executeProviderRequest = async (modelToCall = effectiveModel, allowDedup = false) => {
     const execute = async () => {
       const executionCredentials = getExecutionCredentials();
+      // Track execution credentials for key health recording (to capture selectedKeyId)
+      let lastExecCreds = executionCredentials;
       const accountSemaphoreMaxConcurrency =
         resolveAccountSemaphoreMaxConcurrency(executionCredentials);
       const accountSemaphoreKey = resolveAccountSemaphoreKey({
@@ -3150,19 +3361,25 @@ export async function handleChatCore({
 
             while (attempts < maxAttempts) {
               trace("pre_executor", { attempt: attempts });
+              const execCreds = getExecutionCredentials();
               const res = await executor.execute({
                 model: modelToCall,
                 body: bodyToSend,
                 stream: upstreamStream,
-                credentials: getExecutionCredentials(),
+                credentials: execCreds,
                 signal: streamController.signal,
                 log,
                 extendedContext,
                 upstreamExtraHeaders: buildUpstreamHeadersForExecute(modelToCall),
                 clientHeaders: buildExecutorClientHeaders(clientRawRequest?.headers, userAgent),
                 onCredentialsRefreshed,
+                skipUpstreamRetry,
               });
               trace("post_executor", { status: res?.response?.status });
+
+              if (res.response.status === 401 && execCreds?.connectionId) {
+                recordKeyHealthStatus(401, execCreds);
+              }
 
               // Qwen 429 strict quota backoff (wait 1.5s, 3s and retry)
               if (
@@ -3289,6 +3506,7 @@ export async function handleChatCore({
 
                 return {
                   ...res,
+                  _executionCredentials: execCreds,
                   response: new Response(
                     wrapReadableStreamWithFinalize(originalBody, acquireAccountSemaphoreRelease),
                     {
@@ -3301,7 +3519,10 @@ export async function handleChatCore({
                 };
               }
 
-              return res;
+              return {
+                ...res,
+                _executionCredentials: execCreds,
+              };
             }
           },
           streamController.signal
@@ -3313,6 +3534,15 @@ export async function handleChatCore({
 
         // Non-stream: release semaphore immediately after reading full response body.
         const status = rawResult.response.status;
+
+        // Use execution credentials captured during request processing
+        if (
+          rawResult._executionCredentials?.connectionId &&
+          rawResult._executionCredentials?.apiKey
+        ) {
+          recordKeyHealthStatus(status, rawResult._executionCredentials);
+        }
+
         const statusText = rawResult.response.statusText;
         const headers = new Headers(rawResult.response.headers);
         stripStaleForwardingHeaders(headers);
@@ -3453,6 +3683,9 @@ export async function handleChatCore({
       error.name === "AbortError"
         ? "Request aborted"
         : formatProviderError(error, provider, model, failureStatus);
+    const upstreamErrorCode = getUpstreamErrorIdentifier(error);
+    const upstreamErrorType =
+      upstreamErrorCode === ANTIGRAVITY_PRE_RESPONSE_TIMEOUT_CODE ? "upstream_timeout" : undefined;
     appendRequestLog({
       model,
       provider,
@@ -3473,10 +3706,29 @@ export async function handleChatCore({
     }
     persistFailureUsage(
       failureStatus,
-      error instanceof Error && error.name ? error.name : "upstream_error"
+      upstreamErrorCode || (error instanceof Error && error.name ? error.name : "upstream_error")
     );
     console.log(`${COLORS.red}[ERROR] ${failureMessage}${COLORS.reset}`);
-    return createErrorResult(failureStatus, failureMessage);
+    if (stream && upstreamErrorCode) {
+      const result = createStreamingErrorResult(
+        failureStatus,
+        failureMessage,
+        upstreamErrorCode,
+        upstreamErrorType
+      );
+      return {
+        ...result,
+        errorType: upstreamErrorType,
+        errorCode: upstreamErrorCode,
+      };
+    }
+    return createErrorResult(
+      failureStatus,
+      failureMessage,
+      null,
+      upstreamErrorCode,
+      upstreamErrorType
+    );
   }
   // We need to peek at the error text if it's 400 for Qwen
   let upstreamErrorParsed = false;
@@ -3556,6 +3808,7 @@ export async function handleChatCore({
           upstreamExtraHeaders: buildUpstreamHeadersForExecute(retryModelId),
           clientHeaders: buildExecutorClientHeaders(clientRawRequest?.headers, userAgent),
           onCredentialsRefreshed,
+          skipUpstreamRetry: isCombo,
         });
 
         if (retryResult.response.ok) {
@@ -3637,16 +3890,35 @@ export async function handleChatCore({
             `[provider] Node ${connectionId} banned (${statusCode}) — disabling permanently`
           );
         } else if (errorType === PROVIDER_ERROR_TYPES.ACCOUNT_DEACTIVATED) {
-          await updateProviderConnection(connectionId, {
-            isActive: false,
-            testStatus: "deactivated",
-            lastErrorType: errorType,
-            lastError: message,
-            errorCode: statusCode,
-          });
-          console.warn(
-            `[provider] Node ${connectionId} account deactivated (${statusCode}) — disabling permanently`
-          );
+          // Plan A: if connection has extra API keys, don't disable — only the failing key is affected.
+          // Single-key connections still get disabled as before.
+          if (
+            connectionHasExtraKeys(
+              connectionId,
+              (credentials?.providerSpecificData as Record<string, unknown> | undefined)
+                ?.extraApiKeys as string[] | undefined
+            )
+          ) {
+            await updateProviderConnection(connectionId, {
+              lastErrorType: errorType,
+              lastError: message,
+              errorCode: statusCode,
+            });
+            console.warn(
+              `[provider] Node ${connectionId} account deactivated (${statusCode}) — has extra keys, keeping connection active`
+            );
+          } else {
+            await updateProviderConnection(connectionId, {
+              isActive: false,
+              testStatus: "deactivated",
+              lastErrorType: errorType,
+              lastError: message,
+              errorCode: statusCode,
+            });
+            console.warn(
+              `[provider] Node ${connectionId} account deactivated (${statusCode}) — disabling permanently`
+            );
+          }
         } else if (errorType === PROVIDER_ERROR_TYPES.QUOTA_EXHAUSTED) {
           // Providers with per-model quotas — lock the model only, not the connection
           const quotaCooldownMs = retryAfterMs || COOLDOWN_MS.rateLimit;
@@ -3797,7 +4069,8 @@ export async function handleChatCore({
               errMsg,
               retryAfterMs,
               upstreamErrorCode,
-              upstreamErrorType
+              upstreamErrorType,
+              upstreamErrorBody
             );
           }
         } catch {
@@ -3815,7 +4088,8 @@ export async function handleChatCore({
             errMsg,
             retryAfterMs,
             upstreamErrorCode,
-            upstreamErrorType
+            upstreamErrorType,
+            upstreamErrorBody
           );
         }
       } else {
@@ -3833,7 +4107,8 @@ export async function handleChatCore({
           errMsg,
           retryAfterMs,
           upstreamErrorCode,
-          upstreamErrorType
+          upstreamErrorType,
+          upstreamErrorBody
         );
       }
     } else if (isContextOverflowError(statusCode, message)) {
@@ -3875,7 +4150,8 @@ export async function handleChatCore({
               errMsg,
               retryAfterMs,
               upstreamErrorCode,
-              upstreamErrorType
+              upstreamErrorType,
+              upstreamErrorBody
             );
           }
         } catch {
@@ -3893,7 +4169,8 @@ export async function handleChatCore({
             errMsg,
             retryAfterMs,
             upstreamErrorCode,
-            upstreamErrorType
+            upstreamErrorType,
+            upstreamErrorBody
           );
         }
       } else {
@@ -3911,7 +4188,8 @@ export async function handleChatCore({
           errMsg,
           retryAfterMs,
           upstreamErrorCode,
-          upstreamErrorType
+          upstreamErrorType,
+          upstreamErrorBody
         );
       }
     } else {
@@ -4000,7 +4278,8 @@ export async function handleChatCore({
           errMsg,
           retryAfterMs,
           upstreamErrorCode,
-          upstreamErrorType
+          upstreamErrorType,
+          upstreamErrorBody
         );
       }
     }
@@ -4409,6 +4688,20 @@ export async function handleChatCore({
       recordCost(apiKeyInfo.id, estimatedCost);
     }
 
+    // ── Gamification event (fire-and-forget) ──
+    if (apiKeyInfo?.id) {
+      try {
+        const { emitGamificationEvent } = await import("@/lib/gamification/events");
+        emitGamificationEvent({
+          apiKeyId: apiKeyInfo.id,
+          action: "request",
+          metadata: { model, provider },
+        });
+      } catch (_) {
+        /* gamification optional */
+      }
+    }
+
     return {
       success: true,
       response: new Response(JSON.stringify(translatedResponse), {
@@ -4727,6 +5020,20 @@ export async function handleChatCore({
       shape: shapeForClientFormat(clientResponseFormat),
     })
   );
+
+  // ── Gamification event (fire-and-forget) ──
+  if (apiKeyInfo?.id) {
+    try {
+      const { emitGamificationEvent } = await import("@/lib/gamification/events");
+      emitGamificationEvent({
+        apiKeyId: apiKeyInfo.id,
+        action: "request",
+        metadata: { model, provider },
+      });
+    } catch (_) {
+      /* gamification optional */
+    }
+  }
 
   return {
     success: true,

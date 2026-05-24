@@ -40,6 +40,17 @@ test("GeminiCLIExecutor.buildUrl and buildHeaders match the native Gemini CLI fi
   );
   assert.equal(headers.Authorization, "Bearer gcli-token");
   assert.equal(headers.Accept, "*/*");
+
+  const apiKeyHeaders = executor.buildHeaders(
+    { apiKey: "gcli-api-key" },
+    false,
+    undefined,
+    "models/gemini-2.5-flash"
+  );
+  assert.equal(apiKeyHeaders["x-goog-api-key"], "gcli-api-key");
+  assert.equal(apiKeyHeaders.Authorization, undefined);
+  assert.equal(apiKeyHeaders.Accept, "application/json");
+
   assert.match(
     headers["User-Agent"],
     new RegExp(
@@ -108,6 +119,19 @@ test("GeminiCLIExecutor.refreshProject caches loadCodeAssist lookups and transfo
     assert.equal(second, "fresh-project-id");
     assert.equal(calls, 1);
     assert.equal(transformed.project, "fresh-project-id");
+
+    const apiKeyTransformed = await executor.transformRequest(
+      "gemini-2.5-flash",
+      { request: { contents: [] } },
+      true,
+      { apiKey: "gcli-api-key" }
+    );
+    // Source always sets envelope.project = storedProject (gemini-cli.ts ~line 334).
+    // For apiKey-only flows with no stored project, storedProject defaults to "" (line 330).
+    assert.ok(
+      !apiKeyTransformed.project,
+      "project should be falsy (empty string) for apiKey-only flows without a stored projectId"
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

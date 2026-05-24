@@ -17,7 +17,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import type Database from "better-sqlite3";
+import type { SqliteAdapter } from "./adapters/types";
 import { DEFAULT_DATABASE_SETTINGS } from "@/types/databaseSettings";
 
 /**
@@ -139,6 +139,12 @@ const RENAMED_MIGRATION_COMPATIBILITY = [
     toVersion: "050",
     toName: "session_account_affinity",
   },
+  {
+    fromVersion: "060",
+    fromName: "call_log_images_count",
+    toVersion: "062",
+    toName: "call_log_images_count",
+  },
 ] as const;
 
 const LEGACY_VERSION_SLOT_MIGRATIONS = [
@@ -186,7 +192,7 @@ const INITIAL_SCHEMA_SENTINELS = ["provider_connections", "combos", "call_logs"]
 /**
  * Ensure the schema_migrations tracking table exists.
  */
-function ensureMigrationsTable(db: Database.Database): void {
+function ensureMigrationsTable(db: SqliteAdapter): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS _omniroute_migrations (
       version TEXT PRIMARY KEY,
@@ -249,7 +255,7 @@ function filterSupersededDuplicateMigrations(
 /**
  * Get list of already-applied migration versions.
  */
-function getAppliedVersions(db: Database.Database): Set<string> {
+function getAppliedVersions(db: SqliteAdapter): Set<string> {
   const rows = db.prepare("SELECT version FROM _omniroute_migrations").all() as Array<{
     version: string;
   }>;
@@ -259,7 +265,7 @@ function getAppliedVersions(db: Database.Database): Set<string> {
 /**
  * Get applied migration records (version + name) for mismatch detection.
  */
-function getAppliedRecords(db: Database.Database): Array<{ version: string; name: string }> {
+function getAppliedRecords(db: SqliteAdapter): Array<{ version: string; name: string }> {
   return db
     .prepare("SELECT version, name FROM _omniroute_migrations ORDER BY version")
     .all() as Array<{
@@ -268,31 +274,26 @@ function getAppliedRecords(db: Database.Database): Array<{ version: string; name
   }>;
 }
 
-function hasTable(db: Database.Database, tableName: string): boolean {
+function hasTable(db: SqliteAdapter, tableName: string): boolean {
   const row = db
     .prepare("SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name = ?")
     .get(tableName) as { name?: string } | undefined;
   return Boolean(row?.name);
 }
 
-function hasColumn(db: Database.Database, tableName: string, columnName: string): boolean {
+function hasColumn(db: SqliteAdapter, tableName: string, columnName: string): boolean {
   const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name?: string }>;
   return columns.some((column) => column.name === columnName);
 }
 
-function ensureColumn(
-  db: Database.Database,
-  tableName: string,
-  columnName: string,
-  ddl: string
-): void {
+function ensureColumn(db: SqliteAdapter, tableName: string, columnName: string, ddl: string): void {
   if (!hasColumn(db, tableName, columnName)) {
     db.exec(ddl);
   }
 }
 
 function isSchemaAlreadyApplied(
-  db: Database.Database,
+  db: SqliteAdapter,
   migration: { version: string; name: string }
 ): boolean {
   switch (migration.version) {
@@ -359,13 +360,17 @@ function isSchemaAlreadyApplied(
     case "054":
       return hasColumn(db, "usage_history", "service_tier");
     case "060":
+      return hasTable(db, "leaderboard") && hasTable(db, "user_levels");
+    case "061":
+      return hasTable(db, "cloud_agent_credentials");
+    case "062":
       return hasColumn(db, "call_logs", "images_count");
     default:
       return false;
   }
 }
 
-function applyApiKeyLifecycleMigration(db: Database.Database): void {
+function applyApiKeyLifecycleMigration(db: SqliteAdapter): void {
   ensureColumn(db, "api_keys", "revoked_at", "ALTER TABLE api_keys ADD COLUMN revoked_at TEXT");
   ensureColumn(db, "api_keys", "expires_at", "ALTER TABLE api_keys ADD COLUMN expires_at TEXT");
   ensureColumn(db, "api_keys", "last_used_at", "ALTER TABLE api_keys ADD COLUMN last_used_at TEXT");
@@ -383,7 +388,7 @@ function isSearchRequestTypeMigration(migration: { version: string; name: string
   return migration.version === "007";
 }
 
-function applySearchRequestTypeMigration(db: Database.Database): void {
+function applySearchRequestTypeMigration(db: SqliteAdapter): void {
   ensureColumn(
     db,
     "call_logs",
@@ -393,7 +398,7 @@ function applySearchRequestTypeMigration(db: Database.Database): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_call_logs_request_type ON call_logs(request_type);");
 }
 
-function applyCompressionReceiptsMigration(db: Database.Database): void {
+function applyCompressionReceiptsMigration(db: SqliteAdapter): void {
   ensureColumn(
     db,
     "compression_analytics",
@@ -469,7 +474,7 @@ function applyCompressionReceiptsMigration(db: Database.Database): void {
   `);
 }
 
-function applyCompressionCombosMigration(db: Database.Database, migrationPath: string): void {
+function applyCompressionCombosMigration(db: SqliteAdapter, migrationPath: string): void {
   const sql = fs.readFileSync(migrationPath, "utf-8");
   db.exec(sql);
   ensureColumn(
@@ -490,7 +495,7 @@ function applyCompressionCombosMigration(db: Database.Database, migrationPath: s
   `);
 }
 
-function inferPhysicalSchemaBaseline(db: Database.Database): {
+function inferPhysicalSchemaBaseline(db: SqliteAdapter): {
   version: string;
   description: string;
 } | null {
@@ -549,7 +554,7 @@ function detectNameMismatches(
 }
 
 function reconcileRenumberedMigrations(
-  db: Database.Database,
+  db: SqliteAdapter,
   files: Array<{ version: string; name: string; path: string }>
 ): boolean {
   let repaired = false;
@@ -628,7 +633,7 @@ function reconcileRenumberedMigrations(
 }
 
 function rehomeLegacyVersionSlotMigrations(
-  db: Database.Database,
+  db: SqliteAdapter,
   files: Array<{ version: string; name: string; path: string }>
 ): boolean {
   let repaired = false;
@@ -683,7 +688,7 @@ function rehomeLegacyVersionSlotMigrations(
  * Create a pre-migration backup of the SQLite database using VACUUM INTO.
  * Returns the backup path on success, null on failure.
  */
-function createPreMigrationBackup(db: Database.Database): string | null {
+function createPreMigrationBackup(db: SqliteAdapter): string | null {
   try {
     const sqliteFile = db.name;
     if (!sqliteFile || sqliteFile === ":memory:") return null;
@@ -716,7 +721,7 @@ function createPreMigrationBackup(db: Database.Database): string | null {
  * 2. Aborts if too many pending migrations on an existing DB (likely wipe)
  * 3. Creates automatic backup before running any migrations
  */
-export function runMigrations(db: Database.Database, options?: { isNewDb?: boolean }): number {
+export function runMigrations(db: SqliteAdapter, options?: { isNewDb?: boolean }): number {
   const isNewDb = options?.isNewDb === true;
   ensureMigrationsTable(db);
 
@@ -887,7 +892,7 @@ export function runMigrations(db: Database.Database, options?: { isNewDb?: boole
   return count;
 }
 
-function insertDefaultDatabaseSettings(db: Database.Database) {
+function insertDefaultDatabaseSettings(db: SqliteAdapter) {
   const tx = db.transaction(() => {
     // Insert all default settings
     for (const [section, values] of Object.entries(DEFAULT_DATABASE_SETTINGS)) {
@@ -903,7 +908,6 @@ function insertDefaultDatabaseSettings(db: Database.Database) {
 
   // Run in an immediate transaction to avoid nested transactions
   try {
-    // @ts-expect-error - Better-SQLite3 transaction types
     db.immediate(() => {
       tx();
     });
@@ -916,7 +920,7 @@ function insertDefaultDatabaseSettings(db: Database.Database) {
 /**
  * Get migration status for diagnostics.
  */
-export function getMigrationStatus(db: Database.Database): {
+export function getMigrationStatus(db: SqliteAdapter): {
   applied: Array<{ version: string; name: string; applied_at: string }>;
   pending: Array<{ version: string; name: string }>;
 } {

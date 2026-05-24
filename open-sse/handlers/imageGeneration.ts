@@ -17,6 +17,9 @@ import { randomUUID } from "crypto";
  */
 
 import { getImageProvider, parseImageModel } from "../config/imageRegistry.ts";
+import { HTTP_STATUS } from "../config/constants.ts";
+import { applyAntigravityClientProfileHeaders } from "../services/antigravityClientProfile.ts";
+import { getAntigravityEnvelopeUserAgent } from "../services/antigravityIdentity.ts";
 import { kieExecutor } from "../executors/kie.ts";
 import { mapImageSize } from "../translator/image/sizeMapper.ts";
 import { getCodexClientVersion, getCodexUserAgent } from "../config/codexClient.ts";
@@ -38,7 +41,7 @@ import {
   extractComfyOutputFiles,
 } from "../utils/comfyuiClient.ts";
 import { fetchRemoteImage } from "@/shared/network/remoteImageFetch";
-import { sanitizeErrorMessage } from "../utils/error.ts";
+import { sanitizeErrorMessage, sanitizeUpstreamDetails } from "../utils/error.ts";
 
 interface KieImageOptions {
   model: string;
@@ -80,6 +83,32 @@ const OPENAI_IMAGE_TO_IMAGE_MODELS = new Set([
   "flux-kontext-pro",
   "qwen-image",
 ]);
+
+const IMAGE_ASPECT_RATIO_PATTERN = /^\d+:\d+$/;
+
+function normalizeImageAspectRatio(value: unknown, fallbackSize: unknown): string {
+  if (typeof value === "string") {
+    const trimmedValue = value.trim();
+    if (IMAGE_ASPECT_RATIO_PATTERN.test(trimmedValue)) return trimmedValue;
+  }
+  return mapImageSize(typeof fallbackSize === "string" ? fallbackSize : null);
+}
+
+function parseJsonOrNull(value: string): unknown | null {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeImageProviderError(errorText: string): unknown {
+  const parsed = parseJsonOrNull(errorText);
+  if (parsed !== null) {
+    return sanitizeUpstreamDetails(parsed) || sanitizeErrorMessage(errorText);
+  }
+  return sanitizeErrorMessage(errorText);
+}
 
 const BFL_MODEL_ENDPOINTS = {
   "flux-2-max": "/v1/flux-2-max",
@@ -604,42 +633,75 @@ async function handleKieImageGeneration({
  */
 async function handleGeminiImageGeneration({ model, providerConfig, body, credentials, log }) {
   const startTime = Date.now();
-  const url = `${providerConfig.baseUrl}/${model}:generateContent`;
+  const url = providerConfig.baseUrl;
   const provider = "antigravity";
+  const credentialRecord = credentials || {};
+  const token = credentialRecord.accessToken || credentialRecord.apiKey;
+  const providerSpecificData = credentialRecord.providerSpecificData;
+  const providerSpecificProjectId =
+    providerSpecificData && typeof providerSpecificData === "object"
+      ? (providerSpecificData as Record<string, unknown>).projectId
+      : null;
+  const credentialProjectId =
+    typeof credentialRecord.projectId === "string" ? credentialRecord.projectId.trim() : "";
+  const providerProjectId =
+    typeof providerSpecificProjectId === "string" ? providerSpecificProjectId.trim() : "";
+  const projectId = credentialProjectId || providerProjectId || null;
+  const candidateCount =
+    typeof body.n === "number" && Number.isFinite(body.n) && body.n > 0 ? Math.floor(body.n) : 1;
+  const promptText = typeof body.prompt === "string" ? body.prompt : String(body.prompt ?? "");
 
   // Summarized request for call log
   const logRequestBody = {
     model: body.model,
-    prompt:
-      typeof body.prompt === "string"
-        ? body.prompt.slice(0, 200)
-        : String(body.prompt ?? "").slice(0, 200),
+    prompt: promptText.slice(0, 200),
     size: body.size || "default",
-    n: body.n || 1,
+    n: candidateCount,
   };
 
-  const geminiBody = {
-    contents: [
-      {
-        parts: [{ text: body.prompt }],
+  if (!projectId || typeof projectId !== "string") {
+    return saveImageErrorResult({
+      provider,
+      model,
+      status: 400,
+      startTime,
+      error:
+        "Missing Google projectId for Antigravity account. Please reconnect OAuth in Providers so OmniRoute can fetch your Cloud Code project.",
+      requestBody: logRequestBody,
+    });
+  }
+
+  const antigravityBody = {
+    project: projectId,
+    requestId: `image_gen/${Date.now()}/${randomUUID()}/0`,
+    request: {
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: promptText }],
+        },
+      ],
+      generationConfig: {
+        candidateCount,
+        imageConfig: {
+          aspectRatio: normalizeImageAspectRatio(body.aspect_ratio, body.size),
+        },
       },
-    ],
-    generationConfig: {
-      responseModalities: ["TEXT", "IMAGE"],
     },
+    model,
+    userAgent: getAntigravityEnvelopeUserAgent(credentialRecord),
+    requestType: "image_gen",
   };
 
-  const token = credentials.accessToken || credentials.apiKey;
   const headers = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${token}`,
   };
+  applyAntigravityClientProfileHeaders(headers, credentialRecord, antigravityBody);
+  delete headers["x-goog-user-project"];
 
   if (log) {
-    const promptPreview =
-      typeof body.prompt === "string"
-        ? body.prompt.slice(0, 60)
-        : String(body.prompt ?? "").slice(0, 60);
+    const promptPreview = promptText.slice(0, 60);
     log.info(
       "IMAGE",
       `antigravity/${model} (gemini) | prompt: "${promptPreview}..." | format: gemini-image`
@@ -650,13 +712,16 @@ async function handleGeminiImageGeneration({ model, providerConfig, body, creden
     const response = await fetch(url, {
       method: "POST",
       headers,
-      body: JSON.stringify(geminiBody),
+      body: JSON.stringify(antigravityBody),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
+      const safeError = sanitizeImageProviderError(errorText);
+      const safeErrorLog =
+        typeof safeError === "string" ? safeError : JSON.stringify(safeError ?? {});
       if (log) {
-        log.error("IMAGE", `antigravity error ${response.status}: ${errorText.slice(0, 200)}`);
+        log.error("IMAGE", `antigravity error ${response.status}: ${safeErrorLog.slice(0, 200)}`);
       }
 
       saveCallLog({
@@ -666,25 +731,26 @@ async function handleGeminiImageGeneration({ model, providerConfig, body, creden
         model: `antigravity/${model}`,
         provider,
         duration: Date.now() - startTime,
-        error: errorText.slice(0, 500),
+        error: safeErrorLog.slice(0, 500),
         requestBody: logRequestBody,
       }).catch(() => {});
 
-      return { success: false, status: response.status, error: errorText };
+      return { success: false, status: response.status, error: safeError };
     }
 
     const data = await response.json();
+    const responseBody = data.response || data;
 
-    // Extract image data from Gemini response
+    // Extract image data from Antigravity's wrapped Gemini response.
     const images = [];
-    const candidates = data.candidates || [];
+    const candidates = responseBody.candidates || [];
     for (const candidate of candidates) {
       const parts = candidate.content?.parts || [];
       for (const part of parts) {
         if (part.inlineData) {
           images.push({
             b64_json: part.inlineData.data,
-            revised_prompt: parts.find((p) => p.text)?.text || body.prompt,
+            revised_prompt: parts.find((p) => p.text)?.text || promptText,
           });
         }
       }
@@ -728,7 +794,7 @@ async function handleGeminiImageGeneration({ model, providerConfig, body, creden
     return {
       success: false,
       status: 502,
-      error: sanitizeErrorMessage(err) || "Image provider error",
+      error: `Image provider error: ${sanitizeErrorMessage((err as Error).message || err)}`,
     };
   }
 }
@@ -1503,7 +1569,7 @@ async function handleFalAIImageGeneration({
       model,
       status: 502,
       startTime,
-      error: sanitizeErrorMessage(err) || "Image provider error",
+      error: `Image provider error: ${sanitizeErrorMessage((err as Error).message || err)}`,
     });
   }
 }
@@ -1693,7 +1759,7 @@ async function handleStabilityAIImageGeneration({
       model,
       status: 502,
       startTime,
-      error: sanitizeErrorMessage(err) || "Image provider error",
+      error: `Image provider error: ${sanitizeErrorMessage((err as Error).message || err)}`,
     });
   }
 }
@@ -1812,7 +1878,7 @@ async function handleBlackForestLabsImageGeneration({
       model,
       status: 502,
       startTime,
-      error: sanitizeErrorMessage(err) || "Image provider error",
+      error: `Image provider error: ${sanitizeErrorMessage((err as Error).message || err)}`,
     });
   }
 }
@@ -1887,7 +1953,7 @@ async function handleRecraftImageGeneration({
       model,
       status: 502,
       startTime,
-      error: sanitizeErrorMessage(err) || "Image provider error",
+      error: `Image provider error: ${sanitizeErrorMessage((err as Error).message || err)}`,
     });
   }
 }
@@ -1975,7 +2041,7 @@ async function handleTopazImageGeneration({
       model,
       status: 502,
       startTime,
-      error: sanitizeErrorMessage(err) || "Image provider error",
+      error: `Image provider error: ${sanitizeErrorMessage((err as Error).message || err)}`,
     });
   }
 }
@@ -2324,7 +2390,7 @@ async function handleCodexImageGeneration({
   if (log && requestedCount > 1) {
     log.warn(
       "IMAGE",
-      `Codex hosted image_generation returns one image per call; requested n=${requestedCount} will run sequentially`
+      `Codex hosted image_generation returns one image per call; requested n=${requestedCount} will fan out in parallel`
     );
   }
 
@@ -2393,8 +2459,7 @@ async function handleCodexImageGeneration({
     );
   }
 
-  const collected: Array<{ b64_json: string; revised_prompt?: string }> = [];
-  for (let i = 0; i < requestedCount; i++) {
+  const fetchOneImage = async () => {
     let response: Response;
     try {
       response = await fetch(providerConfig.baseUrl, {
@@ -2404,44 +2469,64 @@ async function handleCodexImageGeneration({
       });
     } catch (err) {
       if (log) log.error("IMAGE", `${provider} fetch error: ${(err as Error).message}`);
-      return saveImageErrorResult({
-        provider,
-        model,
-        status: 502,
-        startTime,
-        error: `Image provider error: ${(err as Error).message}`,
-        requestBody: upstreamBody,
-      });
+      return {
+        ok: false as const,
+        error: {
+          provider,
+          model,
+          status: 502,
+          startTime,
+          error: `Image provider error: ${(err as Error).message}`,
+          requestBody: upstreamBody,
+        },
+      };
     }
 
     if (!response.ok) {
       const errorText = await response.text();
       if (log)
         log.error("IMAGE", `${provider} error ${response.status}: ${errorText.slice(0, 200)}`);
-      return saveImageErrorResult({
-        provider,
-        model,
-        status: response.status,
-        startTime,
-        error: errorText,
-        requestBody: upstreamBody,
-      });
+      return {
+        ok: false as const,
+        error: {
+          provider,
+          model,
+          status: response.status,
+          startTime,
+          error: errorText,
+          requestBody: upstreamBody,
+        },
+      };
     }
 
     const rawSSE = await response.text();
     const items = extractImageGenerationCalls(rawSSE);
     if (items.length === 0) {
-      return saveImageErrorResult({
-        provider,
-        model,
-        status: 502,
-        startTime,
-        error:
-          "Codex completed without producing an image_generation_call — the model may have declined the tool",
-        requestBody: upstreamBody,
-      });
+      return {
+        ok: false as const,
+        error: {
+          provider,
+          model,
+          status: 502,
+          startTime,
+          error:
+            "Codex completed without producing an image_generation_call — the model may have declined the tool",
+          requestBody: upstreamBody,
+        },
+      };
     }
-    for (const item of items) {
+
+    return { ok: true as const, items };
+  };
+
+  const imageResults = await Promise.all(
+    Array.from({ length: requestedCount }, () => fetchOneImage())
+  );
+
+  const collected: Array<{ b64_json: string; revised_prompt?: string }> = [];
+  for (const imageResult of imageResults) {
+    if (!imageResult.ok) return saveImageErrorResult(imageResult.error);
+    for (const item of imageResult.items) {
       collected.push({
         b64_json: item.b64,
         ...(item.revisedPrompt ? { revised_prompt: item.revisedPrompt } : {}),
@@ -2591,7 +2676,7 @@ async function fetchImageEndpoint(url, headers, body, provider, log) {
     return {
       success: false,
       status: 502,
-      error: sanitizeErrorMessage(err) || "Image provider error",
+      error: `Image provider error: ${sanitizeErrorMessage((err as Error).message || err)}`,
     };
   }
 }
@@ -2689,7 +2774,7 @@ async function handleHyperbolicImageGeneration({
     return {
       success: false,
       status: 502,
-      error: sanitizeErrorMessage(err) || "Image provider error",
+      error: `Image provider error: ${sanitizeErrorMessage((err as Error).message || err)}`,
     };
   }
 }
@@ -2947,7 +3032,7 @@ async function handleNanoBananaImageGeneration({
     return {
       success: false,
       status: 502,
-      error: sanitizeErrorMessage(err) || "Image provider error",
+      error: `Image provider error: ${sanitizeErrorMessage((err as Error).message || err)}`,
     };
   }
 }
@@ -3143,7 +3228,7 @@ async function handleSDWebUIImageGeneration({ model, provider, providerConfig, b
     return {
       success: false,
       status: 502,
-      error: sanitizeErrorMessage(err) || "Image provider error",
+      error: `Image provider error: ${sanitizeErrorMessage((err as Error).message || err)}`,
     };
   }
 }
@@ -3249,7 +3334,7 @@ async function handleComfyUIImageGeneration({ model, provider, providerConfig, b
     return {
       success: false,
       status: 502,
-      error: sanitizeErrorMessage(err) || "Image provider error",
+      error: `Image provider error: ${sanitizeErrorMessage((err as Error).message || err)}`,
     };
   }
 }
@@ -3361,7 +3446,7 @@ async function handleHaiperImageGeneration({
     return {
       success: false,
       status: 502,
-      error: sanitizeErrorMessage(err) || "Image provider error",
+      error: `Image provider error: ${sanitizeErrorMessage((err as Error).message || err)}`,
     };
   }
 }
@@ -3493,7 +3578,7 @@ async function handleLeonardoImageGeneration({
     return {
       success: false,
       status: 502,
-      error: sanitizeErrorMessage(err) || "Image provider error",
+      error: `Image provider error: ${sanitizeErrorMessage((err as Error).message || err)}`,
     };
   }
 }
@@ -3583,7 +3668,7 @@ async function handleIdeogramImageGeneration({
     return {
       success: false,
       status: 502,
-      error: sanitizeErrorMessage(err) || "Image provider error",
+      error: `Image provider error: ${sanitizeErrorMessage((err as Error).message || err)}`,
     };
   }
 }

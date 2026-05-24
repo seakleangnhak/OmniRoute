@@ -23,6 +23,15 @@ const DEFAULT_COMBO_CONFIG = {
   resetAwareWeeklyWeight: 0.65,
   resetAwareTieBandPercent: 5,
   resetAwareExhaustionGuardPercent: 10,
+  failoverBeforeRetry: false,
+  maxSetRetries: 0,
+  setRetryDelayMs: 2000,
+  // Pipeline defaults
+  pipeline_enabled: false,
+  task_detection: "pattern",
+  max_reflection_loops: 1,
+  skip_pipeline_for_tokens_under: 50,
+  pipeline_fallback: "single-provider",
 };
 
 const LEGACY_COMBO_RESILIENCE_KEYS = new Set([

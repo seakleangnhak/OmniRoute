@@ -39,9 +39,9 @@ export const CLAUDE_CODE_COMPATIBLE_ANTHROPIC_BETA = [
   "interleaved-thinking-2025-05-14",
   "effort-2025-11-24",
 ].join(",");
-export const CLAUDE_CODE_COMPATIBLE_VERSION = "2.1.137";
-export const CLAUDE_CODE_COMPATIBLE_USER_AGENT = "claude-cli/2.1.137 (external, sdk-cli)";
-export const CLAUDE_CODE_COMPATIBLE_STAINLESS_PACKAGE_VERSION = "0.81.0";
+export const CLAUDE_CODE_COMPATIBLE_VERSION = "2.1.146";
+export const CLAUDE_CODE_COMPATIBLE_USER_AGENT = "claude-cli/2.1.146 (external, sdk-cli)";
+export const CLAUDE_CODE_COMPATIBLE_STAINLESS_PACKAGE_VERSION = "0.94.0";
 export const CLAUDE_CODE_COMPATIBLE_STAINLESS_RUNTIME_VERSION = "v24.3.0";
 export const CONTEXT_1M_BETA_HEADER = "context-1m-2025-08-07";
 const CLAUDE_CODE_COMPATIBLE_DEFAULT_SYSTEM_BLOCKS = [
@@ -50,13 +50,7 @@ const CLAUDE_CODE_COMPATIBLE_DEFAULT_SYSTEM_BLOCKS = [
     text: "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
   },
 ];
-const CONTEXT_1M_SUPPORTED_MODELS = [
-  "claude-opus-4-7",
-  "claude-opus-4-6",
-  "claude-sonnet-4-6",
-  "claude-sonnet-4-5",
-  "claude-sonnet-4",
-];
+const CONTEXT_1M_SUPPORTED_MODELS = ["claude-opus-4-7", "claude-opus-4-6"];
 export const CLAUDE_CODE_COMPATIBLE_STAINLESS_TIMEOUT_SECONDS = getStainlessTimeoutSeconds(
   process.env
 );
@@ -378,7 +372,11 @@ export async function buildAndSignClaudeCodeRequest(
     if (Array.isArray(b.messages)) {
       const fixed = fixToolPairs(b.messages as Record<string, unknown>[]);
       const adjacent = fixToolAdjacency(fixed);
-      b.messages = stripTrailingAssistantOrphanToolUse(adjacent);
+      // fixToolAdjacency can leave orphan tool_result blocks behind when it
+      // strips a tool_use whose tool_result wasn't in the next message.
+      // Re-pair to drop those orphans (discussion #2410).
+      const cleaned = fixToolPairs(adjacent);
+      b.messages = stripTrailingAssistantOrphanToolUse(cleaned);
     }
   }
 
@@ -635,7 +633,12 @@ function cloneClaudeCodeCompatibleMessagesFromClaude(
   preserveCacheControl: boolean
 ) {
   const cloned = Array.isArray(messages)
-    ? messages.map((message) => cloneValue(message) as MessageLike)
+    ? messages
+        .map((message) => cloneValue(message) as MessageLike)
+        .filter((message) => {
+          const role = String(message?.role || "").toLowerCase();
+          return role !== "system" && role !== "developer";
+        })
     : [];
 
   if (!preserveCacheControl) {
@@ -828,11 +831,22 @@ function prepareClaudeCodeCompatibleBody(
 }
 
 function prepareClaudeCodeCompatibleSemanticBody(claudeBody: Record<string, unknown>) {
+  const rawMessages = Array.isArray(claudeBody.messages)
+    ? (claudeBody.messages as MessageLike[])
+    : [];
+
+  const systemBlocks = normalizeClaudeSystemInput(claudeBody.system);
+  const systemFromMessages = extractCustomSystemBlocks(rawMessages);
+  const mergedSystem = [...systemBlocks, ...systemFromMessages];
+
+  const normalizedMessages = rawMessages.filter((message) => {
+    const role = String(message?.role || "").toLowerCase();
+    return role !== "system" && role !== "developer";
+  });
+
   const prepared: Record<string, unknown> = {
-    system: normalizeClaudeSystemInput(claudeBody.system),
-    messages: Array.isArray(claudeBody.messages)
-      ? (claudeBody.messages as Array<Record<string, unknown>>)
-      : [],
+    system: mergedSystem,
+    messages: normalizedMessages,
     tools: normalizeClaudeToolInput(claudeBody.tools),
     thinking: (readRecord(cloneValue(claudeBody.thinking)) || null) as Record<
       string,
@@ -1158,7 +1172,9 @@ function readNestedString(
     if (!current || typeof current !== "object" || Array.isArray(current)) {
       return null;
     }
-    current = (current as Record<string, unknown>)[key];
+    if (key === "__proto__" || key === "constructor" || key === "prototype") return null;
+    if (!Object.prototype.hasOwnProperty.call(current, key)) return null;
+    current = Reflect.get(current as object, key);
   }
   return toNonEmptyString(current);
 }

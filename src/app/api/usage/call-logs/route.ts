@@ -19,6 +19,7 @@ export async function GET(request: Request) {
     if (searchParams.get("search")) filter.search = searchParams.get("search");
     if (searchParams.get("since")) filter.since = searchParams.get("since");
     if (searchParams.get("limit")) filter.limit = parseInt(searchParams.get("limit"));
+    if (searchParams.get("offset")) filter.offset = parseInt(searchParams.get("offset"));
 
     const logs = await getCallLogs(filter);
     return NextResponse.json(logs);

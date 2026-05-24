@@ -1,6 +1,6 @@
 ---
 title: "Environment Variables Reference"
-version: 3.8.0
+version: 3.8.2
 lastUpdated: 2026-05-13
 ---
 
@@ -88,6 +88,7 @@ OmniRoute uses **SQLite** (via `better-sqlite3`) for all persistence. These vari
 | `OMNIROUTE_CRYPT_KEY`                  | _(unset)_            | `src/lib/db/encryption.ts`                            | **Legacy alias** for `STORAGE_ENCRYPTION_KEY`. Accepted as a fallback when the primary variable is absent.                        |
 | `OMNIROUTE_API_KEY_BASE64`             | _(unset)_            | `src/lib/db/encryption.ts`                            | **Legacy alias** (Base64-encoded form) accepted as a fallback. Decoded automatically before use.                                  |
 | `OMNIROUTE_DB_HEALTHCHECK_INTERVAL_MS` | _(unset)_            | `src/lib/db/core.ts`                                  | Override the periodic SQLite healthcheck interval (ms). When unset, defaults are derived from `NODE_ENV`.                         |
+| `OMNIROUTE_SKIP_DB_HEALTHCHECK`        | `0`                  | `src/lib/db/core.ts`, `src/lib/db/healthCheck.ts`     | Set to `1` to skip the DB healthcheck entirely on startup. Useful for short-lived tasks and integration tests.                    |
 | `OMNIROUTE_FORCE_DB_HEALTHCHECK`       | `0`                  | `src/lib/db/core.ts`                                  | Set to `1` to force the DB healthcheck loop on, even when it would normally be skipped (e.g., short-lived tasks).                 |
 | `OMNIROUTE_SKIP_POSTINSTALL`           | `0`                  | `scripts/postinstall.mjs`                             | Set to `1` to skip the native-runtime warm-up during `npm install`. Useful in CI/headless installs where sqlite is already built. |
 | `OMNIROUTE_MIGRATIONS_DIR`             | _(auto-detect)_      | `src/lib/db/migrationRunner.ts`                       | Override the directory that the migration runner scans. Useful when shipping bundled migrations in custom builds.                 |
@@ -107,19 +108,20 @@ OmniRoute uses **SQLite** (via `better-sqlite3`) for all persistence. These vari
 
 ## 3. Network & Ports
 
-| Variable                  | Default                         | Source File                           | Description                                                                                                                                                 |
-| ------------------------- | ------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PORT`                    | `20128`                         | `src/lib/runtime/ports.ts`            | Primary port for both Dashboard UI and API endpoints (single-port mode).                                                                                    |
-| `API_PORT`                | _(unset)_                       | `src/lib/runtime/ports.ts`            | When set, serves the `/v1/*` proxy API on this separate port.                                                                                               |
-| `API_HOST`                | `0.0.0.0`                       | `src/lib/runtime/ports.ts`            | Bind address for the API port.                                                                                                                              |
-| `DASHBOARD_PORT`          | _(unset)_                       | `src/lib/runtime/ports.ts`            | When set, serves the Dashboard UI on this separate port.                                                                                                    |
-| `PROD_DASHBOARD_PORT`     | `20130`                         | `docker-compose.prod.yml`             | Host-side published port for the Dashboard in Docker production mode.                                                                                       |
-| `PROD_API_PORT`           | `20131`                         | `docker-compose.prod.yml`             | Host-side published port for the API in Docker production mode.                                                                                             |
-| `OMNIROUTE_PORT`          | _(unset)_                       | `src/lib/runtime/ports.ts`            | Takes precedence over `PORT` when running inside Electron or other wrappers.                                                                                |
-| `NODE_ENV`                | `production`                    | Next.js core                          | Controls logging verbosity, caching, error detail exposure, and Next.js optimizations.                                                                      |
-| `OMNIROUTE_USE_TURBOPACK` | `1` (default in `.env.example`) | `package.json` / Next.js 16           | Toggles the Next.js 16 Turbopack bundler in `npm run dev` and `npm run build`. Set to `0` on Windows or when running into native binding incompatibilities. |
-| `HOST`                    | `0.0.0.0`                       | `scripts/dev/run-next.mjs`            | Bind address for the Next.js dev/start server. Overrides the default `0.0.0.0` when set.                                                                    |
-| `HOSTNAME`                | `127.0.0.1`                     | `scripts/dev/run-next-playwright.mjs` | Bind address used by the Playwright runner when launching Next.js. Defaults to `127.0.0.1` for hermetic tests.                                              |
+| Variable                        | Default                         | Source File                                        | Description                                                                                                                                                 |
+| ------------------------------- | ------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                          | `20128`                         | `src/lib/runtime/ports.ts`                         | Primary port for both Dashboard UI and API endpoints (single-port mode).                                                                                    |
+| `API_PORT`                      | _(unset)_                       | `src/lib/runtime/ports.ts`                         | When set, serves the `/v1/*` proxy API on this separate port.                                                                                               |
+| `API_HOST`                      | `0.0.0.0`                       | `src/lib/runtime/ports.ts`                         | Bind address for the API port.                                                                                                                              |
+| `DASHBOARD_PORT`                | _(unset)_                       | `src/lib/runtime/ports.ts`                         | When set, serves the Dashboard UI on this separate port.                                                                                                    |
+| `PROD_DASHBOARD_PORT`           | `20130`                         | `docker-compose.prod.yml`                          | Host-side published port for the Dashboard in Docker production mode.                                                                                       |
+| `PROD_API_PORT`                 | `20131`                         | `docker-compose.prod.yml`                          | Host-side published port for the API in Docker production mode.                                                                                             |
+| `OMNIROUTE_PORT`                | _(unset)_                       | `src/lib/runtime/ports.ts`                         | Takes precedence over `PORT` when running inside Electron or other wrappers.                                                                                |
+| `NODE_ENV`                      | `production`                    | Next.js core                                       | Controls logging verbosity, caching, error detail exposure, and Next.js optimizations.                                                                      |
+| `OMNIROUTE_USE_TURBOPACK`       | `1` (default in `.env.example`) | `package.json` / Next.js 16                        | Toggles the Next.js 16 Turbopack bundler in `npm run dev` and `npm run build`. Set to `0` on Windows or when running into native binding incompatibilities. |
+| `OMNIROUTE_SKIP_DB_HEALTHCHECK` | _(unset)_                       | `src/lib/db/core.ts` / `src/lib/db/healthCheck.ts` | Set to `1` to skip the SQLite integrity health check on startup. Useful for faster boot on large databases.                                                 |
+| `HOST`                          | `0.0.0.0`                       | `scripts/dev/run-next.mjs`                         | Bind address for the Next.js dev/start server. Overrides the default `0.0.0.0` when set.                                                                    |
+| `HOSTNAME`                      | `127.0.0.1`                     | `scripts/dev/run-next-playwright.mjs`              | Bind address used by the Playwright runner when launching Next.js. Defaults to `127.0.0.1` for hermetic tests.                                              |
 
 ### Port Modes
 
@@ -414,11 +416,11 @@ process.env[`${PROVIDER_ID}_USER_AGENT`]
 
 | Variable                 | Default Value                                 | When to Update                                                |
 | ------------------------ | --------------------------------------------- | ------------------------------------------------------------- |
-| `CLAUDE_USER_AGENT`      | `claude-cli/2.1.143 (external, cli)`          | When Anthropic releases a new CLI version                     |
-| `CODEX_USER_AGENT`       | `codex-cli/0.131.0 (Windows 10.0.26200; x64)` | When OpenAI updates the Codex CLI                             |
+| `CLAUDE_USER_AGENT`      | `claude-cli/2.1.145 (external, cli)`          | When Anthropic releases a new CLI version                     |
+| `CODEX_USER_AGENT`       | `codex-cli/0.132.0 (Windows 10.0.26200; x64)` | When OpenAI updates the Codex CLI                             |
 | `CODEX_CLIENT_VERSION`   | `0.131.0`                                     | Override Codex client version independently of full UA string |
 | `GITHUB_USER_AGENT`      | `GitHubCopilotChat/0.45.1`                    | When GitHub Copilot Chat updates                              |
-| `ANTIGRAVITY_USER_AGENT` | `antigravity/1.23.2 darwin/arm64`             | When Antigravity IDE updates                                  |
+| `ANTIGRAVITY_USER_AGENT` | `antigravity/2.0.1 darwin/arm64`              | When Antigravity IDE updates                                  |
 | `KIRO_USER_AGENT`        | `AWS-SDK-JS/3.0.0 kiro-ide/1.0.0`             | When Kiro IDE updates                                         |
 | `QODER_USER_AGENT`       | `Qoder-Cli`                                   | When Qoder CLI updates                                        |
 | `QWEN_USER_AGENT`        | `QwenCode/0.15.9 (linux; x64)`                | When Qwen Code updates                                        |
@@ -532,6 +534,8 @@ REQUEST_TIMEOUT_MS (global override)
 | `OMNIROUTE_CHATGPT_TLS_GRACE_MS`         | `10000`              | JS-side grace added on top of the wire timeout when the native binding is wedged.           |
 | `OMNIROUTE_CLAUDE_TLS_TIMEOUT_MS`        | `60000`              | Wire-level timeout for the bogdanfinn/tls-client koffi binding (`claudeTlsClient.ts`).      |
 | `OMNIROUTE_CLAUDE_TLS_GRACE_MS`          | `10000`              | JS-side grace added on top of the wire timeout when the native binding is wedged.           |
+| `OMNIROUTE_PPLX_TLS_TIMEOUT_MS`          | `30000`              | Wire-level timeout for the bogdanfinn/tls-client koffi binding (`perplexityTlsClient.ts`).  |
+| `OMNIROUTE_PPLX_TLS_GRACE_MS`            | `10000`              | JS-side grace added on top of the wire timeout when the native binding is wedged.           |
 
 ### Circuit Breaker Thresholds
 

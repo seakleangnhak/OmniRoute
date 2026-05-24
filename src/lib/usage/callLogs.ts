@@ -912,8 +912,11 @@ export async function getCallLogs(filter: any = {}) {
 
   const parsedLimit = Number.parseInt(String(filter.limit || ""), 10);
   const limit = Number.isInteger(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 1000) : 200;
-  sql += " ORDER BY cl.timestamp DESC LIMIT @limit";
+  const parsedOffset = Number.parseInt(String(filter.offset || ""), 10);
+  const offset = Number.isInteger(parsedOffset) ? Math.max(parsedOffset, 0) : 0;
+  sql += " ORDER BY cl.timestamp DESC LIMIT @limit OFFSET @offset";
   params.limit = limit;
+  params.offset = offset;
 
   const rows = db.prepare(sql).all(params) as CallLogSummaryRow[];
   return rows.map(mapSummaryRow);

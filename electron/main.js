@@ -173,7 +173,11 @@ function sendToRenderer(channel, data) {
 }
 
 // ── Helper: Wait for server readiness (#1, #10) ────────────
-async function waitForServer(url, timeoutMs = 30000) {
+// Default raised to 180s: the first launch after an upgrade can run long DB
+// migrations, during which the server accepts the TCP connection but holds the
+// HTTP response until handlers initialize. The previous 30s cap timed out and
+// left the window stuck on a hanging connection (#2460).
+async function waitForServer(url, timeoutMs = 180000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
@@ -280,9 +284,15 @@ function installUpdate() {
 // ── Content Security Policy (#15) ──────────────────────────
 function setupContentSecurityPolicy() {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    // React/Next.js needs 'unsafe-eval' only for source maps + HMR in development.
+    // Gate it on the real dev flag (isDev = NODE_ENV==="development" || !app.isPackaged),
+    // NOT on the request URL: a packaged production build still talks to its embedded
+    // server on localhost:20128, so a URL-substring check would silently grant
+    // 'unsafe-eval' in production and open a code-injection vector via XSS.
     const scriptSrc = isDev
       ? "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:"
       : "script-src 'self' 'unsafe-inline' blob:";
+
     const csp = [
       "default-src 'self'",
       "base-uri 'self'",
@@ -291,13 +301,15 @@ function setupContentSecurityPolicy() {
       "frame-src 'none'",
       "child-src 'none'",
       "form-action 'self'",
+      // Single connect-src: a duplicate directive is ignored by the browser (first wins),
+      // which previously dropped the 127.0.0.1 origins. Keep both loopback forms here.
+      `connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* wss://localhost:* wss://127.0.0.1:* https://*.omniroute.online https://*.omniroute.dev`,
       scriptSrc,
       "script-src-attr 'none'",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com data:",
       "img-src 'self' data: blob: https:",
       "media-src 'self' data: blob:",
-      `connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* https://*.omniroute.online https://*.omniroute.dev`,
       "worker-src 'self' blob:",
       "manifest-src 'self'",
     ].join("; ");
@@ -703,14 +715,26 @@ app.whenReady().then(async () => {
 
   // Fix #1: Start server and WAIT for readiness before showing window
   startNextServer();
+  let serverReady = true;
   if (!isDev) {
-    await waitForServer(getServerUrl());
+    // Probe the auth-exempt health endpoint (not the root URL, which may redirect).
+    serverReady = await waitForServer(`${getServerUrl()}/api/monitoring/health`);
   }
 
   createWindow();
   createTray();
   setupIpcHandlers();
   setupAutoUpdater();
+
+  // If readiness timed out (e.g. very long first-launch migrations), don't leave the
+  // window stuck on a hanging connection — keep polling and reload once it responds (#2460).
+  if (!isDev && !serverReady) {
+    void waitForServer(`${getServerUrl()}/api/monitoring/health`, 300000).then((ready) => {
+      if (ready && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.loadURL(getServerUrl());
+      }
+    });
+  }
 
   // Check for updates after a short delay (don't block startup)
   if (!isDev) {

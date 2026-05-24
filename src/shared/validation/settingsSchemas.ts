@@ -8,7 +8,7 @@
 import { z } from "zod";
 import { COMBO_CONFIG_MODES } from "@/shared/constants/comboConfigMode";
 import { MAX_REQUEST_BODY_LIMIT_MB, MIN_REQUEST_BODY_LIMIT_MB } from "@/shared/constants/bodySize";
-import { HIDEABLE_SIDEBAR_ITEM_IDS } from "@/shared/constants/sidebarVisibility";
+import { HIDEABLE_SIDEBAR_ITEM_IDS, SIDEBAR_SECTIONS } from "@/shared/constants/sidebarVisibility";
 import { ACCOUNT_FALLBACK_STRATEGY_VALUES } from "@/shared/constants/routingStrategies";
 
 const signatureCacheModeValues = ["enabled", "bypass", "bypass-strict"] as const;
@@ -36,8 +36,31 @@ export const updateSettingsSchema = z.object({
   hideEndpointNgrokTunnel: z.boolean().optional(),
   debugMode: z.boolean().optional(),
   hiddenSidebarItems: z.array(z.enum(HIDEABLE_SIDEBAR_ITEM_IDS)).optional(),
+  sidebarSectionOrder: z
+    .array(z.enum(SIDEBAR_SECTIONS.map((s) => s.id) as [string, ...string[]]))
+    .optional(),
+  sidebarItemOrder: z.record(z.string(), z.array(z.string().max(100))).optional(),
+  sidebarActivePreset: z.enum(["all", "minimal", "developer", "admin"]).nullable().optional(),
   comboConfigMode: z.enum(COMBO_CONFIG_MODES).optional(),
-  codexServiceTier: z.object({ enabled: z.boolean() }).optional(),
+  codexServiceTier: z
+    .object({
+      enabled: z.boolean().optional(),
+      tier: z.enum(["default", "priority", "flex"]).optional(),
+      supportedModels: z.array(z.string().max(200)).max(200).optional(),
+    })
+    .optional(),
+  // Claude Fast Mode: opt-in toggle that asks a paired CLIProxyAPI build
+  // (claude-fastmode-spoof) to rewrite SDK-shaped entrypoints so requests can
+  // reach Anthropic Fast Mode (speed:"fast"). Default off; only the listed
+  // Opus models are gated by the Anthropic binary KT() check. Schema is
+  // intentionally permissive on supportedModels so additional eligible model
+  // ids can be enabled without a schema bump.
+  claudeFastMode: z
+    .object({
+      enabled: z.boolean().optional(),
+      supportedModels: z.array(z.string().max(200)).max(200).optional(),
+    })
+    .optional(),
   // Routing settings (#134)
   fallbackStrategy: z.enum(ACCOUNT_FALLBACK_STRATEGY_VALUES).optional(),
   wildcardAliases: z.array(z.object({ pattern: z.string(), target: z.string() })).optional(),
@@ -308,3 +331,8 @@ export const databaseSettingsSchema = z.object(
 );
 
 export type DatabaseSettingsSchema = z.infer<typeof databaseSettingsSchema>;
+
+export const featureFlagUpdateSchema = z.object({
+  key: z.string().min(1),
+  value: z.string().optional(),
+});
