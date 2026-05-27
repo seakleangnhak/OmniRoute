@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 
 let machineIdSync: (original?: boolean) => string;
 try {
@@ -34,6 +34,19 @@ export function getMachineTokenSync(salt?: string): string {
       cachedSalt = activeSalt;
     }
     return token;
+  } catch {
+    return "";
+  }
+}
+
+export function getLegacyCliTokenSync(salt?: string): string {
+  const activeSalt = salt ?? getActiveSalt();
+  try {
+    const machineId = machineIdSync();
+    return createHash("sha256")
+      .update(machineId + activeSalt)
+      .digest("hex")
+      .substring(0, 32);
   } catch {
     return "";
   }

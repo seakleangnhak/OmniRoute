@@ -1,4 +1,4 @@
--- Migration 059: Persist ChatGPT Web generated image cache
+-- Migration 073: Persist ChatGPT Web generated image cache
 CREATE TABLE IF NOT EXISTS chatgpt_image_cache (
   id TEXT PRIMARY KEY,
   bytes BLOB NOT NULL,

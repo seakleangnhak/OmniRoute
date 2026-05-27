@@ -5,6 +5,7 @@ import { Card, Button, Input, Modal, CardSkeleton } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { useTranslations } from "next-intl";
 import { getProviderDisplayName } from "@/lib/display/names";
+import { ENDPOINT_CATEGORIES } from "@/shared/constants/endpointCategories";
 import ApiKeyFilterBar from "./components/ApiKeyFilterBar";
 import {
   isKeyActive,
@@ -76,16 +77,19 @@ interface ApiKey {
   name: string;
   key: string;
   allowedModels: string[] | null;
+  allowedCombos: string[] | null;
   allowedConnections: string[] | null;
   noLog?: boolean;
   autoResolve?: boolean;
   isActive?: boolean;
+  throttleDelayMs?: number | null;
   isBanned?: boolean;
   expiresAt?: string | null;
   maxSessions?: number;
   accessSchedule?: AccessSchedule | null;
   rateLimits?: Array<{ limit: number; window: number }> | null;
   scopes?: string[];
+  allowedEndpoints?: string[];
   createdAt: string;
 }
 
@@ -106,6 +110,12 @@ interface Model {
   owned_by: string;
 }
 
+interface ComboOption {
+  id?: string;
+  name: string;
+  models?: unknown[];
+}
+
 /** Tuple type for models grouped by provider: [providerName, models[]] */
 type ProviderGroup = [provider: string, models: Model[]];
 
@@ -114,6 +124,7 @@ export default function ApiManagerPageClient() {
   const tc = useTranslations("common");
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [allModels, setAllModels] = useState<Model[]>([]);
+  const [allCombos, setAllCombos] = useState<ComboOption[]>([]);
   const [allConnections, setAllConnections] = useState<ProviderConnection[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -141,6 +152,7 @@ export default function ApiManagerPageClient() {
   useEffect(() => {
     fetchData();
     fetchModels();
+    fetchCombos();
     fetchConnections();
   }, []);
 
@@ -161,6 +173,21 @@ export default function ApiManagerPageClient() {
       }
     } catch (error) {
       console.log("Error fetching models:", error);
+    }
+  };
+
+  const fetchCombos = async () => {
+    try {
+      const res = await fetch("/api/combos");
+      if (res.ok) {
+        const data = await res.json();
+        const combos = Array.isArray(data.combos) ? data.combos : [];
+        setAllCombos(
+          combos.filter((combo: any) => typeof combo?.name === "string" && combo.name.trim())
+        );
+      }
+    } catch (error) {
+      console.log("Error fetching combos:", error);
     }
   };
 
@@ -425,16 +452,19 @@ export default function ApiManagerPageClient() {
   const handleUpdatePermissions = async (
     name: string,
     allowedModels: string[],
+    allowedCombos: string[],
     noLog: boolean,
     allowedConnections: string[],
     autoResolve: boolean,
     isActive: boolean,
+    throttleDelayMs: number,
     isBanned: boolean,
     expiresAt: string | null,
     maxSessions: number,
     accessSchedule: AccessSchedule | null,
     rateLimits: Array<{ limit: number; window: number }> | null,
-    scopes: string[]
+    scopes: string[],
+    allowedEndpoints: string[]
   ) => {
     if (!editingKey || !editingKey.id) return;
 
@@ -455,6 +485,10 @@ export default function ApiManagerPageClient() {
       (id) => typeof id === "string" && id.length > 0 && id.length < 200
     );
 
+    const validCombos = allowedCombos.filter(
+      (name) => typeof name === "string" && name.trim().length > 0 && name.length < 200
+    );
+
     // Validate connections (must be UUIDs)
     const validConnections = allowedConnections.filter(
       (id) => typeof id === "string" && /^[0-9a-f-]{36}$/i.test(id)
@@ -462,6 +496,10 @@ export default function ApiManagerPageClient() {
     const normalizedMaxSessions =
       typeof maxSessions === "number" && Number.isFinite(maxSessions)
         ? Math.max(0, Math.floor(maxSessions))
+        : 0;
+    const normalizedThrottleDelayMs =
+      typeof throttleDelayMs === "number" && Number.isFinite(throttleDelayMs)
+        ? Math.max(0, Math.min(300000, Math.floor(throttleDelayMs)))
         : 0;
 
     setIsSubmitting(true);
@@ -474,16 +512,19 @@ export default function ApiManagerPageClient() {
         body: JSON.stringify({
           name: sanitizedName,
           allowedModels: validModels,
+          allowedCombos: validCombos,
           allowedConnections: validConnections,
           noLog,
           autoResolve,
           isActive,
+          throttleDelayMs: normalizedThrottleDelayMs,
           isBanned,
           expiresAt,
           maxSessions: normalizedMaxSessions,
           accessSchedule,
           rateLimits,
           scopes,
+          allowedEndpoints,
         }),
       });
 
@@ -722,10 +763,17 @@ export default function ApiManagerPageClient() {
             {filteredKeys.map((key) => {
               const stats = usageStats[key.id];
               const isRestricted = Array.isArray(key.allowedModels) && key.allowedModels.length > 0;
+              const hasComboRestrictions =
+                Array.isArray(key.allowedCombos) && key.allowedCombos.length > 0;
               const hasConnectionRestrictions =
                 Array.isArray(key.allowedConnections) && key.allowedConnections.length > 0;
               const noLogEnabled = key.noLog === true;
               const keyIsActive = key.isActive !== false; // default true
+              const throttleDelayMs =
+                typeof key.throttleDelayMs === "number" && key.throttleDelayMs > 0
+                  ? key.throttleDelayMs
+                  : 0;
+              const hasThrottle = throttleDelayMs > 0;
               const hasManageScope = Array.isArray(key.scopes) && key.scopes.includes("manage");
               const maxSessions = typeof key.maxSessions === "number" ? key.maxSessions : 0;
               const hasSessionLimit = maxSessions > 0;
@@ -796,6 +844,15 @@ export default function ApiManagerPageClient() {
                           {key.allowedConnections.length} conn
                         </button>
                       )}
+                      {hasComboRestrictions && (
+                        <button
+                          onClick={() => handleOpenPermissions(key)}
+                          className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-teal-500/10 text-teal-600 dark:text-teal-400 text-xs font-medium hover:bg-teal-500/20 transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">hub</span>
+                          {key.allowedCombos.length} combos
+                        </button>
+                      )}
                       {noLogEnabled && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-400 text-[11px] font-medium">
                           <span className="material-symbols-outlined text-[12px]">
@@ -816,6 +873,12 @@ export default function ApiManagerPageClient() {
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[11px] font-medium">
                           <span className="material-symbols-outlined text-[12px]">group</span>
                           Sessions: {activeSessions}/{maxSessions}
+                        </span>
+                      )}
+                      {hasThrottle && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-yellow-500/10 text-yellow-700 dark:text-yellow-300 text-[11px] font-medium">
+                          <span className="material-symbols-outlined text-[12px]">speed</span>+
+                          {throttleDelayMs}ms
                         </span>
                       )}
                       {hasManageScope && (
@@ -1054,6 +1117,7 @@ export default function ApiManagerPageClient() {
           apiKey={editingKey}
           modelsByProvider={filteredModelsByProvider}
           allModels={allModels}
+          allCombos={allCombos}
           allConnections={allConnections}
           searchModel={searchModel}
           onSearchChange={setSearchModel}
@@ -1072,6 +1136,7 @@ const PermissionsModal = memo(function PermissionsModal({
   apiKey,
   modelsByProvider,
   allModels,
+  allCombos,
   allConnections,
   searchModel,
   onSearchChange,
@@ -1082,22 +1147,26 @@ const PermissionsModal = memo(function PermissionsModal({
   apiKey: ApiKey;
   modelsByProvider: ProviderGroup[];
   allModels: Model[];
+  allCombos: ComboOption[];
   allConnections: ProviderConnection[];
   searchModel: string;
   onSearchChange: (v: string) => void;
   onSave: (
     name: string,
     models: string[],
+    combos: string[],
     noLog: boolean,
     connections: string[],
     autoResolve: boolean,
     isActive: boolean,
+    throttleDelayMs: number,
     isBanned: boolean,
     expiresAt: string | null,
     maxSessions: number,
     accessSchedule: AccessSchedule | null,
     rateLimits: Array<{ limit: number; window: number }> | null,
-    scopes: string[]
+    scopes: string[],
+    allowedEndpoints: string[]
   ) => void;
 }) {
   const t = useTranslations("apiManager");
@@ -1105,15 +1174,23 @@ const PermissionsModal = memo(function PermissionsModal({
 
   // Initialize state from props - component remounts when key prop changes
   const initialModels = Array.isArray(apiKey?.allowedModels) ? apiKey.allowedModels : [];
+  const initialCombos = Array.isArray(apiKey?.allowedCombos) ? apiKey.allowedCombos : [];
   const initialConnections = Array.isArray(apiKey?.allowedConnections)
     ? apiKey.allowedConnections
     : [];
   const [keyName, setKeyName] = useState(apiKey?.name ?? "");
   const [selectedModels, setSelectedModels] = useState<string[]>(initialModels);
+  const [selectedCombos, setSelectedCombos] = useState<string[]>(initialCombos);
   const [allowAll, setAllowAll] = useState(initialModels.length === 0);
+  const [allowAllCombos, setAllowAllCombos] = useState(initialCombos.length === 0);
   const [noLogEnabled, setNoLogEnabled] = useState(apiKey?.noLog === true);
   const [autoResolveEnabled, setAutoResolveEnabled] = useState(apiKey?.autoResolve === true);
   const [keyIsActive, setKeyIsActive] = useState(apiKey?.isActive !== false);
+  const [throttleDelayMs, setThrottleDelayMs] = useState(
+    typeof apiKey?.throttleDelayMs === "number" && apiKey.throttleDelayMs > 0
+      ? apiKey.throttleDelayMs
+      : 0
+  );
   const [keyIsBanned, setKeyIsBanned] = useState(apiKey?.isBanned === true);
   const [expiresAt, setExpiresAt] = useState(apiKey?.expiresAt ?? "");
   const [manageEnabled, setManageEnabled] = useState(
@@ -1145,6 +1222,10 @@ const PermissionsModal = memo(function PermissionsModal({
     }
     return new Set();
   });
+
+  const initialEndpoints = Array.isArray(apiKey?.allowedEndpoints) ? apiKey.allowedEndpoints : [];
+  const [selectedEndpoints, setSelectedEndpoints] = useState<string[]>(initialEndpoints);
+  const [allowAllEndpoints, setAllowAllEndpoints] = useState(initialEndpoints.length === 0);
 
   // Memoize callbacks to prevent child re-renders
   const handleToggleModel = useCallback(
@@ -1210,6 +1291,16 @@ const PermissionsModal = memo(function PermissionsModal({
     setSelectedModels([]);
   }, []);
 
+  const handleToggleCombo = useCallback(
+    (comboName: string) => {
+      if (allowAllCombos) return;
+      setSelectedCombos((prev) =>
+        prev.includes(comboName) ? prev.filter((name) => name !== comboName) : [...prev, comboName]
+      );
+    },
+    [allowAllCombos]
+  );
+
   const handleToggleConnection = useCallback(
     (connectionId: string) => {
       if (allowAllConnections) return;
@@ -1220,6 +1311,16 @@ const PermissionsModal = memo(function PermissionsModal({
       );
     },
     [allowAllConnections]
+  );
+
+  const handleToggleEndpoint = useCallback(
+    (categoryId: string) => {
+      if (allowAllEndpoints) return;
+      setSelectedEndpoints((prev) =>
+        prev.includes(categoryId) ? prev.filter((e) => e !== categoryId) : [...prev, categoryId]
+      );
+    },
+    [allowAllEndpoints]
   );
 
   const handleSave = useCallback(() => {
@@ -1258,27 +1359,33 @@ const PermissionsModal = memo(function PermissionsModal({
     onSave(
       keyName,
       allowAll ? [] : selectedModels,
+      allowAllCombos ? [] : selectedCombos,
       noLogEnabled,
       allowAllConnections ? [] : selectedConnections,
       autoResolveEnabled,
       keyIsActive,
+      throttleDelayMs,
       keyIsBanned,
       expiresAt || null,
       maxSessions,
       schedule,
       rateLimits.length > 0 ? rateLimits : null,
-      manageEnabled ? ["manage"] : []
+      manageEnabled ? ["manage"] : [],
+      allowAllEndpoints ? [] : selectedEndpoints
     );
   }, [
     onSave,
     keyName,
     allowAll,
     selectedModels,
+    allowAllCombos,
+    selectedCombos,
     noLogEnabled,
     allowAllConnections,
     selectedConnections,
     autoResolveEnabled,
     keyIsActive,
+    throttleDelayMs,
     keyIsBanned,
     expiresAt,
     maxSessions,
@@ -1289,6 +1396,8 @@ const PermissionsModal = memo(function PermissionsModal({
     scheduleDays,
     scheduleTz,
     rateLimits,
+    allowAllEndpoints,
+    selectedEndpoints,
     t,
   ]);
 
@@ -1423,6 +1532,32 @@ const PermissionsModal = memo(function PermissionsModal({
                 setMaxSessions(Number.isFinite(parsed) && parsed > 0 ? parsed : 0);
               }}
             />
+          </div>
+        </div>
+
+        {/* Soft Throttle */}
+        <div className="flex items-start justify-between gap-3 p-3 rounded-lg border border-border bg-surface/40">
+          <div className="flex flex-col gap-1">
+            <p className="text-sm font-medium text-text-main">Throttle Delay</p>
+            <p className="text-xs text-text-muted">
+              Add a fixed delay before requests for this key are routed. 0 = no slowdown.
+            </p>
+          </div>
+          <div className="w-36">
+            <Input
+              type="number"
+              min={0}
+              max={300000}
+              step={100}
+              value={String(throttleDelayMs)}
+              onChange={(e) => {
+                const parsed = Number.parseInt(e.target.value || "0", 10);
+                setThrottleDelayMs(
+                  Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 300000) : 0
+                );
+              }}
+            />
+            <p className="text-[10px] text-text-muted mt-1">milliseconds</p>
           </div>
         </div>
 
@@ -1963,6 +2098,159 @@ const PermissionsModal = memo(function PermissionsModal({
             )}
           </div>
         )}
+
+        {/* Allowed Combos Section */}
+        {allCombos.length > 0 && (
+          <div className="flex flex-col gap-2 p-3 rounded-lg border border-border bg-surface/40">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium text-text-main">Allowed Combos</p>
+              <div className="flex gap-1 p-0.5 bg-surface rounded-md">
+                <button
+                  onClick={() => {
+                    setAllowAllCombos(true);
+                    setSelectedCombos([]);
+                  }}
+                  className={`px-2 py-1 rounded text-xs font-medium transition-all ${
+                    allowAllCombos
+                      ? "bg-primary text-white"
+                      : "text-text-muted hover:bg-black/5 dark:hover:bg-white/5"
+                  }`}
+                >
+                  All
+                </button>
+                <button
+                  onClick={() => setAllowAllCombos(false)}
+                  className={`px-2 py-1 rounded text-xs font-medium transition-all ${
+                    !allowAllCombos
+                      ? "bg-primary text-white"
+                      : "text-text-muted hover:bg-black/5 dark:hover:bg-white/5"
+                  }`}
+                >
+                  Restrict
+                </button>
+              </div>
+            </div>
+            <p className="text-xs text-text-muted">
+              {allowAllCombos
+                ? "This key can use any combo."
+                : `Restricted to ${selectedCombos.length} combo${selectedCombos.length !== 1 ? "s" : ""}.`}
+            </p>
+            {!allowAllCombos && (
+              <div className="flex flex-col gap-1 max-h-40 overflow-y-auto">
+                {allCombos
+                  .slice()
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map((combo) => {
+                    const isSelected = selectedCombos.includes(combo.name);
+                    return (
+                      <button
+                        key={combo.id || combo.name}
+                        onClick={() => handleToggleCombo(combo.name)}
+                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-xs transition-all ${
+                          isSelected
+                            ? "bg-primary/10 text-primary"
+                            : "text-text-muted hover:bg-surface/50 hover:text-text-main"
+                        }`}
+                      >
+                        <div
+                          className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
+                            isSelected ? "bg-primary border-primary" : "border-border"
+                          }`}
+                        >
+                          {isSelected && (
+                            <span className="material-symbols-outlined text-white text-[10px]">
+                              check
+                            </span>
+                          )}
+                        </div>
+                        <span className="truncate flex-1">{combo.name}</span>
+                        {Array.isArray(combo.models) && (
+                          <span className="text-[10px] text-text-muted shrink-0">
+                            {combo.models.length} models
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Allowed Endpoints Section */}
+        <div className="flex flex-col gap-2 p-3 rounded-lg border border-border bg-surface/40">
+          <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-1">
+              <p className="text-sm font-medium text-text-main">{t("endpointRestrictions")}</p>
+              <p className="text-xs text-text-muted">
+                {allowAllEndpoints
+                  ? t("allEndpointsAllowed")
+                  : t("endpointsRestricted", {
+                      count: selectedEndpoints.length,
+                    })}
+              </p>
+            </div>
+            <div className="flex gap-1 p-0.5 bg-surface rounded-md">
+              <button
+                onClick={() => {
+                  setAllowAllEndpoints(true);
+                  setSelectedEndpoints([]);
+                }}
+                className={`px-2 py-1 rounded text-xs font-medium transition-all ${
+                  allowAllEndpoints
+                    ? "bg-primary text-white"
+                    : "text-text-muted hover:bg-black/5 dark:hover:bg-white/5"
+                }`}
+              >
+                {t("all")}
+              </button>
+              <button
+                onClick={() => setAllowAllEndpoints(false)}
+                className={`px-2 py-1 rounded text-xs font-medium transition-all ${
+                  !allowAllEndpoints
+                    ? "bg-primary text-white"
+                    : "text-text-muted hover:bg-black/5 dark:hover:bg-white/5"
+                }`}
+              >
+                {t("restrict")}
+              </button>
+            </div>
+          </div>
+          {!allowAllEndpoints && (
+            <div className="flex flex-col gap-1 max-h-48 overflow-y-auto">
+              {ENDPOINT_CATEGORIES.map((cat) => {
+                const isSelected = selectedEndpoints.includes(cat.id);
+                return (
+                  <button
+                    key={cat.id}
+                    onClick={() => handleToggleEndpoint(cat.id)}
+                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-xs transition-all ${
+                      isSelected
+                        ? "bg-primary/10 text-primary"
+                        : "text-text-muted hover:bg-surface/50 hover:text-text-main"
+                    }`}
+                  >
+                    <div
+                      className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
+                        isSelected ? "bg-primary border-primary" : "border-border"
+                      }`}
+                    >
+                      {isSelected && (
+                        <span className="material-symbols-outlined text-white text-[10px]">
+                          check
+                        </span>
+                      )}
+                    </div>
+                    <span className="truncate flex-1">{cat.label}</span>
+                    <span className="text-[10px] text-text-muted shrink-0 truncate max-w-[140px]">
+                      {cat.description}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         {/* Actions */}
         <div className="flex gap-2">
