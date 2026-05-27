@@ -1086,3 +1086,78 @@ test(
     }
   }
 );
+
+test(
+  "rehomeLegacyVersionSlotMigrations frees upstream 062 after local image-count migration",
+  serial,
+  async () => {
+    const runner = await importFresh("src/lib/db/migrationRunner.ts");
+    const db = createDb();
+
+    try {
+      db.exec(`
+        CREATE TABLE _omniroute_migrations (
+          version TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE usage_history (id TEXT PRIMARY KEY);
+        CREATE TABLE call_logs (id TEXT PRIMARY KEY, images_count INTEGER DEFAULT NULL);
+      `);
+      db.prepare("INSERT INTO _omniroute_migrations (version, name) VALUES (?, ?)").run(
+        "062",
+        "call_log_images_count"
+      );
+
+      const consoleErrors: string[] = [];
+      const originalError = console.error;
+      console.error = (...args: any[]) => {
+        consoleErrors.push(args.map(String).join(" "));
+      };
+
+      try {
+        const count = withMockedMigrationFs(
+          {
+            "062_usage_history_combo_strategy.sql": `
+              ALTER TABLE usage_history ADD COLUMN combo_strategy TEXT DEFAULT 'direct';
+              CREATE INDEX IF NOT EXISTS idx_uh_combo_strategy ON usage_history(combo_strategy);
+            `,
+            "068_call_log_images_count.sql":
+              "ALTER TABLE call_logs ADD COLUMN images_count INTEGER DEFAULT NULL;",
+          },
+          () => runner.runMigrations(db)
+        );
+
+        assert.equal(count, 2);
+        assert.equal(
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("062")?.name,
+          "usage_history_combo_strategy"
+        );
+        assert.equal(
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("068")?.name,
+          "call_log_images_count"
+        );
+        assert.equal(
+          db
+            .prepare("SELECT name FROM _omniroute_migrations WHERE version = ?")
+            .get("legacy-062-call_log_images_count")?.name,
+          "call_log_images_count"
+        );
+        assert.ok(db.prepare("SELECT combo_strategy FROM usage_history LIMIT 1").columns());
+
+        const renumberingWarnings = consoleErrors.filter(
+          (e) => e.includes("CRITICAL") && e.includes("renumbered")
+        );
+        assert.equal(
+          renumberingWarnings.length,
+          0,
+          `Expected no renumbering warnings, got: ${renumberingWarnings.join("; ")}`
+        );
+      } finally {
+        console.error = originalError;
+      }
+    } finally {
+      db.close();
+    }
+  }
+);

@@ -139,12 +139,6 @@ const RENAMED_MIGRATION_COMPATIBILITY = [
     toVersion: "050",
     toName: "session_account_affinity",
   },
-  {
-    fromVersion: "060",
-    fromName: "call_log_images_count",
-    toVersion: "062",
-    toName: "call_log_images_count",
-  },
 ] as const;
 
 const LEGACY_VERSION_SLOT_MIGRATIONS = [
@@ -159,6 +153,8 @@ const LEGACY_VERSION_SLOT_MIGRATIONS = [
   { version: "040", name: "call_log_cost_usd" },
   { version: "046", name: "remove_status_from_files" },
   { version: "051", name: "remove_status_from_files" },
+  { version: "060", name: "call_log_images_count" },
+  { version: "062", name: "call_log_images_count" },
 ] as const;
 
 const SUPERSEDED_DUPLICATE_MIGRATIONS = [
@@ -171,6 +167,14 @@ const SUPERSEDED_DUPLICATE_MIGRATIONS = [
 ] as const;
 
 const PHYSICAL_SCHEMA_SENTINELS = [
+  { version: "067", tableName: "relay_tokens", description: "relay_tokens table" },
+  { version: "066", tableName: "key_groups", description: "key_groups table" },
+  { version: "065", tableName: "middleware_hooks", description: "middleware_hooks table" },
+  {
+    version: "064",
+    tableName: "session_model_history",
+    description: "session_model_history table",
+  },
   { version: "028", tableName: "batches", description: "batches table" },
   { version: "024", tableName: "sync_tokens", description: "sync_tokens table" },
   { version: "022", tableName: "memory_fts", description: "memory_fts virtual table" },
@@ -364,6 +368,22 @@ function isSchemaAlreadyApplied(
     case "061":
       return hasTable(db, "cloud_agent_credentials");
     case "062":
+      return hasColumn(db, "usage_history", "combo_strategy");
+    case "063":
+      return hasColumn(db, "context_handoffs", "last_model");
+    case "064":
+      return hasTable(db, "session_model_history");
+    case "065":
+      return hasTable(db, "middleware_hooks") && hasTable(db, "middleware_logs");
+    case "066":
+      return (
+        hasTable(db, "key_groups") &&
+        hasTable(db, "group_model_permissions") &&
+        hasTable(db, "key_group_members")
+      );
+    case "067":
+      return hasTable(db, "relay_tokens") && hasTable(db, "relay_rate_limits");
+    case "068":
       return hasColumn(db, "call_logs", "images_count");
     default:
       return false;
