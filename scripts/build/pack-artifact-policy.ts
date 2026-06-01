@@ -36,6 +36,7 @@ export const APP_STAGING_ALLOWED_EXACT_PATHS: string[] = [
   "scripts/dev/sync-env.mjs",
   "server.js",
   "server-ws.mjs",
+  "v1-ws-bridge.mjs",
 ];
 
 export const APP_STAGING_ALLOWED_PATH_PREFIXES: string[] = [
@@ -84,6 +85,7 @@ export const PACK_ARTIFACT_ROOT_ALLOWED_EXACT_PATHS: string[] = [
   "scripts/build/sync-env.mjs",
   "scripts/dev/responses-ws-proxy.mjs",
   "scripts/dev/sync-env.mjs",
+  "scripts/dev/v1-ws-bridge.mjs",
   "scripts/postinstall.mjs",
   "src/shared/utils/nodeRuntimeSupport.ts",
 ];
@@ -104,6 +106,7 @@ export const PACK_ARTIFACT_REQUIRED_PATHS: string[] = [
   "app/server.js",
   "app/server-ws.mjs",
   "app/responses-ws-proxy.mjs",
+  "app/v1-ws-bridge.mjs",
   "bin/cli/program.mjs",
   "bin/mcp-server.mjs",
   "bin/nodeRuntimeSupport.mjs",

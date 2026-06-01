@@ -42,6 +42,7 @@ interface Props {
   onModelChange?: (model: string) => void;
   selectedKey?: string;
   onSelectedKeyChange?: (key: string) => void;
+  connectionId?: string | null;
   controlsRef?: RefObject<LlmChatControls | null>;
   onControlsChange?: (controls: LlmChatControls) => void;
 }
@@ -80,6 +81,11 @@ function extractUsage(line: string): { prompt_tokens?: number; completion_tokens
   }
 }
 
+function isUsableApiKeyValue(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.length > 0 && !trimmed.includes("****");
+}
+
 export function LlmChatCard({
   providerId,
   initialModel,
@@ -89,12 +95,13 @@ export function LlmChatCard({
   onModelChange,
   selectedKey: selectedKeyProp,
   onSelectedKeyChange,
+  connectionId,
   controlsRef,
   onControlsChange,
 }: Props) {
   const t = useTranslations("miniPlayground");
   const { apiKey, keys } = useApiKey();
-  const { models } = useProviderModels(providerId);
+  const { models } = useProviderModels(providerId, connectionId);
 
   const [internalSelectedKey, setInternalSelectedKey] = useState<string>("");
   const [internalModel, setInternalModel] = useState<string>(initialModel ?? "");
@@ -124,14 +131,16 @@ export function LlmChatCard({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const firstModel = models[0]?.id ?? "";
-  const effectiveModel = model || firstModel || initialModel || "";
+  const effectiveModel = (model || firstModel || initialModel || "").trim();
   // Auto-prefix model with providerId when no provider/model prefix present, to avoid
   // OmniRoute "Ambiguous model" rejection when same alias is registered under multiple providers.
-  const qualifiedModel = effectiveModel.includes("/")
-    ? effectiveModel
-    : providerId
-      ? `${providerId}/${effectiveModel}`
-      : effectiveModel;
+  const qualifiedModel = effectiveModel
+    ? effectiveModel.includes("/")
+      ? effectiveModel
+      : providerId
+        ? `${providerId}/${effectiveModel}`
+        : effectiveModel
+    : "";
 
   // Autofocus textarea in embedded mode
   useEffect(() => {
@@ -153,7 +162,7 @@ export function LlmChatCard({
 
   const handleSend = useCallback(async () => {
     const trimmed = input.trim();
-    if (!trimmed || streaming) return;
+    if (!trimmed || !qualifiedModel || streaming) return;
 
     const userMsg: Message = { role: "user", content: trimmed };
     const assistantMsg: Message = { role: "assistant", content: "", model: qualifiedModel };
@@ -169,14 +178,20 @@ export function LlmChatCard({
 
     try {
       const authKey = selectedKey || apiKey;
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (isUsableApiKeyValue(authKey)) {
+        headers.Authorization = `Bearer ${authKey}`;
+      }
+      if (connectionId) {
+        headers["x-omniroute-connection"] = connectionId;
+      }
+
       const res = await fetch(ENDPOINT, {
         method: "POST",
         signal: controller.signal,
-        headers: {
-          Authorization: `Bearer ${authKey}`,
-          "Content-Type": "application/json",
-          "x-connection-id": providerId,
-        },
+        headers,
         body: JSON.stringify({
           model: qualifiedModel,
           messages: [
@@ -281,7 +296,7 @@ export function LlmChatCard({
       // Refocus textarea so user can keep typing
       requestAnimationFrame(() => textareaRef.current?.focus());
     }
-  }, [input, streaming, selectedKey, apiKey, providerId, qualifiedModel, messages]);
+  }, [input, streaming, qualifiedModel, selectedKey, apiKey, connectionId, messages]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -334,18 +349,26 @@ export function LlmChatCard({
           {/* Model select */}
           <div className="flex items-center gap-1.5 min-w-0 flex-1">
             <label className="text-xs text-text-muted shrink-0">{t("model")}:</label>
-            <select
-              value={model || firstModel}
-              onChange={(e) => setModel(e.target.value)}
-              className="min-w-0 flex-1 rounded-md border border-border bg-bg-subtle text-xs px-2 py-1 text-text-main focus:outline-none focus:ring-1 focus:ring-primary"
-            >
-              {modelOptions.length === 0 && <option value="">{initialModel || "—"}</option>}
-              {modelOptions.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.id}
-                </option>
-              ))}
-            </select>
+            {modelOptions.length > 0 ? (
+              <select
+                value={model || firstModel}
+                onChange={(e) => setModel(e.target.value)}
+                className="min-w-0 flex-1 rounded-md border border-border bg-bg-subtle text-xs px-2 py-1 text-text-main focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                {modelOptions.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.id}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="Enter model id"
+                className="min-w-0 flex-1 rounded-md border border-border bg-bg-subtle text-xs px-2 py-1 text-text-main placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            )}
           </div>
           {/* Key select */}
           {keys.length > 0 && (
@@ -490,7 +513,7 @@ export function LlmChatCard({
           <button
             type="button"
             onClick={() => void handleSend()}
-            disabled={!input.trim()}
+            disabled={!input.trim() || !effectiveModel}
             title={t("send")}
             className="size-8 flex items-center justify-center rounded-md bg-primary text-white hover:opacity-90 disabled:opacity-40 transition-opacity shrink-0"
           >

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { isAuthenticated } from "@/shared/utils/apiAuth";
 import { isValidationFailure, validateBody } from "@/shared/validation/helpers";
 import { setAccountKeyLimit, getAccountKeyLimit } from "@/lib/db/registeredKeys";
+import { enforceClientApiAuth } from "../../../_helpers/clientApiAuth";
 
 const limitsSchema = z.object({
   maxActiveKeys: z.number().int().positive().nullable().optional(),
@@ -15,6 +16,9 @@ const limitsSchema = z.object({
  * Get the current issuance limits for an account.
  */
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   if (!(await isAuthenticated(request))) {
     return NextResponse.json({ error: { message: "Authentication required" } }, { status: 401 });
   }
@@ -29,6 +33,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
  * Configure issuance limits for an account.
  */
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   if (!(await isAuthenticated(request))) {
     return NextResponse.json({ error: { message: "Authentication required" } }, { status: 401 });
   }

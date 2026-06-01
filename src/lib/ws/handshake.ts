@@ -19,6 +19,27 @@ export interface WsHandshakeAuthResult extends WsRuntimeConfig {
   hasCredential: boolean;
 }
 
+function readBooleanEnv(name: string): boolean | null {
+  const raw = process.env[name];
+  if (typeof raw !== "string") return null;
+
+  const normalized = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return null;
+}
+
+function resolveWsAuth(_settings: Record<string, unknown>): boolean {
+  // `/v1/ws` is a public streaming ingress. Require auth by default so a persisted
+  // or default false `wsAuth` setting cannot expose model traffic anonymously.
+  if (readBooleanEnv("REQUIRE_API_KEY") === true) return true;
+
+  const envOverride = readBooleanEnv("OMNIROUTE_WS_AUTH") ?? readBooleanEnv("WS_AUTH");
+  if (envOverride !== null) return envOverride;
+
+  return true;
+}
+
 function getCookieValue(cookieHeader: string | null, cookieName: string): string | null {
   if (typeof cookieHeader !== "string" || cookieHeader.trim().length === 0) {
     return null;
@@ -76,7 +97,7 @@ export function extractWsTokenFromRequest(request: Request): string | null {
 export async function getWsRuntimeConfig(): Promise<WsRuntimeConfig> {
   const settings = await getSettings().catch(() => ({}));
   return {
-    wsAuth: settings.wsAuth === true,
+    wsAuth: resolveWsAuth(settings),
     wsPath: DEFAULT_WS_PATH,
   };
 }
@@ -90,6 +111,16 @@ export async function authorizeWebSocketHandshake(
   const validApiKey = hasCredential ? await validateApiKey(token) : false;
 
   if (!config.wsAuth) {
+    if (hasCredential && !validApiKey) {
+      return {
+        ...config,
+        authorized: false,
+        authenticated: false,
+        authType: "none",
+        hasCredential,
+      };
+    }
+
     return {
       ...config,
       authorized: true,

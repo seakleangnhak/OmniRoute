@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 const distDir = process.env.NEXT_DIST_DIR || ".next";
 const projectRoot = dirname(fileURLToPath(import.meta.url));
+const buildWorkerCount = Number.parseInt(process.env.OMNIROUTE_NEXT_BUILD_WORKERS || "", 10);
+const hasBuildWorkerOverride = Number.isFinite(buildWorkerCount) && buildWorkerCount > 0;
 const scriptSrc =
   process.env.NODE_ENV === "development"
     ? "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:"
@@ -101,6 +103,7 @@ const nextConfig = {
   // accept for image-bearing requests; tune via env if a deployment needs
   // more.
   experimental: {
+    ...(hasBuildWorkerOverride ? { cpus: buildWorkerCount } : {}),
     serverActions: {
       bodySizeLimit: process.env.OMNIROUTE_SERVER_ACTIONS_BODY_LIMIT || "50mb",
     },

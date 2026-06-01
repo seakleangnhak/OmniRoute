@@ -102,15 +102,64 @@ function runNextBuild() {
   });
 }
 
+function withoutMaxOldSpaceSize(nodeOptions = "") {
+  const tokens = String(nodeOptions).split(/\s+/).filter(Boolean);
+  const kept = [];
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === "--max-old-space-size") {
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("--max-old-space-size=")) continue;
+    kept.push(token);
+  }
+
+  return kept.join(" ");
+}
+
+function resolveBuildMemoryMb(baseEnv = process.env) {
+  const rawValue = baseEnv.OMNIROUTE_BUILD_MEMORY_MB || baseEnv.NEXT_BUILD_MEMORY_MB || "4096";
+  const parsed = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(parsed) || parsed < 1024) {
+    return "4096";
+  }
+  return String(parsed);
+}
+
 export function resolveNextBuildBundlerFlag(baseEnv = process.env) {
   return baseEnv.OMNIROUTE_USE_TURBOPACK === "1" ? "--turbopack" : "--webpack";
 }
 
 export function resolveNextBuildEnv(baseEnv = process.env) {
+  const nodeOptions = withoutMaxOldSpaceSize(baseEnv.NODE_OPTIONS);
+  const buildMemoryMb = resolveBuildMemoryMb(baseEnv);
+
   return {
     ...baseEnv,
     NEXT_PRIVATE_BUILD_WORKER: baseEnv.NEXT_PRIVATE_BUILD_WORKER || "0",
+    NODE_OPTIONS: `${nodeOptions} --max-old-space-size=${buildMemoryMb}`.trim(),
   };
+}
+
+async function generateDocsIndexIfPresent(rootDir = projectRoot) {
+  const scriptPath = path.join(rootDir, "scripts", "docs", "generate-docs-index.mjs");
+  if (!(await exists(scriptPath))) {
+    console.log("[build-next-isolated] Skipping legacy docs index generator; script not present");
+    return;
+  }
+
+  console.log("[build-next-isolated] Generating docs index...");
+  try {
+    const { execSync } = await import("node:child_process");
+    execSync("node scripts/docs/generate-docs-index.mjs", { cwd: rootDir, stdio: "inherit" });
+  } catch (docGenErr) {
+    console.warn(
+      "[build-next-isolated] Docs index generation failed (non-fatal):",
+      docGenErr?.message
+    );
+  }
 }
 
 async function resetStandaloneOutput(rootDir = projectRoot, fsImpl = fs) {
@@ -279,6 +328,8 @@ export async function main() {
     }
 
     await resetStandaloneOutput(projectRoot);
+
+    await generateDocsIndexIfPresent(projectRoot);
 
     const result = await runNextBuild();
     if (result.code === 0 && (await exists(path.join(projectRoot, ".next", "standalone")))) {

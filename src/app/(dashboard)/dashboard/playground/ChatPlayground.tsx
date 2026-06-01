@@ -60,6 +60,8 @@ export default function ChatPlayground({
     }
     return out;
   })();
+  const effectiveConnectionId =
+    selectedConnection || providerConnections.find((c) => c.isActive !== false)?.id || "";
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -86,9 +88,12 @@ export default function ChatPlayground({
     const startTime = Date.now();
 
     try {
-      const fetchHeaders: Record<string, string> = { "Content-Type": "application/json" };
-      if (selectedConnection) {
-        fetchHeaders["X-OmniRoute-Connection"] = selectedConnection;
+      const fetchHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      };
+      if (effectiveConnectionId) {
+        fetchHeaders["X-OmniRoute-Connection"] = effectiveConnectionId;
       }
 
       const res = await fetch("/api/v1/chat/completions", {

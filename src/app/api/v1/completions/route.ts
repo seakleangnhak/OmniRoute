@@ -2,6 +2,7 @@ import { CORS_HEADERS } from "@/shared/utils/cors";
 import { buildClientRawRequest, handleChat } from "@/sse/handlers/chat";
 import { initTranslators } from "@omniroute/open-sse/translator/index.ts";
 import { createInjectionGuard } from "@/middleware/promptInjectionGuard";
+import { enforceClientApiAuth } from "../_helpers/clientApiAuth";
 
 let initPromise = null;
 const injectionGuard = createInjectionGuard();
@@ -37,6 +38,9 @@ export async function OPTIONS() {
  * @see https://platform.openai.com/docs/api-reference/completions
  */
 export async function POST(request: Request) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   await ensureInitialized();
 
   // Prompt injection guard

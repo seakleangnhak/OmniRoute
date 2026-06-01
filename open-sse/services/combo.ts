@@ -3988,9 +3988,14 @@ async function handleRoundRobinCombo({
     } catch (err) {
       const errCode = isRecord(err) && typeof err.code === "string" ? err.code : null;
       if (errCode === "SEMAPHORE_TIMEOUT" || errCode === "SEMAPHORE_QUEUE_FULL") {
+        const hasFallbackTarget = modelCount > 1 && offset < modelCount - 1;
+        lastStatus = lastStatus || 503;
+        lastError = hasFallbackTarget
+          ? `Round-robin target ${modelStr} is at concurrency capacity`
+          : `Round-robin target ${modelStr} is at concurrency capacity; no fallback targets configured`;
         log.warn(
           "COMBO-RR",
-          `Semaphore ${errCode === "SEMAPHORE_QUEUE_FULL" ? "queue full" : "timeout"} for ${modelStr}, trying next model`
+          `Semaphore ${errCode === "SEMAPHORE_QUEUE_FULL" ? "queue full" : "timeout"} for ${modelStr}${hasFallbackTarget ? ", trying next model" : ", no fallback target configured"}`
         );
         if (offset > 0) fallbackCount++;
         continue;

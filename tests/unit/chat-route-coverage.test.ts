@@ -22,6 +22,8 @@ const { getCircuitBreaker, STATE } = await import("../../src/shared/utils/circui
 const { clearProviderFailure } = await import("../../open-sse/services/accountFallback.ts");
 const { getDefaultTaskModelMap, resetTaskRoutingStats, setTaskRoutingConfig } =
   await import("../../open-sse/services/taskAwareRouter.ts");
+const chatRoute = await import("../../src/app/api/v1/chat/completions/route.ts");
+const responsesRoute = await import("../../src/app/api/v1/responses/route.ts");
 
 function buildOpenAIStreamResponse(text = "streamed from openai") {
   return new Response(
@@ -88,6 +90,36 @@ test("handleChat returns 400 for malformed JSON payloads", async () => {
 
   assert.equal(response.status, 400);
   assert.match(json.error.message, /Invalid JSON body/i);
+});
+
+test("client chat routes reject API keys created on another server", async () => {
+  const chatResponse = await chatRoute.POST(
+    buildRequest({
+      authKey: "sk-server-b-key",
+      body: {
+        model: "openai/gpt-4o-mini",
+        messages: [{ role: "user", content: "hello" }],
+      },
+    })
+  );
+  const chatJson = (await chatResponse.json()) as { error?: { message?: string } };
+
+  const responsesResponse = await responsesRoute.POST(
+    buildRequest({
+      url: "http://localhost/v1/responses",
+      authKey: "sk-server-b-key",
+      body: {
+        model: "openai/gpt-4o-mini",
+        input: "hello",
+      },
+    })
+  );
+  const responsesJson = (await responsesResponse.json()) as { error?: { message?: string } };
+
+  assert.equal(chatResponse.status, 401);
+  assert.match(chatJson.error?.message || "", /Invalid API key/);
+  assert.equal(responsesResponse.status, 401);
+  assert.match(responsesJson.error?.message || "", /Invalid API key/);
 });
 
 test("handleChat rejects suspicious prompt-injection payloads before routing", async () => {

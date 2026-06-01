@@ -114,24 +114,44 @@ function getConfig() {
  * @param {Object} body
  * @returns {string[]}
  */
-function extractMessageContents(body) {
-  const contents = [];
+function getRequestMessages(body) {
+  if (Array.isArray(body?.messages)) return body.messages;
+  if (Array.isArray(body?.input)) return body.input;
+  if (typeof body?.input === "string") return [body.input];
+  return [];
+}
 
-  const messages = body.messages || body.input || [];
-  for (const msg of messages) {
-    if (typeof msg === "string") {
-      contents.push(msg);
-    } else if (typeof msg.content === "string") {
-      contents.push(msg.content);
-    } else if (Array.isArray(msg.content)) {
-      for (const part of msg.content) {
-        if (typeof part === "string") {
-          contents.push(part);
-        } else if (part.text) {
-          contents.push(part.text);
-        }
+function appendMessageContent(contents, msg) {
+  if (typeof msg === "string") {
+    contents.push(msg);
+  } else if (typeof msg?.content === "string") {
+    contents.push(msg.content);
+  } else if (Array.isArray(msg?.content)) {
+    for (const part of msg.content) {
+      if (typeof part === "string") {
+        contents.push(part);
+      } else if (part?.text) {
+        contents.push(part.text);
       }
     }
+  }
+}
+
+function normalizeRole(value) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function hasTrustedPromptRole(msg) {
+  const role = normalizeRole(msg?.role);
+  return role === "system" || role === "developer" || role === "assistant";
+}
+
+function extractMessageContents(body) {
+  const contents = [];
+  if (!body || typeof body !== "object") return contents;
+
+  for (const msg of getRequestMessages(body)) {
+    appendMessageContent(contents, msg);
   }
 
   // Also check system prompt
@@ -142,6 +162,25 @@ function extractMessageContents(body) {
       if (typeof s === "string") contents.push(s);
       else if (s.text) contents.push(s.text);
     }
+  }
+
+  return contents;
+}
+
+/**
+ * Extract text that should participate in prompt-injection detection.
+ * Trusted request scaffolding can legitimately contain role instructions, so
+ * only user-like/unknown/tool messages are scanned for injection patterns.
+ * @param {Object} body
+ * @returns {string[]}
+ */
+function extractPromptInjectionContents(body) {
+  const contents = [];
+  if (!body || typeof body !== "object") return contents;
+
+  for (const msg of getRequestMessages(body)) {
+    if (hasTrustedPromptRole(msg)) continue;
+    appendMessageContent(contents, msg);
   }
 
   return contents;
@@ -212,9 +251,10 @@ export function sanitizeRequest(body, logger = console) {
 
   const contents = extractMessageContents(body);
   const fullText = contents.join("\n");
+  const promptInjectionText = extractPromptInjectionContents(body).join("\n");
 
   // ── Prompt Injection Detection ──
-  const injections = detectInjection(fullText);
+  const injections = detectInjection(promptInjectionText);
   if (injections.length > 0) {
     result.detections = injections;
 
@@ -261,7 +301,14 @@ export function sanitizeRequest(body, logger = console) {
  */
 function redactBody(body) {
   const clone = JSON.parse(JSON.stringify(body));
-  const messages = clone.messages || clone.input || [];
+  if (typeof clone.input === "string") {
+    clone.input = processPII(clone.input, true).text;
+  }
+  const messages = Array.isArray(clone.messages)
+    ? clone.messages
+    : Array.isArray(clone.input)
+      ? clone.input
+      : [];
 
   for (const msg of messages) {
     if (typeof msg.content === "string") {
@@ -287,4 +334,11 @@ function redactBody(body) {
 
 // ─── Exports for Testing ──────────────────────────────────────────────
 
-export { detectInjection, processPII, extractMessageContents, INJECTION_PATTERNS, PII_PATTERNS };
+export {
+  detectInjection,
+  processPII,
+  extractMessageContents,
+  extractPromptInjectionContents,
+  INJECTION_PATTERNS,
+  PII_PATTERNS,
+};

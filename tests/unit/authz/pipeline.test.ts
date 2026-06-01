@@ -18,6 +18,7 @@ const pipeline = await import("../../../src/server/authz/pipeline.ts");
 const ORIGINAL_JWT = process.env.JWT_SECRET;
 const ORIGINAL_INITIAL = process.env.INITIAL_PASSWORD;
 const ORIGINAL_AUTH_COOKIE_SECURE = process.env.AUTH_COOKIE_SECURE;
+const ORIGINAL_REQUIRE_API_KEY = process.env.REQUIRE_API_KEY;
 
 function resetEnvironment() {
   core.resetDbInstance();
@@ -26,6 +27,7 @@ function resetEnvironment() {
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
   process.env.JWT_SECRET = "pipeline-jwt-secret";
   process.env.INITIAL_PASSWORD = "pipeline-initial-password";
+  delete process.env.REQUIRE_API_KEY;
   delete process.env.AUTH_COOKIE_SECURE;
   globalThis.__omnirouteShutdown = { init: false, shuttingDown: false, activeRequests: 0 };
 }
@@ -59,6 +61,8 @@ test.after(() => {
   else process.env.INITIAL_PASSWORD = ORIGINAL_INITIAL;
   if (ORIGINAL_AUTH_COOKIE_SECURE === undefined) delete process.env.AUTH_COOKIE_SECURE;
   else process.env.AUTH_COOKIE_SECURE = ORIGINAL_AUTH_COOKIE_SECURE;
+  if (ORIGINAL_REQUIRE_API_KEY === undefined) delete process.env.REQUIRE_API_KEY;
+  else process.env.REQUIRE_API_KEY = ORIGINAL_REQUIRE_API_KEY;
   globalThis.__omnirouteShutdown = { init: false, shuttingDown: false, activeRequests: 0 };
 });
 
@@ -230,6 +234,18 @@ test("runAuthzPipeline allows dashboard sessions to read model catalog aliases",
 
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("x-omniroute-route-class"), "CLIENT_API");
+});
+
+test("runAuthzPipeline leaves cached chatgpt-web image URLs public when API keys are required", async () => {
+  process.env.REQUIRE_API_KEY = "true";
+
+  const response = await pipeline.runAuthzPipeline(
+    request("https://api.example.com/v1/chatgpt-web/image/3230deb9adc843a683acb3d47404b7a8"),
+    { enforce: true }
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("x-omniroute-route-class"), "PUBLIC");
 });
 
 test("runAuthzPipeline allows dashboard sessions to reach DB health management API", async () => {

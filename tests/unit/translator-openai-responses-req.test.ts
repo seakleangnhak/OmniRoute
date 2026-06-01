@@ -85,6 +85,40 @@ test("Responses -> Chat converts instructions, inputs, function calls, outputs, 
   });
 });
 
+test("Responses -> Chat converts string input to a user message", () => {
+  const result = openaiResponsesToOpenAIRequest(
+    "local-model",
+    {
+      instructions: "Rules",
+      input: "Hello! Say hi in one sentence.",
+      stream: false,
+    },
+    false,
+    null
+  );
+
+  assert.deepEqual((result as any).messages, [
+    { role: "system", content: "Rules" },
+    { role: "user", content: "Hello! Say hi in one sentence." },
+  ]);
+  assert.equal(Object.prototype.hasOwnProperty.call(result as any, "input"), false);
+});
+
+test("Responses -> Chat converts object input with text to a user message", () => {
+  const result = openaiResponsesToOpenAIRequest(
+    "local-model",
+    {
+      input: { text: "Hello from object input" },
+    },
+    false,
+    null
+  );
+
+  assert.deepEqual((result as any).messages, [
+    { role: "user", content: "Hello from object input" },
+  ]);
+});
+
 test("Responses -> Chat filters orphan tool outputs and supports role-based message items", () => {
   const result = openaiResponsesToOpenAIRequest(
     "gpt-4o",

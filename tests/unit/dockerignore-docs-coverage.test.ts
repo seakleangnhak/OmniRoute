@@ -39,11 +39,19 @@ const REQUIRED_DOC_DIAGRAMS = [
   "docs/diagrams/exported/resilience-3layers.svg",
   "docs/diagrams/exported/authz-pipeline.svg",
   "docs/diagrams/exported/db-schema-overview.svg",
+  "docs/diagrams/exported/mcp-tools-43.svg",
 ];
 
 const REQUIRED_DOC_SCREENSHOTS = [
   "docs/screenshots/01-providers.png",
+  "docs/screenshots/02-combos.png",
+  "docs/screenshots/03-analytics.png",
+  "docs/screenshots/04-health.png",
   "docs/screenshots/05-translator.png",
+  "docs/screenshots/06-settings.png",
+  "docs/screenshots/07-cli-tools.png",
+  "docs/screenshots/08-usage.png",
+  "docs/screenshots/09-endpoint.png",
 ];
 
 // Compile .dockerignore patterns into a simple matcher.
@@ -152,11 +160,18 @@ test("#2348 .dockerignore keeps every doc the in-product viewer needs", () => {
   );
 });
 
-test("#2348 .dockerignore still excludes the heavy i18n tree", () => {
+test("#2348 .dockerignore still excludes heavy i18n mirrors", () => {
   const parsed = parseDockerignore(fs.readFileSync(DOCKERIGNORE, "utf8"));
-  const heavy = "docs/i18n/pt-BR/docs/routing/AUTO-COMBO.md";
-  assert.ok(
-    isIgnored(heavy, parsed),
-    `${heavy} should be excluded from Docker context but is not — image size will balloon`
-  );
+  // These should NOT make it into the container — the in-product viewer reads
+  // only the English originals at runtime.
+  const HEAVY_PATHS = [
+    "docs/i18n/pt-BR/docs/AUTO-COMBO.md",
+    "docs/i18n/pt-BR/docs/routing/AUTO-COMBO.md",
+  ];
+  for (const heavy of HEAVY_PATHS) {
+    assert.ok(
+      isIgnored(heavy, parsed),
+      `${heavy} should be excluded from Docker context but is not — image size will balloon`
+    );
+  }
 });

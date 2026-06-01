@@ -404,14 +404,21 @@ test("DefaultExecutor.buildHeaders handles GLM, default auth and anthropic-compa
 
 test("DefaultExecutor local OpenAI-style providers honor custom base URLs and skip empty bearer headers", () => {
   const lmStudio = new DefaultExecutor("lm-studio");
+  const llamaCpp = new DefaultExecutor("llama-cpp");
   const vllm = new DefaultExecutor("vllm");
 
   const lmStudioUrl = lmStudio.buildUrl("local-model", true, 0, {
     providerSpecificData: { baseUrl: "http://127.0.0.1:4321/v1" },
   });
+  const llamaCppUrl = llamaCpp.buildUrl("local-model", true, 0, {
+    providerSpecificData: { baseUrl: "http://127.0.0.1:8080/v1" },
+  });
+  const llamaCppDefaultUrl = llamaCpp.buildUrl("local-model", true);
   const vllmHeaders = vllm.buildHeaders({}, false);
 
   assert.equal(lmStudioUrl, "http://127.0.0.1:4321/v1/chat/completions");
+  assert.equal(llamaCppUrl, "http://127.0.0.1:8080/v1/chat/completions");
+  assert.equal(llamaCppDefaultUrl, "http://127.0.0.1:8080/v1/chat/completions");
   assert.equal(vllmHeaders.Authorization, undefined);
   assert.equal(vllmHeaders.Accept, "application/json");
 });

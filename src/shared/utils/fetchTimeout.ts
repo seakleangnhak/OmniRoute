@@ -2,13 +2,13 @@
  * Fetch Timeout — T-25
  *
  * Wraps fetch() with an AbortController-based timeout.
- * Default timeout is 120 seconds (FETCH_TIMEOUT_MS env var).
+ * Default timeout is 10 seconds (FETCH_TIMEOUT_MS env var).
  *
  * @module shared/utils/fetchTimeout
  */
 
 const DEFAULT_TIMEOUT_MS =
-  parseInt(process.env.OMNIROUTE_DEFAULT_FETCH_TIMEOUT_MS || "", 10) || 120000; // 2 minutes
+  parseInt(process.env.OMNIROUTE_DEFAULT_FETCH_TIMEOUT_MS || "", 10) || 10_000;
 const FETCH_TIMEOUT_MS = parseInt(process.env.FETCH_TIMEOUT_MS || "", 10) || DEFAULT_TIMEOUT_MS;
 
 interface FetchTimeoutOptions extends RequestInit {

@@ -96,6 +96,10 @@ export async function getCombos() {
   );
 }
 
+export async function getAllCombos() {
+  return getCombos();
+}
+
 export async function getComboById(id: string) {
   const db = getDbInstance();
   const row = db.prepare("SELECT data, sort_order FROM combos WHERE id = ?").get(id);

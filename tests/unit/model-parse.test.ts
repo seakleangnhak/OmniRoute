@@ -28,6 +28,13 @@ test("parseModel trims provider prefix and model id", () => {
   assert.strictEqual(result.model, "gpt-5.4");
 });
 
+test("parseModel resolves dashboard-only local provider aliases", () => {
+  const result = parseModel("llamacpp/qwen36");
+  assert.strictEqual(result.providerAlias, "llamacpp");
+  assert.strictEqual(result.provider, "llama-cpp");
+  assert.strictEqual(result.model, "qwen36");
+});
+
 test("parseModel treats exact slashful model ids as models, not provider prefixes", () => {
   const result = parseModel("openai/gpt-oss-120b");
   assert.strictEqual(result.provider, null);

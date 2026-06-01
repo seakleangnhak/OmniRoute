@@ -1286,11 +1286,19 @@ export class CodexExecutor extends BaseExecutor {
     }
     delete body.reasoning_effort;
 
-    // Remove unsupported token limit parameters BEFORE the passthrough return.
-    // Codex API rejects both max_tokens and max_output_tokens regardless of
-    // whether the request came via native passthrough or translation.
+    // Remove unsupported chat-style generation parameters BEFORE the passthrough
+    // return. IDEs often inject these even when calling /v1/responses, but the
+    // Codex backend rejects them with 400 Unsupported parameter errors.
     delete body.max_tokens;
     delete body.max_output_tokens;
+    delete body.temperature;
+    delete body.top_p;
+    delete body.frequency_penalty;
+    delete body.presence_penalty;
+    delete body.logprobs;
+    delete body.top_logprobs;
+    delete body.n;
+    delete body.seed;
     // VS Code Copilot BYOK Responses requests include `truncation` (for example
     // "auto" or "disabled"). The Codex /responses backend currently rejects this
     // field entirely with 400 Unsupported parameter: truncation, so strip it for

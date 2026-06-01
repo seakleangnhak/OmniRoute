@@ -110,7 +110,7 @@ export async function getSettings() {
     codexSessionAffinityTtlMs: 0,
     alwaysPreserveClientCache: "auto",
     idempotencyWindowMs: 5000,
-    wsAuth: false,
+    wsAuth: true,
     maxBodySizeMb: requestBodyLimitMbFromEnv(process.env.MAX_BODY_SIZE_BYTES),
     debugMode: true,
     // LOCAL_ONLY manage-scope bypass policy defaults (T-011 / spec §Data Model).

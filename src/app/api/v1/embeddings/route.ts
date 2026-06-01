@@ -8,10 +8,10 @@ import * as log from "@/sse/utils/logger";
 import { enforceApiKeyPolicy } from "@/shared/utils/apiKeyPolicy";
 import { v1EmbeddingsSchema } from "@/shared/validation/schemas";
 import { isValidationFailure, validateBody } from "@/shared/validation/helpers";
+import { enforceClientApiAuth } from "../_helpers/clientApiAuth";
 
-import { getAllCustomModels, getApiKeyMetadata } from "@/lib/localDb";
+import { getAllCustomModels } from "@/lib/localDb";
 import { createEmbeddingResponse, type EmbeddingHandlerOptions } from "@/lib/embeddings/service";
-import { extractApiKey, isValidApiKey } from "@/sse/services/auth";
 
 function toProviderScopedModelId(providerId: string, modelId: string): string {
   return modelId.startsWith(`${providerId}/`) ? modelId : `${providerId}/${modelId}`;
@@ -75,6 +75,9 @@ export async function handleValidatedEmbeddingRequestBody(
 }
 
 export async function POST(request) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   let rawBody;
   try {
     rawBody = await request.json();
@@ -89,21 +92,12 @@ export async function POST(request) {
   }
   const body = validation.data;
 
-  // Auth check
-  const apiKeyRaw = extractApiKey(request);
-  if (process.env.REQUIRE_API_KEY === "true" && !apiKeyRaw) {
-    return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Authentication required");
-  }
-  if (apiKeyRaw && !(await isValidApiKey(apiKeyRaw))) {
-    return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
-  }
-
   // Enforce API key policies (model restrictions + budget limits)
   const policy = await enforceApiKeyPolicy(request, body.model);
   if (policy.rejection) return policy.rejection;
 
   // Extract API key info for logging
-  const apiKeyMeta = apiKeyRaw ? await getApiKeyMetadata(apiKeyRaw) : null;
+  const apiKeyMeta = policy.apiKeyInfo;
 
   // Build client raw request for logging
   const clientRawRequest = {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAuthenticated } from "@/shared/utils/apiAuth";
 import { revokeRegisteredKey } from "@/lib/db/registeredKeys";
+import { enforceClientApiAuth } from "../../../_helpers/clientApiAuth";
 
 /**
  * POST /api/v1/registered-keys/[id]/revoke
@@ -8,6 +9,9 @@ import { revokeRegisteredKey } from "@/lib/db/registeredKeys";
  * Explicit revoke endpoint (supports clients that cannot issue DELETE requests).
  */
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   if (!(await isAuthenticated(request))) {
     return NextResponse.json({ error: { message: "Authentication required" } }, { status: 401 });
   }

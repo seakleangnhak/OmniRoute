@@ -112,10 +112,32 @@ function toBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
+const LEGACY_REQUEST_QUEUE_MAX_WAIT_MS = 120_000;
+
 export const DEFAULT_REQUEST_QUEUE_MAX_WAIT_MS = (() => {
-  const parsed = Number(process.env.RATE_LIMIT_MAX_WAIT_MS || "120000");
-  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 120000;
+  const parsed = Number(process.env.RATE_LIMIT_MAX_WAIT_MS || "10000");
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 10_000;
 })();
+
+function normalizeRequestQueueMaxWaitMs(value: unknown, fallback: number): number {
+  const parsed = toInteger(value, fallback, {
+    min: 1,
+    max: 24 * 60 * 60 * 1000,
+  });
+
+  // Older persisted defaults stored 120s in SQLite. Treat that exact value as
+  // the new default unless the operator explicitly pins RATE_LIMIT_MAX_WAIT_MS.
+  const envOverride = process.env.RATE_LIMIT_MAX_WAIT_MS;
+  if (
+    parsed === LEGACY_REQUEST_QUEUE_MAX_WAIT_MS &&
+    fallback === DEFAULT_REQUEST_QUEUE_MAX_WAIT_MS &&
+    (envOverride == null || envOverride.trim() === "")
+  ) {
+    return DEFAULT_REQUEST_QUEUE_MAX_WAIT_MS;
+  }
+
+  return parsed;
+}
 
 export const DEFAULT_RESILIENCE_SETTINGS: ResilienceSettings = {
   requestQueue: {
@@ -183,10 +205,7 @@ function normalizeRequestQueueSettings(
     min: 1,
     max: 10_000,
   });
-  const maxWaitMs = toInteger(record.maxWaitMs, fallback.maxWaitMs, {
-    min: 1,
-    max: 24 * 60 * 60 * 1000,
-  });
+  const maxWaitMs = normalizeRequestQueueMaxWaitMs(record.maxWaitMs, fallback.maxWaitMs);
 
   return {
     autoEnableApiKeyProviders: toBoolean(

@@ -1,5 +1,5 @@
 import { BaseGuardrail, type GuardrailContext, type GuardrailResult } from "./base";
-import { extractMessageContents, sanitizeRequest } from "@/shared/utils/inputSanitizer";
+import { extractPromptInjectionContents, sanitizeRequest } from "@/shared/utils/inputSanitizer";
 
 type Detection = {
   match: string;
@@ -51,6 +51,11 @@ const SEVERITY_SCORES = {
   high: 3,
   low: 1,
   medium: 2,
+};
+
+const SILENT_SANITIZER_LOGGER = {
+  info: () => {},
+  warn: () => {},
 };
 
 function normalizePatternEntry(entry: PatternLike, index: number) {
@@ -164,11 +169,8 @@ export function evaluatePromptInjection(
     .map(normalizePatternEntry)
     .filter(Boolean);
 
-  const sanitizerResult = sanitizeRequest(body, {
-    info() {},
-    warn() {},
-  } as Console);
-  const contents = extractMessageContents(body);
+  const sanitizerResult = sanitizeRequest(body, SILENT_SANITIZER_LOGGER as Console);
+  const contents = extractPromptInjectionContents(body);
   const customDetections = detectWithPatterns(contents.join("\n"), patterns);
   const existingDetections = new Set(
     sanitizerResult.detections.map((d: Detection) => `${d.pattern}:${d.match}:${d.severity}`)

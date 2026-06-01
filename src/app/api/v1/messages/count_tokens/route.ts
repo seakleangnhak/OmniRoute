@@ -4,8 +4,9 @@ import { isValidationFailure, validateBody } from "@/shared/validation/helpers";
 import { estimateTokens } from "@/shared/utils/costEstimator";
 import { getExecutor } from "@omniroute/open-sse/executors/index.ts";
 import { getModelInfo } from "@/sse/services/model";
-import { extractApiKey, getProviderCredentials, isValidApiKey } from "@/sse/services/auth";
+import { getProviderCredentials } from "@/sse/services/auth";
 import * as log from "@/sse/utils/logger";
+import { enforceClientApiAuth } from "../../_helpers/clientApiAuth";
 
 /**
  * Handle CORS preflight
@@ -19,6 +20,9 @@ export async function OPTIONS() {
  * Uses real provider-side count when supported, falling back to estimation.
  */
 export async function POST(request) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   let rawBody;
   try {
     rawBody = await request.json();

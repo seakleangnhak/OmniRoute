@@ -1284,10 +1284,14 @@ const MEDIA_SERVICE_KINDS: ServiceKind[] = [
   "music",
 ];
 
-function renderKindPanel(kind: ServiceKind, providerId: string): JSX.Element | null {
+function renderKindPanel(
+  kind: ServiceKind,
+  providerId: string,
+  connectionId?: string | null
+): JSX.Element | null {
   switch (kind) {
     case "llm":
-      return <LlmChatCard providerId={providerId} />;
+      return <LlmChatCard providerId={providerId} connectionId={connectionId} />;
     case "embedding":
       return <EmbeddingExampleCard providerId={providerId} />;
     case "image":
@@ -1309,7 +1313,13 @@ function renderKindPanel(kind: ServiceKind, providerId: string): JSX.Element | n
   }
 }
 
-function ProviderPlaygroundPanel({ providerId }: { providerId: string }) {
+function ProviderPlaygroundPanel({
+  providerId,
+  connectionId,
+}: {
+  providerId: string;
+  connectionId?: string | null;
+}) {
   // Resolve serviceKinds from AI_PROVIDERS.
   // For providers without explicit serviceKinds (most LLM providers), we infer
   // "llm" as the default.
@@ -1353,7 +1363,7 @@ function ProviderPlaygroundPanel({ providerId }: { providerId: string }) {
         activeKind={activeKind}
         onSelect={setActiveKind}
       />
-      {renderKindPanel(activeKind, providerId)}
+      {renderKindPanel(activeKind, providerId, connectionId)}
     </div>
   );
 }
@@ -3770,6 +3780,13 @@ export default function ProviderDetailPage() {
     return providerInfo.id;
   };
 
+  const playgroundConnectionId =
+    (
+      connections.find((conn: ConnectionRowConnection) => conn.isActive !== false) as
+        | ConnectionRowConnection
+        | undefined
+    )?.id ?? null;
+
   return (
     <div className="flex flex-col gap-8">
       {/* Header */}
@@ -4667,7 +4684,7 @@ export default function ProviderDetailPage() {
       )}
 
       {/* Playground panel — rendered for providers that declare serviceKinds */}
-      <ProviderPlaygroundPanel providerId={providerId} />
+      <ProviderPlaygroundPanel providerId={providerId} connectionId={playgroundConnectionId} />
 
       {/* Modals */}
       {showRiskNoticeModal && subscriptionRisk && (

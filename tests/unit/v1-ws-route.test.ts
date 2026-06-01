@@ -7,6 +7,9 @@ import path from "node:path";
 const TEST_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "omniroute-v1-ws-route-"));
 const ORIGINAL_DATA_DIR = process.env.DATA_DIR;
 const ORIGINAL_API_KEY_SECRET = process.env.API_KEY_SECRET;
+const ORIGINAL_REQUIRE_API_KEY = process.env.REQUIRE_API_KEY;
+const ORIGINAL_OMNIROUTE_WS_AUTH = process.env.OMNIROUTE_WS_AUTH;
+const ORIGINAL_WS_AUTH = process.env.WS_AUTH;
 
 process.env.DATA_DIR = TEST_DATA_DIR;
 process.env.API_KEY_SECRET = process.env.API_KEY_SECRET || "test-v1-ws-route-secret";
@@ -24,9 +27,12 @@ function resetStorage() {
 }
 
 test.beforeEach(async () => {
+  delete process.env.REQUIRE_API_KEY;
+  delete process.env.OMNIROUTE_WS_AUTH;
+  delete process.env.WS_AUTH;
   resetStorage();
   await localDb.updateSettings({
-    wsAuth: false,
+    wsAuth: true,
     requireLogin: true,
     password: "hashed-password",
   });
@@ -48,10 +54,40 @@ test.after(() => {
   } else {
     process.env.API_KEY_SECRET = ORIGINAL_API_KEY_SECRET;
   }
+
+  if (ORIGINAL_REQUIRE_API_KEY === undefined) {
+    delete process.env.REQUIRE_API_KEY;
+  } else {
+    process.env.REQUIRE_API_KEY = ORIGINAL_REQUIRE_API_KEY;
+  }
+
+  if (ORIGINAL_OMNIROUTE_WS_AUTH === undefined) {
+    delete process.env.OMNIROUTE_WS_AUTH;
+  } else {
+    process.env.OMNIROUTE_WS_AUTH = ORIGINAL_OMNIROUTE_WS_AUTH;
+  }
+
+  if (ORIGINAL_WS_AUTH === undefined) {
+    delete process.env.WS_AUTH;
+  } else {
+    process.env.WS_AUTH = ORIGINAL_WS_AUTH;
+  }
 });
 
-test("v1 ws handshake succeeds without credentials when wsAuth is disabled", async () => {
+test("v1 ws handshake requires credentials by default even when stored wsAuth is false", async () => {
   await localDb.updateSettings({ wsAuth: false });
+
+  const response = await wsRoute.GET(new Request("http://localhost/api/v1/ws?handshake=1"));
+
+  assert.equal(response.status, 401);
+  const body = (await response.json()) as any;
+  assert.equal(body.error.code, "ws_auth_required");
+  assert.equal(body.wsAuth, true);
+});
+
+test("v1 ws handshake can be explicitly disabled with env override", async () => {
+  await localDb.updateSettings({ wsAuth: false });
+  process.env.OMNIROUTE_WS_AUTH = "false";
 
   const response = await wsRoute.GET(
     new Request("http://localhost/api/v1/ws?handshake=1", {
@@ -67,8 +103,48 @@ test("v1 ws handshake succeeds without credentials when wsAuth is disabled", asy
   assert.equal(body.path, "/v1/ws");
 });
 
+test("v1 ws handshake rejects unknown bearer even with auth explicitly disabled", async () => {
+  await localDb.updateSettings({ wsAuth: false });
+  process.env.OMNIROUTE_WS_AUTH = "false";
+
+  const response = await wsRoute.GET(
+    new Request("http://localhost/api/v1/ws?handshake=1", {
+      headers: { Authorization: "Bearer sk-server-b-key" },
+    })
+  );
+
+  assert.equal(response.status, 403);
+  const body = (await response.json()) as any;
+  assert.equal(body.error.code, "ws_auth_invalid");
+});
+
 test("v1 ws handshake requires credentials when wsAuth is enabled", async () => {
   await localDb.updateSettings({ wsAuth: true });
+
+  const response = await wsRoute.GET(new Request("http://localhost/api/v1/ws?handshake=1"));
+
+  assert.equal(response.status, 401);
+  const body = (await response.json()) as any;
+  assert.equal(body.error.code, "ws_auth_required");
+  assert.equal(body.wsAuth, true);
+});
+
+test("v1 ws handshake requires credentials when REQUIRE_API_KEY is enabled", async () => {
+  await localDb.updateSettings({ wsAuth: false });
+  process.env.OMNIROUTE_WS_AUTH = "false";
+  process.env.REQUIRE_API_KEY = "true";
+
+  const response = await wsRoute.GET(new Request("http://localhost/api/v1/ws?handshake=1"));
+
+  assert.equal(response.status, 401);
+  const body = (await response.json()) as any;
+  assert.equal(body.error.code, "ws_auth_required");
+  assert.equal(body.wsAuth, true);
+});
+
+test("v1 ws handshake requires credentials when env ws auth override is enabled", async () => {
+  await localDb.updateSettings({ wsAuth: false });
+  process.env.OMNIROUTE_WS_AUTH = "true";
 
   const response = await wsRoute.GET(new Request("http://localhost/api/v1/ws?handshake=1"));
 

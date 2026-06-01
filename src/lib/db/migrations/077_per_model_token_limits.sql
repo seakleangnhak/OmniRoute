@@ -1,4 +1,4 @@
--- Migration 073: per-API-key token limits (scoped to model and/or provider)
+-- Migration 077: per-API-key token limits (scoped to model and/or provider)
 --
 -- Adds enforcement-grade token budgets attachable to an API key and scoped to a
 -- specific model, a specific provider, or globally (all traffic for the key).

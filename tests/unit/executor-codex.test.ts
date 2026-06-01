@@ -374,7 +374,38 @@ test("CodexExecutor.transformRequest applies flex request default service tier",
   assert.equal(result.service_tier, "flex");
 });
 
-test("CodexExecutor.transformRequest preserves store-enabled responses state when explicitly enabled", () => {
+test("CodexExecutor.transformRequest strips Trae sampling parameters from native passthrough", () => {
+  const executor = new CodexExecutor();
+  const result = executor.transformRequest(
+    "gpt-5.5",
+    {
+      _nativeCodexPassthrough: true,
+      model: "gpt-5.5",
+      input: "hello",
+      temperature: 0.7,
+      top_p: 0.9,
+      frequency_penalty: 0.1,
+      presence_penalty: 0.2,
+      logprobs: true,
+      top_logprobs: 2,
+      n: 1,
+      seed: 42,
+    },
+    true,
+    { requestEndpointPath: "/responses" }
+  );
+
+  assert.equal(result.temperature, undefined);
+  assert.equal(result.top_p, undefined);
+  assert.equal(result.frequency_penalty, undefined);
+  assert.equal(result.presence_penalty, undefined);
+  assert.equal(result.logprobs, undefined);
+  assert.equal(result.top_logprobs, undefined);
+  assert.equal(result.n, undefined);
+  assert.equal(result.seed, undefined);
+});
+
+test("CodexExecutor.transformRequest preserves store-enabled responses state and previous_response_id", () => {
   const executor = new CodexExecutor();
   const body = {
     _nativeCodexPassthrough: true,

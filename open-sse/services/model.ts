@@ -1,5 +1,6 @@
 import { PROVIDER_ID_TO_ALIAS, PROVIDER_MODELS } from "../config/providerModels.ts";
 import { ANTIGRAVITY_MODEL_ALIASES } from "../config/antigravityModelAliases.ts";
+import { ALIAS_TO_ID } from "../../src/shared/constants/providers";
 import { resolveWildcardAlias } from "./wildcardRouter.ts";
 
 type ProviderModelAliasMap = Record<string, Record<string, string>>;
@@ -27,6 +28,16 @@ for (const [id, alias] of Object.entries(PROVIDER_ID_TO_ALIAS)) {
     );
   }
   ALIAS_TO_PROVIDER_ID[alias] = id;
+}
+
+// PROVIDER_ID_TO_ALIAS is generated from the open-sse registry. Some local / self-hosted
+// providers are defined only in the dashboard provider catalog, so fold that shared alias
+// map in as a fallback. This keeps prefixes like `llamacpp/qwen36` routing to `llama-cpp`
+// instead of falling through to the default OpenAI executor config.
+for (const [alias, id] of Object.entries(ALIAS_TO_ID)) {
+  if (!ALIAS_TO_PROVIDER_ID[alias]) {
+    ALIAS_TO_PROVIDER_ID[alias] = id;
+  }
 }
 // Manual alias overrides — maps slug-style prefixes to canonical provider IDs.
 // These live outside the registry because they represent multiple providers

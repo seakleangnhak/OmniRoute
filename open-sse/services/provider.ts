@@ -18,6 +18,18 @@ const ANTHROPIC_COMPATIBLE_DEFAULTS = {
   baseUrl: "https://api.anthropic.com/v1",
 };
 
+const SELF_HOSTED_OPENAI_BASE_URLS = {
+  "lm-studio": "http://localhost:1234/v1",
+  vllm: "http://localhost:8000/v1",
+  lemonade: "http://localhost:13305/api/v1",
+  llamafile: "http://127.0.0.1:8080/v1",
+  "llama-cpp": "http://127.0.0.1:8080/v1",
+  triton: "http://localhost:8000/v1",
+  "docker-model-runner": "http://localhost:12434/v1",
+  xinference: "http://localhost:9997/v1",
+  oobabooga: "http://localhost:5000/v1",
+};
+
 function isOpenAICompatible(provider) {
   return typeof provider === "string" && provider.startsWith(OPENAI_COMPATIBLE_PREFIX);
 }
@@ -28,6 +40,23 @@ function isAnthropicCompatible(provider) {
 
 export function isClaudeCodeCompatible(provider) {
   return typeof provider === "string" && provider.startsWith(CLAUDE_CODE_COMPATIBLE_PREFIX);
+}
+
+export function resolveSelfHostedOpenAIBaseUrl(provider, providerSpecificData = null) {
+  if (typeof provider !== "string") return null;
+  const defaultBaseUrl = SELF_HOSTED_OPENAI_BASE_URLS[provider];
+  if (!defaultBaseUrl) return null;
+
+  const configuredBaseUrl =
+    providerSpecificData &&
+    typeof providerSpecificData === "object" &&
+    typeof providerSpecificData.baseUrl === "string" &&
+    providerSpecificData.baseUrl.trim().length > 0
+      ? providerSpecificData.baseUrl.trim()
+      : null;
+
+  if (configuredBaseUrl) return configuredBaseUrl;
+  return defaultBaseUrl;
 }
 
 export function getOpenAICompatibleType(
@@ -251,6 +280,14 @@ export function buildProviderUrl(
       return joinClaudeCodeCompatibleUrl(baseUrl, CLAUDE_CODE_COMPATIBLE_DEFAULT_CHAT_PATH);
     }
     return buildAnthropicCompatibleUrl(baseUrl);
+  }
+
+  const selfHostedBaseUrl = resolveSelfHostedOpenAIBaseUrl(
+    provider,
+    options?.providerSpecificData || null
+  );
+  if (selfHostedBaseUrl) {
+    return buildOpenAICompatibleUrl(selfHostedBaseUrl, "chat");
   }
 
   const entry = getRegistryEntry(provider);

@@ -14,11 +14,21 @@ const apiKeysDb = await import("../../src/lib/db/apiKeys.ts");
 const settingsDb = await import("../../src/lib/db/settings.ts");
 const imageRoute = await import("../../src/app/api/v1/images/generations/route.ts");
 const imageEditRoute = await import("../../src/app/api/v1/images/edits/route.ts");
+const providerImageRoute =
+  await import("../../src/app/api/v1/providers/[provider]/images/generations/route.ts");
 
 const originalFetch = globalThis.fetch;
+const originalRequireApiKey = process.env.REQUIRE_API_KEY;
+const originalOmnirouteApiKey = process.env.OMNIROUTE_API_KEY;
+const originalRouterApiKey = process.env.ROUTER_API_KEY;
+
+type ErrorBody = { error?: { message?: string } };
 
 async function resetStorage() {
   globalThis.fetch = originalFetch;
+  delete process.env.REQUIRE_API_KEY;
+  delete process.env.OMNIROUTE_API_KEY;
+  delete process.env.ROUTER_API_KEY;
   apiKeysDb.resetApiKeyState();
   core.resetDbInstance();
   fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
@@ -45,6 +55,12 @@ test.after(() => {
   globalThis.fetch = originalFetch;
   apiKeysDb.resetApiKeyState();
   core.resetDbInstance();
+  if (originalRequireApiKey === undefined) delete process.env.REQUIRE_API_KEY;
+  else process.env.REQUIRE_API_KEY = originalRequireApiKey;
+  if (originalOmnirouteApiKey === undefined) delete process.env.OMNIROUTE_API_KEY;
+  else process.env.OMNIROUTE_API_KEY = originalOmnirouteApiKey;
+  if (originalRouterApiKey === undefined) delete process.env.ROUTER_API_KEY;
+  else process.env.ROUTER_API_KEY = originalRouterApiKey;
   fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
 });
 
@@ -159,6 +175,66 @@ test("v1 image generation POST still requires prompts for text-input models", as
 
   assert.equal(response.status, 400);
   assert.match(body.error.message, /Prompt is required for image model: openai\/gpt-image-2/);
+});
+
+test("v1 image generation POST rejects an unknown bearer before routing", async () => {
+  const response = await imageRoute.POST(
+    new Request("http://localhost/api/v1/images/generations", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer sk-server-b-key",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-image-2",
+        prompt: "server A should not accept server B key",
+      }),
+    })
+  );
+  const body = (await response.json()) as ErrorBody;
+
+  assert.equal(response.status, 401);
+  assert.match(body.error?.message || "", /Invalid API key/);
+});
+
+test("v1 image generation POST requires a bearer when REQUIRE_API_KEY is true", async () => {
+  process.env.REQUIRE_API_KEY = "true";
+
+  const response = await imageRoute.POST(
+    new Request("http://localhost/api/v1/images/generations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "openai/gpt-image-2",
+        prompt: "missing bearer",
+      }),
+    })
+  );
+  const body = (await response.json()) as ErrorBody;
+
+  assert.equal(response.status, 401);
+  assert.match(body.error?.message || "", /Authentication required/);
+});
+
+test("provider-scoped image generation POST rejects an unknown bearer", async () => {
+  const response = await providerImageRoute.POST(
+    new Request("http://localhost/api/v1/providers/openai/images/generations", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer sk-server-b-key",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-image-2",
+        prompt: "provider scoped auth guard",
+      }),
+    }),
+    { params: Promise.resolve({ provider: "openai" }) }
+  );
+  const body = (await response.json()) as ErrorBody;
+
+  assert.equal(response.status, 401);
+  assert.match(body.error?.message || "", /Invalid API key/);
 });
 
 test("v1 image edit POST enforces disabled API key policy", async () => {

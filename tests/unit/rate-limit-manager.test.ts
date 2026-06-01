@@ -144,6 +144,64 @@ test("rate limit manager handles 429 limiter teardown and disable cleanup", asyn
   assert.equal(rateLimitManager.getRateLimitStatus("gemini", "conn-disable").active, false);
 });
 
+test("rate limit queue max wait does not expire an executing slow stream", async () => {
+  await rateLimitManager.applyRequestQueueSettings({
+    ...resilienceSettings.DEFAULT_RESILIENCE_SETTINGS.requestQueue,
+    maxWaitMs: 20,
+  });
+  rateLimitManager.enableRateLimitProtection("conn-slow-stream");
+
+  const result = await rateLimitManager.withRateLimit(
+    "llama-cpp",
+    "conn-slow-stream",
+    "qwen36",
+    async () => {
+      await wait(60);
+      return "stream-started";
+    }
+  );
+
+  assert.equal(result, "stream-started");
+});
+
+test("rate limit queue max wait rejects queued jobs before upstream dispatch", async () => {
+  await rateLimitManager.applyRequestQueueSettings({
+    ...resilienceSettings.DEFAULT_RESILIENCE_SETTINGS.requestQueue,
+    requestsPerMinute: 1,
+    concurrentRequests: 1,
+    maxWaitMs: 20,
+  });
+  rateLimitManager.enableRateLimitProtection("conn-queued");
+
+  let markFirstComplete: () => void;
+  let markFirstStarted: () => void;
+  const firstCanComplete = new Promise<void>((resolve) => {
+    markFirstComplete = resolve;
+  });
+  const firstStarted = new Promise<void>((resolve) => {
+    markFirstStarted = resolve;
+  });
+  const first = rateLimitManager.withRateLimit("openai", "conn-queued", null, async () => {
+    markFirstStarted();
+    await firstCanComplete;
+    return "first";
+  });
+  await firstStarted;
+
+  let upstreamDispatched = false;
+  await assert.rejects(
+    rateLimitManager.withRateLimit("openai", "conn-queued", null, async () => {
+      upstreamDispatched = true;
+      return "second";
+    }),
+    /Rate limit queue timed out after 20ms/
+  );
+
+  assert.equal(upstreamDispatched, false);
+  markFirstComplete!();
+  assert.equal(await first, "first");
+});
+
 test("rate limit manager uses model-scoped limiter keys for GitHub Copilot (#1624)", async () => {
   rateLimitManager.enableRateLimitProtection("conn-github");
   rateLimitManager.updateFromHeaders(
@@ -241,6 +299,29 @@ test("RATE_LIMIT_AUTO_ENABLE env var overrides dashboard auto-enable setting", a
     if (original === undefined) delete process.env.RATE_LIMIT_AUTO_ENABLE;
     else process.env.RATE_LIMIT_AUTO_ENABLE = original;
   }
+});
+
+test("rate limit auto-enable skips self-hosted chat providers", async () => {
+  const localConnection = await providersDb.createProviderConnection({
+    provider: "llama-cpp",
+    authType: "apiKey",
+    name: "Local llama.cpp",
+    apiKey: "sk-local",
+    isActive: true,
+  });
+  const explicitConnection = await providersDb.createProviderConnection({
+    provider: "llama-cpp",
+    authType: "apiKey",
+    name: "Explicit llama.cpp",
+    apiKey: "sk-local-explicit",
+    isActive: true,
+    rateLimitProtection: true,
+  });
+
+  await rateLimitManager.initializeRateLimits();
+
+  assert.equal(rateLimitManager.isRateLimitEnabled(localConnection.id), false);
+  assert.equal(rateLimitManager.isRateLimitEnabled(explicitConnection.id), true);
 });
 
 test("rate limit manager recomputes auto-enabled API key connections when queue settings change", async () => {

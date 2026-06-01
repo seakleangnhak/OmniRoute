@@ -16,6 +16,7 @@ import {
   isAllRateLimitedCredentials,
   rateLimitedProviderResponse,
 } from "@/app/api/v1/_shared/rateLimit";
+import { enforceClientApiAuth } from "../../_helpers/clientApiAuth";
 
 /**
  * Handle CORS preflight
@@ -34,6 +35,9 @@ export async function OPTIONS() {
  * OpenAI Whisper API compatible (multipart/form-data)
  */
 export async function POST(request) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   let formData;
   try {
     formData = await request.formData();

@@ -1,10 +1,5 @@
 import { handleMusicGeneration } from "@omniroute/open-sse/handlers/musicGeneration.ts";
-import {
-  getProviderCredentials,
-  clearRecoveredProviderState,
-  extractApiKey,
-  isValidApiKey,
-} from "@/sse/services/auth";
+import { getProviderCredentials, clearRecoveredProviderState } from "@/sse/services/auth";
 import {
   parseMusicModel,
   getAllMusicModels,
@@ -21,6 +16,7 @@ import {
   isAllRateLimitedCredentials,
   rateLimitedProviderResponse,
 } from "@/app/api/v1/_shared/rateLimit";
+import { enforceClientApiAuth } from "../../_helpers/clientApiAuth";
 
 /**
  * Handle CORS preflight
@@ -60,6 +56,9 @@ export async function GET() {
  * POST /v1/music/generations — generate music
  */
 export async function POST(request) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   let rawBody;
   try {
     rawBody = await request.json();

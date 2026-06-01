@@ -4075,12 +4075,17 @@ export async function handleChatCore({
         errorCode: error.code,
       };
     }
+    const explicitFailureStatus = Number((error as { status?: unknown })?.status);
     const failureStatus =
-      error.name === "AbortError"
-        ? 499
-        : error.name === "TimeoutError" || error.name === "BodyTimeoutError"
-          ? HTTP_STATUS.GATEWAY_TIMEOUT
-          : HTTP_STATUS.BAD_GATEWAY;
+      Number.isInteger(explicitFailureStatus) &&
+      explicitFailureStatus >= 400 &&
+      explicitFailureStatus <= 599
+        ? explicitFailureStatus
+        : error.name === "AbortError"
+          ? 499
+          : error.name === "TimeoutError" || error.name === "BodyTimeoutError"
+            ? HTTP_STATUS.GATEWAY_TIMEOUT
+            : HTTP_STATUS.BAD_GATEWAY;
     const failureMessage =
       error.name === "AbortError"
         ? "Request aborted"

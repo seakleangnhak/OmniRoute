@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="720" viewBox="0 0 960 720" role="img" aria-labelledby="title desc">
+  <title id="title">OmniRoute MCP Server tool inventory</title>
+  <desc id="desc">Diagram showing 43 MCP tools grouped into core, memory, skills, and Notion categories.</desc>
+  <style>
+    .bg { fill: #fff; }
+    .node { fill: #f8fafc; stroke: #64748b; stroke-width: 1.5; rx: 8; }
+    .root { fill: #eef6ff; stroke: #2563eb; stroke-width: 2; rx: 10; }
+    .leaf { fill: #fff; stroke: #94a3b8; stroke-width: 1.2; rx: 7; }
+    .line { stroke: #475569; stroke-width: 1.4; fill: none; marker-end: url(#arrow); }
+    .title { font: 700 18px Arial, sans-serif; fill: #0f172a; }
+    .label { font: 700 14px Arial, sans-serif; fill: #0f172a; }
+    .small { font: 12px Arial, sans-serif; fill: #334155; }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569" />
+    </marker>
+  </defs>
+  <rect class="bg" width="960" height="720" />
+
+  <rect class="root" x="30" y="300" width="150" height="80" />
+  <text class="title" x="105" y="330" text-anchor="middle">MCP Server</text>
+  <text class="small" x="105" y="355" text-anchor="middle">43 tools total</text>
+
+  <rect class="node" x="260" y="40" width="160" height="56" />
+  <text class="label" x="340" y="74" text-anchor="middle">Core (30)</text>
+  <rect class="node" x="260" y="278" width="160" height="56" />
+  <text class="label" x="340" y="312" text-anchor="middle">Memory (3)</text>
+  <rect class="node" x="260" y="410" width="160" height="56" />
+  <text class="label" x="340" y="444" text-anchor="middle">Skills (4)</text>
+  <rect class="node" x="260" y="566" width="160" height="56" />
+  <text class="label" x="340" y="600" text-anchor="middle">Notion (6)</text>
+
+  <path class="line" d="M180 335 C215 335 220 68 260 68" />
+  <path class="line" d="M180 340 C215 340 220 306 260 306" />
+  <path class="line" d="M180 345 C215 345 220 438 260 438" />
+  <path class="line" d="M180 350 C215 350 220 594 260 594" />
+
+  <rect class="leaf" x="520" y="18" width="360" height="72" />
+  <text class="label" x="700" y="42" text-anchor="middle">Essential (8)</text>
+  <text class="small" x="700" y="64" text-anchor="middle">health, combos, quota, route, cost, catalog, metrics</text>
+  <rect class="leaf" x="520" y="104" width="360" height="50" />
+  <text class="label" x="700" y="135" text-anchor="middle">Search (1): web_search</text>
+  <rect class="leaf" x="520" y="168" width="360" height="88" />
+  <text class="label" x="700" y="192" text-anchor="middle">Advanced (11)</text>
+  <text class="small" x="700" y="214" text-anchor="middle">simulation, budget, strategy, resilience, tests, metrics,</text>
+  <text class="small" x="700" y="234" text-anchor="middle">best combo, explain route, session, DB health, pricing</text>
+  <rect class="leaf" x="520" y="270" width="360" height="50" />
+  <text class="label" x="700" y="301" text-anchor="middle">Cache (2): stats, flush</text>
+  <rect class="leaf" x="520" y="334" width="360" height="50" />
+  <text class="label" x="700" y="365" text-anchor="middle">Compression (5)</text>
+  <rect class="leaf" x="520" y="398" width="360" height="50" />
+  <text class="label" x="700" y="429" text-anchor="middle">1Proxy / Tunnels (3)</text>
+
+  <path class="line" d="M420 68 L520 54" />
+  <path class="line" d="M420 68 L520 129" />
+  <path class="line" d="M420 68 C465 68 475 212 520 212" />
+  <path class="line" d="M420 68 C465 68 475 295 520 295" />
+  <path class="line" d="M420 68 C465 68 475 359 520 359" />
+  <path class="line" d="M420 68 C465 68 475 423 520 423" />
+
+  <rect class="leaf" x="520" y="462" width="360" height="50" />
+  <text class="label" x="700" y="493" text-anchor="middle">memory_search, memory_add, memory_clear</text>
+  <path class="line" d="M420 306 C465 306 475 487 520 487" />
+
+  <rect class="leaf" x="520" y="526" width="360" height="50" />
+  <text class="label" x="700" y="557" text-anchor="middle">skills_list, enable, execute, executions</text>
+  <path class="line" d="M420 438 C465 438 475 551 520 551" />
+
+  <rect class="leaf" x="520" y="590" width="360" height="86" />
+  <text class="label" x="700" y="614" text-anchor="middle">Notion context source tools</text>
+  <text class="small" x="700" y="636" text-anchor="middle">search, get page, list blocks, query database,</text>
+  <text class="small" x="700" y="656" text-anchor="middle">get database, append blocks</text>
+  <path class="line" d="M420 594 L520 633" />
+</svg>

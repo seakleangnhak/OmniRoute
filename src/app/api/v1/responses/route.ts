@@ -1,5 +1,6 @@
 import { handleChat } from "@/sse/handlers/chat";
 import { withEarlyStreamKeepalive } from "@omniroute/open-sse/utils/earlyStreamKeepalive";
+import { enforceClientApiAuth } from "../_helpers/clientApiAuth";
 
 // NOTE: We do NOT call initTranslators() here — the translator registry is
 // bootstrapped at module level inside open-sse/translator/index.ts when it
@@ -24,6 +25,9 @@ export async function OPTIONS() {
  * Handled by the unified chat handler (openai-responses format auto-detected).
  */
 export async function POST(request) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   // Codex CLI (wire_api="responses") consumes this endpoint over SSE and its reqwest
   // client drops the connection if no bytes arrive within ~5s. Keep the connection
   // warm with early keepalives while the upstream produces its first token (#2544).

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { isAuthenticated } from "@/shared/utils/apiAuth";
 import { isValidationFailure, validateBody } from "@/shared/validation/helpers";
 import { issueRegisteredKey, checkQuota, listRegisteredKeys } from "@/lib/db/registeredKeys";
+import { enforceClientApiAuth } from "../_helpers/clientApiAuth";
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
@@ -23,6 +24,9 @@ const issueKeySchema = z.object({
  * Optional query params: ?provider=&accountId=
  */
 export async function GET(request: Request) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   if (!(await isAuthenticated(request))) {
     return NextResponse.json({ error: { message: "Authentication required" } }, { status: 401 });
   }
@@ -50,6 +54,9 @@ export async function GET(request: Request) {
  * Subsequent fetches will only return the masked prefix.
  */
 export async function POST(request: Request) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   if (!(await isAuthenticated(request))) {
     return NextResponse.json({ error: { message: "Authentication required" } }, { status: 401 });
   }

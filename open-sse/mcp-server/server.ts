@@ -210,7 +210,12 @@ function withScopeEnforcement(
 ) {
   return async (args: unknown, extra?: McpToolExtraLike): Promise<TextToolResult> => {
     const scopeContext = resolveCallerScopeContext(extra, Array.from(MCP_ALLOWED_SCOPES));
-    const scopeCheck = evaluateToolScopes(toolName, scopeContext.scopes, MCP_ENFORCE_SCOPES, toolScopes);
+    const scopeCheck = evaluateToolScopes(
+      toolName,
+      scopeContext.scopes,
+      MCP_ENFORCE_SCOPES,
+      toolScopes
+    );
     if (!scopeCheck.allowed) {
       const missingScopes =
         scopeCheck.missing.length > 0 ? scopeCheck.missing.join(", ") : "unavailable";
@@ -976,7 +981,6 @@ export function createMcpServer(): McpServer {
         async (args) => {
           try {
             const parsedArgs = toolDef.inputSchema.parse(args ?? {});
-            // @ts-expect-error - handler type lost through dynamic Object.values() access
             const result = await toolDef.handler(parsedArgs);
             return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
           } catch (err) {
@@ -1003,7 +1007,6 @@ export function createMcpServer(): McpServer {
         async (args) => {
           try {
             const parsedArgs = toolDef.inputSchema.parse(args ?? {});
-            // @ts-expect-error - handler type lost through dynamic Object.values() access
             const result = await toolDef.handler(parsedArgs);
             return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
           } catch (err) {
@@ -1057,7 +1060,6 @@ export function createMcpServer(): McpServer {
         async (args) => {
           try {
             const parsedArgs = toolDef.inputSchema.parse(args ?? {});
-            // @ts-expect-error - handler type lost through dynamic Object.values() access
             const result = await toolDef.handler(parsedArgs);
             return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
           } catch (err) {

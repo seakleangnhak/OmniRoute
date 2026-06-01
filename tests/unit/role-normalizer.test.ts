@@ -1,8 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const { normalizeDeveloperRole, normalizeModelRole, normalizeSystemRole, normalizeRoles } =
-  await import("../../open-sse/services/roleNormalizer.ts");
+const {
+  normalizeDeveloperRole,
+  normalizeModelRole,
+  normalizeSystemRole,
+  normalizeSystemRoleOrder,
+  normalizeRoles,
+} = await import("../../open-sse/services/roleNormalizer.ts");
 
 test("normalizeDeveloperRole preserves developer for official openai provider by default", () => {
   const messages = [{ role: "developer", content: "internal policy" }];
@@ -119,9 +124,56 @@ test("normalizeRoles composes model, developer and system normalization in order
   ]);
 });
 
+test("normalizeSystemRoleOrder merges system messages into one leading message for self-hosted providers", () => {
+  const messages = [
+    { role: "system", content: [{ type: "text", text: "initial policy" }] },
+    { role: "user", content: "first user" },
+    { role: "assistant", content: "first answer" },
+    { role: "system", content: "late policy" },
+    { role: "user", content: "next user" },
+  ];
+
+  const result = normalizeSystemRoleOrder(messages, "llama-cpp", "qwen36");
+
+  assert.deepEqual(result, [
+    { role: "system", content: "initial policy\n\nlate policy" },
+    { role: "user", content: "first user" },
+    { role: "assistant", content: "first answer" },
+    { role: "user", content: "next user" },
+  ]);
+});
+
+test("normalizeRoles converts late developer messages and leads with system for llama.cpp", () => {
+  const messages = [
+    { role: "user", content: "first user" },
+    { role: "developer", content: "late policy" },
+    { role: "user", content: "next user" },
+  ];
+
+  const result = normalizeRoles(messages, "llama-cpp", "qwen36", "openai");
+
+  assert.deepEqual(result, [
+    { role: "system", content: "late policy" },
+    { role: "user", content: "first user" },
+    { role: "user", content: "next user" },
+  ]);
+});
+
+test("normalizeSystemRoleOrder leaves non-self-hosted providers untouched", () => {
+  const messages = [
+    { role: "user", content: "first user" },
+    { role: "system", content: "late policy" },
+  ];
+
+  const result = normalizeSystemRoleOrder(messages, "openai", "gpt-5");
+
+  assert.deepEqual(result, messages);
+});
+
 test("role normalization returns non-arrays unchanged", () => {
   assert.equal(normalizeDeveloperRole(null, "openai"), null);
   assert.equal(normalizeModelRole("invalid"), "invalid");
   assert.equal(normalizeSystemRole(undefined, "openai", "gpt-5"), undefined);
+  assert.equal(normalizeSystemRoleOrder(undefined, "llama-cpp", "qwen36"), undefined);
   assert.equal(normalizeRoles(false, "openai", "gpt-5", "openai"), false);
 });

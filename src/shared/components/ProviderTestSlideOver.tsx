@@ -217,18 +217,26 @@ function TestToolbar({
     <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-black/5 dark:border-white/5 bg-bg-subtle/30 shrink-0">
       <div className="flex items-center gap-1.5 min-w-0 flex-1">
         <label className="text-[11px] text-text-muted shrink-0">Model:</label>
-        <select
-          value={model}
-          onChange={(e) => onModelChange(e.target.value)}
-          className="min-w-0 flex-1 rounded-md border border-border bg-bg-subtle text-xs px-2 py-1 text-text-main focus:outline-none focus:ring-1 focus:ring-primary"
-        >
-          {modelOptions.length === 0 && <option value="">—</option>}
-          {modelOptions.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.id}
-            </option>
-          ))}
-        </select>
+        {modelOptions.length > 0 ? (
+          <select
+            value={model}
+            onChange={(e) => onModelChange(e.target.value)}
+            className="min-w-0 flex-1 rounded-md border border-border bg-bg-subtle text-xs px-2 py-1 text-text-main focus:outline-none focus:ring-1 focus:ring-primary"
+          >
+            {modelOptions.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.id}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            value={model}
+            onChange={(e) => onModelChange(e.target.value)}
+            placeholder="Enter model id"
+            className="min-w-0 flex-1 rounded-md border border-border bg-bg-subtle text-xs px-2 py-1 text-text-main placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+        )}
       </div>
       {keys.length > 0 && (
         <div className="flex items-center gap-1.5">

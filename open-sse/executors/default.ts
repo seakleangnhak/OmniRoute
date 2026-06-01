@@ -20,6 +20,7 @@ import {
   getOpenAICompatibleType,
   getTargetFormat,
   isClaudeCodeCompatible,
+  resolveSelfHostedOpenAIBaseUrl,
 } from "../services/provider.ts";
 import { sanitizeQwenThinkingToolChoice } from "../services/qwenThinking.ts";
 import { buildDataRobotChatUrl } from "../config/datarobot.ts";
@@ -134,6 +135,13 @@ export class DefaultExecutor extends BaseExecutor {
       const normalized = baseUrl.replace(/\/$/, "");
       return `${normalized}${customPath || "/messages"}`;
     }
+    const selfHostedBaseUrl = resolveSelfHostedOpenAIBaseUrl(
+      this.provider,
+      credentials?.providerSpecificData || null
+    );
+    if (selfHostedBaseUrl) {
+      return normalizeOpenAIChatUrl(selfHostedBaseUrl);
+    }
     switch (this.provider) {
       case "bailian-coding-plan": {
         const baseUrl = credentials?.providerSpecificData?.baseUrl || this.config.baseUrl;
@@ -201,14 +209,7 @@ export class DefaultExecutor extends BaseExecutor {
       }
       case "lm-studio":
       case "modal":
-      case "reka":
-      case "vllm":
-      case "lemonade":
-      case "llamafile":
-      case "triton":
-      case "docker-model-runner":
-      case "xinference":
-      case "oobabooga": {
+      case "reka": {
         const baseUrl = credentials?.providerSpecificData?.baseUrl || this.config.baseUrl;
         return normalizeOpenAIChatUrl(baseUrl);
       }

@@ -12,6 +12,7 @@ import Bottleneck from "bottleneck";
 import { parseRetryAfterFromBody } from "./accountFallback.ts";
 import { getProviderCategory } from "../config/providerRegistry.ts";
 import { getCodexRateLimitKey } from "../executors/codex.ts";
+import { isSelfHostedChatProvider } from "../../src/shared/constants/providers";
 import {
   DEFAULT_RESILIENCE_SETTINGS,
   resolveResilienceSettings,
@@ -36,6 +37,30 @@ interface LimiterUpdateSettings {
 }
 
 type JsonRecord = Record<string, unknown>;
+
+function createQueueTimeoutError(
+  timeoutMs: number,
+  provider: string,
+  connectionId: string,
+  model: string | null | undefined
+) {
+  const modelSuffix = model ? ` for ${model}` : "";
+  const error = new Error(
+    `Rate limit queue timed out after ${timeoutMs}ms for ${provider}:${connectionId}${modelSuffix}`
+  );
+  error.name = "RateLimitQueueTimeoutError";
+  (error as Error & { status?: number; code?: string }).status = 429;
+  (error as Error & { status?: number; code?: string }).code = "rate_limit_queue_timeout";
+  return error;
+}
+
+function createAbortError(signal: AbortSignal) {
+  const reason = signal.reason;
+  if (reason instanceof Error) return reason;
+  const err = new Error(typeof reason === "string" ? reason : "The operation was aborted");
+  err.name = "AbortError";
+  return err;
+}
 
 function toRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
@@ -162,7 +187,8 @@ function reconcileEnabledConnections(
     if (
       isAutoEnableActive(requestQueueSettings) &&
       getProviderCategory(provider) === "apikey" &&
-      isActive
+      isActive &&
+      !isSelfHostedChatProvider(provider)
     ) {
       nextEnabledConnections.add(connectionId);
       autoCount++;
@@ -444,28 +470,61 @@ export async function withRateLimit(provider, connectionId, model, fn, signal = 
   }
 
   if (signal?.aborted) {
-    const reason = signal.reason;
-    if (reason instanceof Error) throw reason;
-    const err = new Error(typeof reason === "string" ? reason : "The operation was aborted");
-    err.name = "AbortError";
-    throw err;
+    throw createAbortError(signal);
   }
 
   const limiter = getLimiter(provider, connectionId, model);
   const maxWaitMs = currentRequestQueueSettings.maxWaitMs;
-  const scheduleOpts = maxWaitMs && maxWaitMs > 0 ? { expiration: maxWaitMs } : {};
+  let started = false;
+  let cancellationError: Error | null = null;
+  let queueTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  const clearQueueTimeout = () => {
+    if (queueTimeoutId) {
+      clearTimeout(queueTimeoutId);
+      queueTimeoutId = null;
+    }
+  };
+
+  const scheduledPromise = limiter.schedule({}, async () => {
+    started = true;
+    clearQueueTimeout();
+    if (cancellationError) throw cancellationError;
+    return await fn();
+  });
+
+  // If a caller gives up while still queued, Bottleneck has no public API to
+  // remove just that job. Keep the queued job lightweight by throwing before it
+  // calls the upstream, and observe the Promise so the later rejection is not
+  // reported as unhandled.
+  void scheduledPromise.catch(() => {});
+
+  const waiters: Promise<unknown>[] = [scheduledPromise];
+
+  if (maxWaitMs && maxWaitMs > 0) {
+    waiters.push(
+      new Promise<never>((_, reject) => {
+        queueTimeoutId = setTimeout(() => {
+          if (started) return;
+          const key = getLimiterKey(provider, connectionId, model);
+          const err = createQueueTimeoutError(maxWaitMs, provider, connectionId, model);
+          cancellationError = err;
+          logRateLimit(
+            `⏰ [RATE-LIMIT] ${key} — job waited ${Math.ceil(maxWaitMs / 1000)}s in queue, dropping before upstream dispatch`
+          );
+          reject(err);
+        }, maxWaitMs);
+      })
+    );
+  }
 
   try {
     if (signal) {
       let abortListener: (() => void) | undefined;
       const abortPromise = new Promise<never>((_, reject) => {
         const onAbort = () => {
-          const reason = signal.reason;
-          const err =
-            reason instanceof Error
-              ? reason
-              : new Error(typeof reason === "string" ? reason : "The operation was aborted");
-          err.name = "AbortError";
+          const err = createAbortError(signal);
+          cancellationError = err;
           reject(err);
         };
         if (signal.aborted) {
@@ -477,14 +536,14 @@ export async function withRateLimit(provider, connectionId, model, fn, signal = 
       });
 
       try {
-        return await Promise.race([limiter.schedule(scheduleOpts, fn), abortPromise]);
+        return await Promise.race([...waiters, abortPromise]);
       } finally {
         if (abortListener) {
           signal.removeEventListener("abort", abortListener);
         }
       }
     } else {
-      return await limiter.schedule(scheduleOpts, fn);
+      return await Promise.race(waiters);
     }
   } catch (err) {
     // Bottleneck throws when a job exceeds its expiration timeout.
@@ -494,8 +553,11 @@ export async function withRateLimit(provider, connectionId, model, fn, signal = 
       logRateLimit(
         `⏰ [RATE-LIMIT] ${key} — job expired after ${Math.ceil((maxWaitMs || 0) / 1000)}s in queue, dropping`
       );
+      throw createQueueTimeoutError(maxWaitMs || 0, provider, connectionId, model);
     }
     throw err;
+  } finally {
+    clearQueueTimeout();
   }
 }
 

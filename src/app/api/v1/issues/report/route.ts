@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { isAuthenticated } from "@/shared/utils/apiAuth";
 import { isValidationFailure, validateBody } from "@/shared/validation/helpers";
+import { enforceClientApiAuth } from "../../_helpers/clientApiAuth";
 
 const reportSchema = z.object({
   title: z.string().min(1).max(300),
@@ -23,6 +24,9 @@ const reportSchema = z.object({
  * logged only).
  */
 export async function POST(request: Request) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   if (!(await isAuthenticated(request))) {
     return NextResponse.json({ error: { message: "Authentication required" } }, { status: 401 });
   }

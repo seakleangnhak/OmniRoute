@@ -33,9 +33,28 @@ test("default providerWindowDefaults is empty — all providers share the global
 
 test("resolveResilienceSettings returns defaults when nothing is stored", () => {
   const resolved = resolveResilienceSettings({});
+  assert.equal(resolved.requestQueue.maxWaitMs, 10_000);
   assert.equal(resolved.quotaPreflight.defaultThresholdPercent, 2);
   assert.equal(resolved.quotaPreflight.warnThresholdPercent, 20);
   assert.deepEqual(resolved.quotaPreflight.providerWindowDefaults, {});
+});
+
+test("resolveResilienceSettings upgrades legacy 120s queue wait default to 10s", () => {
+  const original = process.env.RATE_LIMIT_MAX_WAIT_MS;
+  delete process.env.RATE_LIMIT_MAX_WAIT_MS;
+  try {
+    const resolved = resolveResilienceSettings({
+      resilienceSettings: {
+        requestQueue: {
+          maxWaitMs: 120_000,
+        },
+      },
+    });
+    assert.equal(resolved.requestQueue.maxWaitMs, 10_000);
+  } finally {
+    if (original === undefined) delete process.env.RATE_LIMIT_MAX_WAIT_MS;
+    else process.env.RATE_LIMIT_MAX_WAIT_MS = original;
+  }
 });
 
 test("mergeResilienceSettings: partial defaultThresholdPercent update preserves warnThresholdPercent", () => {

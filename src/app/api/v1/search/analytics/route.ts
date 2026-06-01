@@ -9,8 +9,12 @@ import { NextResponse } from "next/server";
 import { SEARCH_PROVIDERS } from "@omniroute/open-sse/config/searchRegistry.ts";
 import { getDbInstance } from "@/lib/db/core";
 import { enforceApiKeyPolicy } from "@/shared/utils/apiKeyPolicy";
+import { enforceClientApiAuth } from "../../_helpers/clientApiAuth";
 
 export async function GET(req: Request) {
+  const authRejection = await enforceClientApiAuth(req);
+  if (authRejection) return authRejection;
+
   const policy = await enforceApiKeyPolicy(req, "analytics");
   if (policy.rejection) return policy.rejection;
 

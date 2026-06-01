@@ -258,9 +258,9 @@ Web/search provider abstraction (Tavily, Brave, Exa, Serper, etc.).
 GET /v1/ws?handshake=1
 ```
 
-Validates a WebSocket upgrade handshake and returns the wire protocol example messages (`request`, `cancel`). Actual WS frames are handled by the bundled WS server outside the Next.js route table.
+Validates a WebSocket upgrade handshake and returns the wire protocol example messages (`request`, `cancel`). Actual WS frames are handled by the bundled WS server outside the Next.js route table. The upgrade is authenticated before any prompt frames are accepted.
 
-**Auth:** Bearer API key during handshake.
+**Auth:** Bearer API key during handshake, or `api_key` / `token` / `access_token` query credential for clients that cannot send headers. Dashboard session cookies are also accepted for browser clients. WebSocket auth is on by default; `REQUIRE_API_KEY=true` always forces it on.
 
 ---
 

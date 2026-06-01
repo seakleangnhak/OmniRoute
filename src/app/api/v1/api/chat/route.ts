@@ -1,6 +1,7 @@
 import { handleChat } from "@/sse/handlers/chat";
 import { initTranslators } from "@omniroute/open-sse/translator/index.ts";
 import { transformToOllama } from "@omniroute/open-sse/utils/ollamaTransform.ts";
+import { enforceClientApiAuth } from "../../_helpers/clientApiAuth";
 
 let initialized = false;
 
@@ -22,6 +23,9 @@ export async function OPTIONS() {
 }
 
 export async function POST(request) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   await ensureInitialized();
 
   const clonedReq = request.clone();

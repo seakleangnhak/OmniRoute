@@ -65,6 +65,16 @@ test("Anthropic-compatible Claude Code providers use the Claude Code URL and hea
   assert.equal(getTargetFormat("anthropic-compatible-cc-demo"), "claude");
 });
 
+test("self-hosted OpenAI-style providers use local base URLs", () => {
+  const configuredUrl = buildProviderUrl("llama-cpp", "local-model", true, {
+    providerSpecificData: { baseUrl: "http://127.0.0.1:8080/v1" },
+  });
+  const defaultUrl = buildProviderUrl("llama-cpp", "local-model", true);
+
+  assert.equal(configuredUrl, "http://127.0.0.1:8080/v1/chat/completions");
+  assert.equal(defaultUrl, "http://127.0.0.1:8080/v1/chat/completions");
+});
+
 test("GitHub provider headers include request IDs and JSON accept for non-streaming requests", () => {
   const headers = buildProviderHeaders(
     "github",

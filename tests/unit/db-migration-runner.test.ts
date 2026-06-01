@@ -1252,6 +1252,93 @@ test(
 );
 
 test(
+  "runMigrations rehomes legacy proxy 051-053 markers before applying current migrations",
+  serial,
+  async () => {
+    const runner = await importFresh("src/lib/db/migrationRunner.ts");
+    const db = createDb();
+
+    try {
+      db.exec(`
+        CREATE TABLE _omniroute_migrations (
+          version TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE files (
+          id TEXT PRIMARY KEY,
+          status TEXT
+        );
+      `);
+
+      const legacyProxyMigrations = [
+        ["051", "proxy_rotation_metadata"],
+        ["052", "proxy_quarantine_metadata"],
+        ["053", "proxy_observability"],
+      ] as const;
+      for (const [version, name] of legacyProxyMigrations) {
+        db.prepare("INSERT INTO _omniroute_migrations (version, name) VALUES (?, ?)").run(
+          version,
+          name
+        );
+      }
+
+      const consoleErrors: string[] = [];
+      const originalError = console.error;
+      console.error = (...args: any[]) => {
+        consoleErrors.push(args.map(String).join(" "));
+      };
+
+      try {
+        const count = withMockedMigrationFs(
+          {
+            "051_hot_path_db_indexes.sql":
+              "CREATE TABLE IF NOT EXISTS hot_path_indexes_applied (id TEXT PRIMARY KEY);",
+            "052_manifest_routing.sql":
+              "CREATE TABLE IF NOT EXISTS tier_config (key TEXT PRIMARY KEY);",
+            "053_remove_status_from_files.sql": "ALTER TABLE files DROP COLUMN status;",
+          },
+          () => runner.runMigrations(db)
+        );
+
+        assert.equal(count, 3);
+
+        const rows = db
+          .prepare("SELECT version, name FROM _omniroute_migrations ORDER BY version")
+          .all();
+        assert.deepEqual(rows, [
+          { version: "051", name: "hot_path_db_indexes" },
+          { version: "052", name: "manifest_routing" },
+          { version: "053", name: "remove_status_from_files" },
+          { version: "legacy-051-proxy_rotation_metadata", name: "proxy_rotation_metadata" },
+          { version: "legacy-052-proxy_quarantine_metadata", name: "proxy_quarantine_metadata" },
+          { version: "legacy-053-proxy_observability", name: "proxy_observability" },
+        ]);
+        assert.equal(
+          (db.prepare("PRAGMA table_info(files)").all() as Array<{ name: string }>).some(
+            (column) => column.name === "status"
+          ),
+          false
+        );
+
+        const renumberingWarnings = consoleErrors.filter(
+          (e) => e.includes("CRITICAL") && e.includes("renumbered")
+        );
+        assert.equal(
+          renumberingWarnings.length,
+          0,
+          `Expected no renumbering warnings, got: ${renumberingWarnings.join("; ")}`
+        );
+      } finally {
+        console.error = originalError;
+      }
+    } finally {
+      db.close();
+    }
+  }
+);
+
+test(
   "rehomeLegacyVersionSlotMigrations frees upstream 062 after local image-count migration",
   serial,
   async () => {
@@ -1325,3 +1412,146 @@ test(
     }
   }
 );
+
+test(
+  "reconcileRenumberedMigrations moves collision-era token and discovery markers",
+  serial,
+  async () => {
+    const runner = await importFresh("src/lib/db/migrationRunner.ts");
+    const db = createDb();
+
+    try {
+      db.exec(`
+        CREATE TABLE _omniroute_migrations (
+          version TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE call_logs (id TEXT PRIMARY KEY);
+        CREATE TABLE usage_history (id TEXT PRIMARY KEY, api_key_id TEXT, provider TEXT, model TEXT, timestamp TEXT);
+        CREATE TABLE api_key_token_limits (id TEXT PRIMARY KEY);
+        CREATE TABLE api_key_token_counters (limit_id TEXT, window_start TEXT);
+        CREATE TABLE api_key_token_limit_reset_logs (id INTEGER PRIMARY KEY AUTOINCREMENT);
+        CREATE TABLE discovery_results (id INTEGER PRIMARY KEY AUTOINCREMENT);
+      `);
+      db.prepare("INSERT INTO _omniroute_migrations (version, name) VALUES (?, ?)").run(
+        "073",
+        "per_model_token_limits"
+      );
+      db.prepare("INSERT INTO _omniroute_migrations (version, name) VALUES (?, ?)").run(
+        "074",
+        "discovery_results"
+      );
+
+      const consoleErrors: string[] = [];
+      const originalError = console.error;
+      console.error = (...args: any[]) => {
+        consoleErrors.push(args.map(String).join(" "));
+      };
+
+      try {
+        const count = withMockedMigrationFs(
+          {
+            "073_chatgpt_image_cache.sql":
+              "CREATE TABLE IF NOT EXISTS chatgpt_image_cache (id TEXT PRIMARY KEY);",
+            "074_call_log_images_count.sql":
+              "ALTER TABLE call_logs ADD COLUMN images_count INTEGER DEFAULT NULL;",
+            "077_per_model_token_limits.sql":
+              "CREATE TABLE IF NOT EXISTS api_key_token_limits (id TEXT PRIMARY KEY);",
+            "078_discovery_results.sql":
+              "CREATE TABLE IF NOT EXISTS discovery_results (id INTEGER PRIMARY KEY AUTOINCREMENT);",
+          },
+          () => runner.runMigrations(db)
+        );
+
+        assert.equal(count, 2);
+        assert.equal(
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("073")?.name,
+          "chatgpt_image_cache"
+        );
+        assert.equal(
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("074")?.name,
+          "call_log_images_count"
+        );
+        assert.equal(
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("077")?.name,
+          "per_model_token_limits"
+        );
+        assert.equal(
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("078")?.name,
+          "discovery_results"
+        );
+
+        const renumberingWarnings = consoleErrors.filter(
+          (e) => e.includes("CRITICAL") && e.includes("renumbered")
+        );
+        assert.equal(
+          renumberingWarnings.length,
+          0,
+          `Expected no renumbering warnings, got: ${renumberingWarnings.join("; ")}`
+        );
+      } finally {
+        console.error = originalError;
+      }
+    } finally {
+      db.close();
+    }
+  }
+);
+
+test("runMigrations applies canonical 077 and 078 after local 073 and 074", serial, async () => {
+  const runner = await importFresh("src/lib/db/migrationRunner.ts");
+  const db = createDb();
+
+  try {
+    db.exec(`
+      CREATE TABLE _omniroute_migrations (
+        version TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE call_logs (id TEXT PRIMARY KEY, images_count INTEGER DEFAULT NULL);
+      CREATE TABLE chatgpt_image_cache (id TEXT PRIMARY KEY);
+      CREATE TABLE usage_history (id TEXT PRIMARY KEY, api_key_id TEXT, provider TEXT, model TEXT, timestamp TEXT);
+    `);
+    db.prepare("INSERT INTO _omniroute_migrations (version, name) VALUES (?, ?)").run(
+      "073",
+      "chatgpt_image_cache"
+    );
+    db.prepare("INSERT INTO _omniroute_migrations (version, name) VALUES (?, ?)").run(
+      "074",
+      "call_log_images_count"
+    );
+
+    const count = withMockedMigrationFs(
+      {
+        "073_chatgpt_image_cache.sql":
+          "CREATE TABLE IF NOT EXISTS chatgpt_image_cache (id TEXT PRIMARY KEY);",
+        "074_call_log_images_count.sql":
+          "ALTER TABLE call_logs ADD COLUMN images_count INTEGER DEFAULT NULL;",
+        "077_per_model_token_limits.sql": `
+          CREATE TABLE IF NOT EXISTS api_key_token_limits (id TEXT PRIMARY KEY);
+          CREATE TABLE IF NOT EXISTS api_key_token_counters (limit_id TEXT, window_start TEXT);
+          CREATE TABLE IF NOT EXISTS api_key_token_limit_reset_logs (id INTEGER PRIMARY KEY AUTOINCREMENT);
+        `,
+        "078_discovery_results.sql":
+          "CREATE TABLE IF NOT EXISTS discovery_results (id INTEGER PRIMARY KEY AUTOINCREMENT);",
+      },
+      () => runner.runMigrations(db)
+    );
+
+    assert.equal(count, 2);
+    assert.equal(
+      db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("077")?.name,
+      "per_model_token_limits"
+    );
+    assert.equal(
+      db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("078")?.name,
+      "discovery_results"
+    );
+    assert.ok(db.prepare("SELECT id FROM api_key_token_limits LIMIT 1").columns());
+    assert.ok(db.prepare("SELECT id FROM discovery_results LIMIT 1").columns());
+  } finally {
+    db.close();
+  }
+});

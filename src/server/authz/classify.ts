@@ -69,6 +69,16 @@ export function classifyRoute(rawPath: string, method: string = "GET"): RouteCla
     };
   }
 
+  if (isClassifiedAsPublic(normalizedPath, method)) {
+    return {
+      routeClass: "PUBLIC",
+      reason: matchesReadonlyPublic(normalizedPath, method)
+        ? "public_readonly_prefix"
+        : "public_prefix",
+      normalizedPath,
+    };
+  }
+
   if (normalizedPath === "/api/v1" || normalizedPath.startsWith("/api/v1/")) {
     return {
       routeClass: "CLIENT_API",
@@ -78,16 +88,6 @@ export function classifyRoute(rawPath: string, method: string = "GET"): RouteCla
   }
 
   if (normalizedPath.startsWith("/api/")) {
-    if (isClassifiedAsPublic(normalizedPath, method)) {
-      return {
-        routeClass: "PUBLIC",
-        reason: matchesReadonlyPublic(normalizedPath, method)
-          ? "public_readonly_prefix"
-          : "public_prefix",
-        normalizedPath,
-      };
-    }
-
     return {
       routeClass: "MANAGEMENT",
       reason: "management_api",

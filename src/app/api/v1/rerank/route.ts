@@ -11,6 +11,7 @@ import {
   isAllRateLimitedCredentials,
   rateLimitedProviderResponse,
 } from "@/app/api/v1/_shared/rateLimit";
+import { enforceClientApiAuth } from "../_helpers/clientApiAuth";
 
 /**
  * Handle CORS preflight
@@ -49,6 +50,9 @@ function buildDynamicRerankProvider(node: any) {
  * and local provider_nodes (oMLX, vLLM, etc.) via dynamic routing.
  */
 export async function POST(request) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   let rawBody;
   try {
     rawBody = await request.json();

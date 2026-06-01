@@ -13,6 +13,7 @@ import { errorResponse } from "@omniroute/open-sse/utils/error.ts";
 import { HTTP_STATUS } from "@omniroute/open-sse/config/constants.ts";
 import { extractApiKey, isValidApiKey } from "@/sse/services/auth";
 import { isDashboardSessionAuthenticated } from "@/shared/utils/apiAuth";
+import { enforceClientApiAuth } from "../_helpers/clientApiAuth";
 import { projectCombo, type PublicCombo } from "./projectCombo";
 
 export async function OPTIONS() {
@@ -25,6 +26,9 @@ export async function OPTIONS() {
 }
 
 export async function GET(request: Request) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   // Accept: (1) valid Bearer API key, (2) dashboard session cookie. Reject
   // anonymous requests so combo metadata isn't world-readable on a deployed
   // proxy unless the operator has explicitly disabled API-key enforcement.

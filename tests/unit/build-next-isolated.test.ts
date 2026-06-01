@@ -98,13 +98,17 @@ test("resolveNextBuildEnv forces stable build worker mode unless already provide
   const defaultEnv = resolveNextBuildEnv({ NODE_ENV: "test" });
   assert.equal(defaultEnv.NEXT_PRIVATE_BUILD_WORKER, "0");
   assert.equal(defaultEnv.NODE_ENV, "test");
+  assert.equal(defaultEnv.NODE_OPTIONS, "--max-old-space-size=4096");
 
   const preservedEnv = resolveNextBuildEnv({
     NODE_ENV: "production",
     NEXT_PRIVATE_BUILD_WORKER: "1",
+    NODE_OPTIONS: "--trace-warnings --max-old-space-size=2048",
+    OMNIROUTE_BUILD_MEMORY_MB: "6144",
   });
   assert.equal(preservedEnv.NEXT_PRIVATE_BUILD_WORKER, "1");
   assert.equal(preservedEnv.NODE_ENV, "production");
+  assert.equal(preservedEnv.NODE_OPTIONS, "--trace-warnings --max-old-space-size=6144");
 });
 
 test("getTransientBuildPaths leaves _tasks in place by default", () => {

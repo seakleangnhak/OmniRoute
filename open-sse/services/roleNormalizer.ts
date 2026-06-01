@@ -10,6 +10,8 @@
  * avoid breaking changes to the existing RegistryEntry interface.
  */
 
+import { isSelfHostedChatProvider } from "../../src/shared/constants/providers";
+
 // ── Provider capabilities ──────────────────────────────────────────────────
 
 /**
@@ -96,6 +98,16 @@ function supportsSystemRole(provider: string, model: string): boolean {
   }
 
   return true;
+}
+
+function isSystemLikeRole(role: unknown): boolean {
+  if (typeof role !== "string") return false;
+  const normalized = role.toLowerCase();
+  return normalized === "system" || normalized === "developer";
+}
+
+function requiresLeadingSystemRole(provider: string): boolean {
+  return isSelfHostedChatProvider(provider);
 }
 
 /**
@@ -222,6 +234,54 @@ export function normalizeSystemRole(
 }
 
 /**
+ * Some self-hosted OpenAI-compatible chat templates (notably Qwen templates in
+ * llama.cpp) accept system messages only before the first non-system turn.
+ * Codex/Responses history can contain later developer/system instructions, so
+ * merge those system-like messages into one leading system message without
+ * touching providers that tolerate OpenAI's looser ordering.
+ */
+export function normalizeSystemRoleOrder(
+  messages: NormalizedMessage[] | unknown,
+  provider: string,
+  model: string
+): NormalizedMessage[] | unknown {
+  void model;
+  if (!Array.isArray(messages) || messages.length === 0) return messages;
+  if (!requiresLeadingSystemRole(provider)) return messages;
+
+  const systemMessages: NormalizedMessage[] = [];
+  const nonSystemMessages: NormalizedMessage[] = [];
+  let sawNonSystem = false;
+  let changed = false;
+
+  for (const message of messages) {
+    if (message && typeof message === "object" && isSystemLikeRole(message.role)) {
+      if (sawNonSystem) changed = true;
+      systemMessages.push(message);
+    } else {
+      sawNonSystem = true;
+      nonSystemMessages.push(message);
+    }
+  }
+
+  if (systemMessages.length === 0) return messages;
+  if (systemMessages.length > 1) changed = true;
+  if (!changed) return messages;
+
+  const systemContent = systemMessages
+    .map((message) => extractTextFromContent(message.content))
+    .filter(Boolean)
+    .join("\n\n");
+  const mergedSystemMessage: NormalizedMessage = {
+    ...systemMessages[0],
+    role: "system",
+    content: systemContent || systemMessages[0].content,
+  };
+
+  return [mergedSystemMessage, ...nonSystemMessages];
+}
+
+/**
  * Full role normalization pipeline.
  * Call this before sending the request to the provider.
  * Applies developer→system (when needed) then system→user for providers/models that do not support system role.
@@ -245,6 +305,7 @@ export function normalizeRoles(
   let result = normalizeModelRole(messages);
   result = normalizeDeveloperRole(result, targetFormat, preserveDeveloperRole, provider);
   result = normalizeSystemRole(result, provider, model);
+  result = normalizeSystemRoleOrder(result, provider, model);
 
   return result;
 }

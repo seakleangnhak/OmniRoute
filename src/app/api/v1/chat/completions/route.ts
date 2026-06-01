@@ -3,6 +3,7 @@ import { callCloudWithMachineId } from "@/shared/utils/cloud";
 import { handleChat } from "@/sse/handlers/chat";
 import { initTranslators } from "@omniroute/open-sse/translator/index.ts";
 import { createInjectionGuard } from "@/middleware/promptInjectionGuard";
+import { enforceClientApiAuth } from "../../_helpers/clientApiAuth";
 
 let initPromise = null;
 
@@ -29,6 +30,9 @@ export async function OPTIONS() {
 }
 
 export async function POST(request) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   await ensureInitialized();
 
   // One-line marker for diagnosing 413 / Server-Action interceptions.

@@ -183,6 +183,18 @@ const RENAMED_MIGRATION_COMPATIBILITY = [
     toVersion: "074",
     toName: "call_log_images_count",
   },
+  {
+    fromVersion: "073",
+    fromName: "per_model_token_limits",
+    toVersion: "077",
+    toName: "per_model_token_limits",
+  },
+  {
+    fromVersion: "074",
+    fromName: "discovery_results",
+    toVersion: "078",
+    toName: "discovery_results",
+  },
 ] as const;
 
 const LEGACY_VERSION_SLOT_MIGRATIONS = [
@@ -197,6 +209,9 @@ const LEGACY_VERSION_SLOT_MIGRATIONS = [
   { version: "040", name: "call_log_cost_usd" },
   { version: "046", name: "remove_status_from_files" },
   { version: "051", name: "remove_status_from_files" },
+  { version: "051", name: "proxy_rotation_metadata" },
+  { version: "052", name: "proxy_quarantine_metadata" },
+  { version: "053", name: "proxy_observability" },
   { version: "060", name: "call_log_images_count" },
   { version: "062", name: "call_log_images_count" },
 ] as const;
@@ -481,6 +496,14 @@ function isSchemaAlreadyApplied(
       return hasTable(db, "chatgpt_image_cache");
     case "074":
       return hasColumn(db, "call_logs", "images_count");
+    case "077":
+      return (
+        hasTable(db, "api_key_token_limits") &&
+        hasTable(db, "api_key_token_counters") &&
+        hasTable(db, "api_key_token_limit_reset_logs")
+      );
+    case "078":
+      return hasTable(db, "discovery_results");
     default:
       return false;
   }

@@ -202,12 +202,17 @@ cpSync(standaloneDir, APP_DIR, { recursive: true });
 
 const standaloneWsSrc = join(ROOT, "scripts", "dev", "standalone-server-ws.mjs");
 const responsesWsProxySrc = join(ROOT, "scripts", "dev", "responses-ws-proxy.mjs");
-if (existsSync(standaloneWsSrc) && existsSync(responsesWsProxySrc)) {
-  console.log("  📋 Adding Responses WebSocket standalone wrapper...");
+const v1WsBridgeSrc = join(ROOT, "scripts", "dev", "v1-ws-bridge.mjs");
+if (existsSync(standaloneWsSrc) && existsSync(responsesWsProxySrc) && existsSync(v1WsBridgeSrc)) {
+  console.log("  📋 Adding WebSocket standalone wrapper...");
   cpSync(standaloneWsSrc, join(APP_DIR, "server-ws.mjs"));
   writeFileSync(
     join(APP_DIR, "responses-ws-proxy.mjs"),
     'export * from "../scripts/dev/responses-ws-proxy.mjs";\n'
+  );
+  writeFileSync(
+    join(APP_DIR, "v1-ws-bridge.mjs"),
+    'export * from "../scripts/dev/v1-ws-bridge.mjs";\n'
   );
 }
 

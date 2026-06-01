@@ -1,10 +1,5 @@
 import { handleImageGeneration } from "@omniroute/open-sse/handlers/imageGeneration.ts";
-import {
-  getProviderCredentials,
-  clearRecoveredProviderState,
-  extractApiKey,
-  isValidApiKey,
-} from "@/sse/services/auth";
+import { getProviderCredentials, clearRecoveredProviderState } from "@/sse/services/auth";
 import {
   parseImageModel,
   getAllImageModels,
@@ -18,6 +13,7 @@ import { toJsonErrorPayload } from "@/shared/utils/upstreamError";
 import { enforceApiKeyPolicy } from "@/shared/utils/apiKeyPolicy";
 import { v1ImageGenerationSchema } from "@/shared/validation/schemas";
 import { isValidationFailure, validateBody } from "@/shared/validation/helpers";
+import { enforceClientApiAuth } from "../../_helpers/clientApiAuth";
 
 import { getAllCustomModels, resolveProxyForConnection } from "@/lib/localDb";
 import { runWithProxyContext } from "@omniroute/open-sse/utils/proxyFetch.ts";
@@ -195,6 +191,9 @@ async function readMultipartImageGenerationBody(formData: FormData) {
 }
 
 export async function POST(request: Request) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   let rawBody: Record<string, unknown>;
   if (isMultipartRequest(request)) {
     try {

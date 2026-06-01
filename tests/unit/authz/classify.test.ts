@@ -29,6 +29,18 @@ const cases: Case[] = [
     path: "/api/v1/chat/completions",
     expectedClass: "CLIENT_API",
   },
+  {
+    name: "cached chatgpt-web images are PUBLIC on canonical path",
+    path: "/api/v1/chatgpt-web/image/3230deb9adc843a683acb3d47404b7a8",
+    method: "GET",
+    expectedClass: "PUBLIC",
+  },
+  {
+    name: "cached chatgpt-web image writes stay CLIENT_API",
+    path: "/api/v1/chatgpt-web/image/3230deb9adc843a683acb3d47404b7a8",
+    method: "POST",
+    expectedClass: "CLIENT_API",
+  },
   { name: "/api/v1/responses", path: "/api/v1/responses", expectedClass: "CLIENT_API" },
   { name: "/api/v1/models", path: "/api/v1/models", expectedClass: "CLIENT_API" },
   { name: "/api/v1/embeddings", path: "/api/v1/embeddings", expectedClass: "CLIENT_API" },
@@ -48,6 +60,13 @@ const cases: Case[] = [
     path: "/v1/chat/completions",
     expectedClass: "CLIENT_API",
     expectedNormalized: "/api/v1/chat/completions",
+  },
+  {
+    name: "cached chatgpt-web images are PUBLIC through /v1 alias",
+    path: "/v1/chatgpt-web/image/3230deb9adc843a683acb3d47404b7a8",
+    method: "GET",
+    expectedClass: "PUBLIC",
+    expectedNormalized: "/api/v1/chatgpt-web/image/3230deb9adc843a683acb3d47404b7a8",
   },
   {
     name: "/v1/v1 double-prefix",

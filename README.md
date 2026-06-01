@@ -659,11 +659,12 @@ Compression: aggressive (~50%) → double your free quota · Cost: $0/mo
 
 <br/>
 
-| Env var           | Default        | Purpose                          |
-| ----------------- | -------------- | -------------------------------- |
-| `PORT`            | `20128`        | API + dashboard port             |
-| `REQUIRE_API_KEY` | `false`        | Require API key for all requests |
-| `DATA_DIR`        | `~/.omniroute` | Database & config storage        |
+| Env var                       | Default        | Purpose                          |
+| ----------------------------- | -------------- | -------------------------------- |
+| `PORT`                        | `20128`        | API + dashboard port             |
+| `REQUIRE_API_KEY`             | `false`        | Require API key for all requests |
+| `DATA_DIR`                    | `~/.omniroute` | Database & config storage        |
+| `API_BRIDGE_PROXY_TIMEOUT_MS` | `10000`        | `/v1` API bridge proxy timeout   |
 
 **Will I be charged by OmniRoute?** No — it's free, open-source software on your machine. You only pay paid providers directly. OmniRoute has no billing system.
 **Are FREE providers really unlimited?** Yes — Kiro, Qoder, Pollinations, LongCat, Cloudflare. No catch.

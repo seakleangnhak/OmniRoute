@@ -1,17 +1,13 @@
 import { errorResponse, unavailableResponse } from "@omniroute/open-sse/utils/error.ts";
 import { HTTP_STATUS } from "@omniroute/open-sse/config/constants.ts";
 import { getRegistryEntry } from "@omniroute/open-sse/config/providerRegistry.ts";
-import {
-  getProviderCredentials,
-  clearRecoveredProviderState,
-  extractApiKey,
-  isValidApiKey,
-} from "@/sse/services/auth";
+import { getProviderCredentials, clearRecoveredProviderState } from "@/sse/services/auth";
 import { handleEmbedding } from "@omniroute/open-sse/handlers/embeddings.ts";
 import * as log from "@/sse/utils/logger";
 import { enforceApiKeyPolicy } from "@/shared/utils/apiKeyPolicy";
 import { v1EmbeddingsSchema } from "@/shared/validation/schemas";
 import { isValidationFailure, validateBody } from "@/shared/validation/helpers";
+import { enforceClientApiAuth } from "../../../_helpers/clientApiAuth";
 
 /**
  * Handle CORS preflight
@@ -29,6 +25,9 @@ export async function OPTIONS() {
  * POST /v1/providers/{provider}/embeddings
  */
 export async function POST(request, { params }) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   const { provider: rawProvider } = await params;
 
   const providerEntry = getRegistryEntry(rawProvider);

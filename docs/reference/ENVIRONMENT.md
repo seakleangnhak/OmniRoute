@@ -171,6 +171,7 @@ OmniRoute uses **SQLite** (via `better-sqlite3`) for all persistence. These vari
 | `OMNIROUTE_CLI_SALT`                    | `omniroute-cli-auth-v1` | `src/lib/machineToken.ts`                | HMAC salt for deriving the local CLI auth token. Changing this value rotates all CLI tokens on the machine. See `docs/security/CLI_TOKEN.md`.                                                                                                                                                                                                                      |
 | `AUTH_COOKIE_SECURE`                    | `false`                 | `src/lib/auth`                           | Sets the `Secure` flag on session cookies. **Must be `true`** when running behind HTTPS.                                                                                                                                                                                                                                                                           |
 | `REQUIRE_API_KEY`                       | `false`                 | API middleware                           | When `true`, all `/v1/*` proxy requests must include a valid API key.                                                                                                                                                                                                                                                                                              |
+| `OMNIROUTE_WS_AUTH` / `WS_AUTH`         | `true`                  | `src/lib/ws/handshake.ts`                | Requires a valid API key or dashboard session for `/v1/ws` WebSocket upgrades. `REQUIRE_API_KEY=true` always forces this on. Set `OMNIROUTE_WS_AUTH=false` only for isolated local development.                                                                                                                                                                    |
 | `ALLOW_API_KEY_REVEAL`                  | `false`                 | Dashboard providers page                 | Allows revealing full API key values in the Dashboard UI. Security risk on shared instances.                                                                                                                                                                                                                                                                       |
 | `OMNIROUTE_MANAGEMENT_TOKEN`            | _(unset)_               | `src/shared/utils/apiAuth.ts`            | Optional trusted Bearer token for headless management API access, such as internal backend integrations calling `/api/keys` or `/api/usage/call-logs`. Use a long random value and send only over HTTPS or a private network.                                                                                                                                      |
 | `NO_LOG_API_KEY_IDS`                    | _(empty)_               | `src/lib/compliance/index.ts`            | Comma-separated API key IDs that bypass request logging (GDPR compliance).                                                                                                                                                                                                                                                                                         |
@@ -186,6 +187,7 @@ OmniRoute uses **SQLite** (via `better-sqlite3`) for all persistence. These vari
 # Production security minimum:
 AUTH_COOKIE_SECURE=true        # Requires HTTPS
 REQUIRE_API_KEY=true           # Authenticate all proxy calls
+OMNIROUTE_WS_AUTH=true         # Authenticate /v1/ws upgrades
 ALLOW_API_KEY_REVEAL=false     # Never expose keys in UI
 CORS_ORIGIN=https://your.domain.com
 MAX_BODY_SIZE_BYTES=5242880    # 5 MB limit
@@ -523,43 +525,48 @@ All values are in **milliseconds**. Centralized resolution in `src/shared/utils/
 
 ```
 REQUEST_TIMEOUT_MS (global override)
-├─→ FETCH_TIMEOUT_MS (upstream provider calls, default: 600000)
+├─→ FETCH_TIMEOUT_MS (upstream provider calls, default: 10000)
 │   ├─→ FETCH_HEADERS_TIMEOUT_MS (inherits from FETCH_TIMEOUT_MS)
 │   ├─→ FETCH_BODY_TIMEOUT_MS (inherits from FETCH_TIMEOUT_MS)
 │   ├─→ TLS_CLIENT_TIMEOUT_MS (inherits from FETCH_TIMEOUT_MS)
-│   ├── FETCH_CONNECT_TIMEOUT_MS (independent, default: 30000)
+│   ├── FETCH_CONNECT_TIMEOUT_MS (independent, default: 10000)
 │   └── FETCH_KEEPALIVE_TIMEOUT_MS (independent, default: 4000)
-├─→ STREAM_IDLE_TIMEOUT_MS (inherits from REQUEST_TIMEOUT_MS, default: 600000)
-└─→ API_BRIDGE_PROXY_TIMEOUT_MS (inherits from REQUEST_TIMEOUT_MS, default: 30000)
-    ├─→ API_BRIDGE_SERVER_REQUEST_TIMEOUT_MS (derived, default: 300000)
-    ├── API_BRIDGE_SERVER_HEADERS_TIMEOUT_MS (default: 60000)
-    ├── API_BRIDGE_SERVER_KEEPALIVE_TIMEOUT_MS (default: 5000)
-    └── API_BRIDGE_SERVER_SOCKET_TIMEOUT_MS (default: 0 = disabled)
+├─→ STREAM_IDLE_TIMEOUT_MS (inherits from REQUEST_TIMEOUT_MS, default: 10000)
+└── STREAM_READINESS_TIMEOUT_MS (independent, default: 10000)
+
+API_BRIDGE_PROXY_TIMEOUT_MS (independent, default: 10000)
+├─→ API_BRIDGE_STREAM_PROXY_TIMEOUT_MS (chat/responses streams, default: max 300000 / stream timeouts)
+├─→ API_BRIDGE_SERVER_REQUEST_TIMEOUT_MS (inherits API bridge proxy timeout, default: 10000)
+├── API_BRIDGE_SERVER_HEADERS_TIMEOUT_MS (default: 60000)
+├── API_BRIDGE_SERVER_KEEPALIVE_TIMEOUT_MS (default: 5000)
+└── API_BRIDGE_SERVER_SOCKET_TIMEOUT_MS (default: 0 = disabled)
 ```
 
-| Variable                                 | Default              | Description                                                                                 |
-| ---------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------- |
-| `REQUEST_TIMEOUT_MS`                     | _(unset)_            | Global shortcut — overrides both `FETCH_TIMEOUT_MS` and `STREAM_IDLE_TIMEOUT_MS` defaults.  |
-| `FETCH_TIMEOUT_MS`                       | `600000`             | Total HTTP request timeout for upstream provider calls.                                     |
-| `STREAM_IDLE_TIMEOUT_MS`                 | `600000`             | Max silence between SSE chunks before aborting. Extended-thinking models rarely pause >90s. |
-| `FETCH_HEADERS_TIMEOUT_MS`               | = `FETCH_TIMEOUT_MS` | Time to receive response headers.                                                           |
-| `FETCH_BODY_TIMEOUT_MS`                  | = `FETCH_TIMEOUT_MS` | Time to receive the full response body.                                                     |
-| `FETCH_CONNECT_TIMEOUT_MS`               | `30000`              | TCP connection establishment timeout.                                                       |
-| `FETCH_KEEPALIVE_TIMEOUT_MS`             | `4000`               | Keep-alive socket idle timeout.                                                             |
-| `TLS_CLIENT_TIMEOUT_MS`                  | = `FETCH_TIMEOUT_MS` | TLS fingerprint proxy (wreq-js) timeout.                                                    |
-| `API_BRIDGE_PROXY_TIMEOUT_MS`            | `30000`              | Proxy hop timeout for `/v1` bridge requests.                                                |
-| `API_BRIDGE_SERVER_REQUEST_TIMEOUT_MS`   | `300000`             | Overall server request timeout for the bridge.                                              |
-| `API_BRIDGE_SERVER_HEADERS_TIMEOUT_MS`   | `60000`              | Time to send response headers via the bridge.                                               |
-| `API_BRIDGE_SERVER_KEEPALIVE_TIMEOUT_MS` | `5000`               | Bridge keep-alive idle timeout.                                                             |
-| `API_BRIDGE_SERVER_SOCKET_TIMEOUT_MS`    | `0`                  | Raw socket timeout (0 = disabled).                                                          |
-| `SHUTDOWN_TIMEOUT_MS`                    | `30000`              | Grace period on SIGTERM/SIGINT before force-exit.                                           |
-| `OMNIROUTE_DEFAULT_FETCH_TIMEOUT_MS`     | `120000`             | Fallback used by `src/shared/utils/fetchTimeout.ts` when `FETCH_TIMEOUT_MS` is unset.       |
-| `OMNIROUTE_CHATGPT_TLS_TIMEOUT_MS`       | `60000`              | Wire-level timeout for the bogdanfinn/tls-client koffi binding (`chatgptTlsClient.ts`).     |
-| `OMNIROUTE_CHATGPT_TLS_GRACE_MS`         | `10000`              | JS-side grace added on top of the wire timeout when the native binding is wedged.           |
-| `OMNIROUTE_CLAUDE_TLS_TIMEOUT_MS`        | `60000`              | Wire-level timeout for the bogdanfinn/tls-client koffi binding (`claudeTlsClient.ts`).      |
-| `OMNIROUTE_CLAUDE_TLS_GRACE_MS`          | `10000`              | JS-side grace added on top of the wire timeout when the native binding is wedged.           |
-| `OMNIROUTE_PPLX_TLS_TIMEOUT_MS`          | `30000`              | Wire-level timeout for the bogdanfinn/tls-client koffi binding (`perplexityTlsClient.ts`).  |
-| `OMNIROUTE_PPLX_TLS_GRACE_MS`            | `10000`              | JS-side grace added on top of the wire timeout when the native binding is wedged.           |
+| Variable                                 | Default              | Description                                                                                                                                                    |
+| ---------------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `REQUEST_TIMEOUT_MS`                     | _(unset)_            | Global shortcut — overrides both `FETCH_TIMEOUT_MS` and `STREAM_IDLE_TIMEOUT_MS` defaults.                                                                     |
+| `FETCH_TIMEOUT_MS`                       | `10000`              | Initial upstream response timeout for provider calls.                                                                                                          |
+| `STREAM_IDLE_TIMEOUT_MS`                 | `10000`              | Max silence between SSE chunks before aborting.                                                                                                                |
+| `STREAM_READINESS_TIMEOUT_MS`            | `10000`              | Time to first useful SSE event before fallback.                                                                                                                |
+| `FETCH_HEADERS_TIMEOUT_MS`               | = `FETCH_TIMEOUT_MS` | Time to receive response headers.                                                                                                                              |
+| `FETCH_BODY_TIMEOUT_MS`                  | = `FETCH_TIMEOUT_MS` | Time to receive the full response body.                                                                                                                        |
+| `FETCH_CONNECT_TIMEOUT_MS`               | `10000`              | TCP connection establishment timeout.                                                                                                                          |
+| `FETCH_KEEPALIVE_TIMEOUT_MS`             | `4000`               | Keep-alive socket idle timeout.                                                                                                                                |
+| `TLS_CLIENT_TIMEOUT_MS`                  | = `FETCH_TIMEOUT_MS` | TLS fingerprint proxy (wreq-js) timeout.                                                                                                                       |
+| `API_BRIDGE_PROXY_TIMEOUT_MS`            | `10000`              | Non-streaming proxy hop timeout for `/v1` bridge requests.                                                                                                     |
+| `API_BRIDGE_STREAM_PROXY_TIMEOUT_MS`     | `300000+`            | Proxy hop timeout for streaming chat/responses routes. Defaults to at least 300s and follows longer `STREAM_IDLE_TIMEOUT_MS` / `FETCH_BODY_TIMEOUT_MS` values. |
+| `API_BRIDGE_SERVER_REQUEST_TIMEOUT_MS`   | `10000`              | Overall server request timeout for the bridge.                                                                                                                 |
+| `API_BRIDGE_SERVER_HEADERS_TIMEOUT_MS`   | `60000`              | Time to send response headers via the bridge.                                                                                                                  |
+| `API_BRIDGE_SERVER_KEEPALIVE_TIMEOUT_MS` | `5000`               | Bridge keep-alive idle timeout.                                                                                                                                |
+| `API_BRIDGE_SERVER_SOCKET_TIMEOUT_MS`    | `0`                  | Raw socket timeout (0 = disabled).                                                                                                                             |
+| `SHUTDOWN_TIMEOUT_MS`                    | `30000`              | Grace period on SIGTERM/SIGINT before force-exit.                                                                                                              |
+| `OMNIROUTE_DEFAULT_FETCH_TIMEOUT_MS`     | `10000`              | Fallback used by `src/shared/utils/fetchTimeout.ts` when `FETCH_TIMEOUT_MS` is unset.                                                                          |
+| `OMNIROUTE_CHATGPT_TLS_TIMEOUT_MS`       | `60000`              | Wire-level timeout for the bogdanfinn/tls-client koffi binding (`chatgptTlsClient.ts`).                                                                        |
+| `OMNIROUTE_CHATGPT_TLS_GRACE_MS`         | `10000`              | JS-side grace added on top of the wire timeout when the native binding is wedged.                                                                              |
+| `OMNIROUTE_CLAUDE_TLS_TIMEOUT_MS`        | `60000`              | Wire-level timeout for the bogdanfinn/tls-client koffi binding (`claudeTlsClient.ts`).                                                                         |
+| `OMNIROUTE_CLAUDE_TLS_GRACE_MS`          | `10000`              | JS-side grace added on top of the wire timeout when the native binding is wedged.                                                                              |
+| `OMNIROUTE_PPLX_TLS_TIMEOUT_MS`          | `30000`              | Wire-level timeout for the bogdanfinn/tls-client koffi binding (`perplexityTlsClient.ts`).                                                                     |
+| `OMNIROUTE_PPLX_TLS_GRACE_MS`            | `10000`              | JS-side grace added on top of the wire timeout when the native binding is wedged.                                                                              |
 
 Combo target attempts inherit the resolved upstream request timeout (`FETCH_TIMEOUT_MS`, or
 `REQUEST_TIMEOUT_MS` when it supplies the fetch default). Set `targetTimeoutMs` in a combo,
@@ -703,15 +710,15 @@ Anthropic-compatible provider instead.
 
 ## 21. Proxy Health
 
-| Variable                     | Default          | Source File                              | Description                                                                                                                                                            |
-| ---------------------------- | ---------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PROXY_FAST_FAIL_TIMEOUT_MS` | `2000`           | `src/lib/proxyHealth.ts`                 | Fast-fail health check timeout.                                                                                                                                        |
-| `PROXY_HEALTH_CACHE_TTL_MS`  | `30000`          | `src/lib/proxyHealth.ts`                 | Health check result cache TTL.                                                                                                                                         |
-| `RATE_LIMIT_MAX_WAIT_MS`     | `120000` (2 min) | `open-sse/services/rateLimitManager.ts`  | Max time to wait on a 429 before failing the request.                                                                                                                  |
-| `RATE_LIMIT_AUTO_ENABLE`     | _(unset)_        | `open-sse/services/rateLimitManager.ts`  | Force the auto-enable rate limit safety net on/off regardless of the persisted Dashboard setting. Accepts `true`/`1`/`on` to force on, `false`/`0`/`off` to force off. |
-| `HEALTHCHECK_STAGGER_MS`     | `3000`           | `src/lib/tokenHealthCheck.ts`            | Stagger interval (ms) between provider token healthchecks at startup.                                                                                                  |
-| `REQUEST_RETRY`              | `2`              | `src/sse/services/cooldownAwareRetry.ts` | Number of automatic retries on model-scoped cooldown responses before returning error to client.                                                                       |
-| `MAX_RETRY_INTERVAL_SEC`     | `30`             | `src/sse/services/cooldownAwareRetry.ts` | Max backoff interval (seconds) between cooldown retries. Capped by this value regardless of upstream `Retry-After`.                                                    |
+| Variable                     | Default       | Source File                              | Description                                                                                                                                                            |
+| ---------------------------- | ------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PROXY_FAST_FAIL_TIMEOUT_MS` | `2000`        | `src/lib/proxyHealth.ts`                 | Fast-fail health check timeout.                                                                                                                                        |
+| `PROXY_HEALTH_CACHE_TTL_MS`  | `30000`       | `src/lib/proxyHealth.ts`                 | Health check result cache TTL.                                                                                                                                         |
+| `RATE_LIMIT_MAX_WAIT_MS`     | `10000` (10s) | `open-sse/services/rateLimitManager.ts`  | Max time to wait in the rate-limit queue before failing the request.                                                                                                   |
+| `RATE_LIMIT_AUTO_ENABLE`     | _(unset)_     | `open-sse/services/rateLimitManager.ts`  | Force the auto-enable rate limit safety net on/off regardless of the persisted Dashboard setting. Accepts `true`/`1`/`on` to force on, `false`/`0`/`off` to force off. |
+| `HEALTHCHECK_STAGGER_MS`     | `3000`        | `src/lib/tokenHealthCheck.ts`            | Stagger interval (ms) between provider token healthchecks at startup.                                                                                                  |
+| `REQUEST_RETRY`              | `2`           | `src/sse/services/cooldownAwareRetry.ts` | Number of automatic retries on model-scoped cooldown responses before returning error to client.                                                                       |
+| `MAX_RETRY_INTERVAL_SEC`     | `30`          | `src/sse/services/cooldownAwareRetry.ts` | Max backoff interval (seconds) between cooldown retries. Capped by this value regardless of upstream `Retry-After`.                                                    |
 
 ---
 

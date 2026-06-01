@@ -5,7 +5,7 @@ WORKDIR /app
 RUN --mount=type=cache,target=/var/cache/apt,sharing=shared \
   --mount=type=cache,target=/var/lib/apt/lists,sharing=shared \
   apt-get update \
-  && apt-get install -y --no-install-recommends libsecret-1-0 ca-certificates \
+  && apt-get install -y --no-install-recommends libsecret-1-0 ca-certificates gosu \
   && rm -rf /var/lib/apt/lists/*
 
 # ── Builder ────────────────────────────────────────────────────────────────
@@ -33,17 +33,19 @@ ENV NPM_CONFIG_LEGACY_PEER_DEPS=true
 # are reproducible.
 RUN test -f package-lock.json \
   || (echo "package-lock.json is required for reproducible Docker builds" >&2 && exit 1)
-RUN --mount=type=cache,target=/root/.npm \
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
   npm ci --no-audit --no-fund --legacy-peer-deps --ignore-scripts \
   && npm rebuild better-sqlite3 \
   && node -e "require('better-sqlite3')(':memory:').close()"
 
-# Use Turbopack for significant build speedup
-ENV OMNIROUTE_USE_TURBOPACK=1
-
+ARG OMNIROUTE_BUILD_MEMORY_MB=4096
+ENV OMNIROUTE_BUILD_MEMORY_MB=${OMNIROUTE_BUILD_MEMORY_MB}
+ARG OMNIROUTE_NEXT_BUILD_WORKERS=1
+ENV OMNIROUTE_NEXT_BUILD_WORKERS=${OMNIROUTE_NEXT_BUILD_WORKERS}
+ENV NEXT_TELEMETRY_DISABLED=1
 COPY . ./
 RUN --mount=type=cache,target=/app/.next/cache \
-  mkdir -p /app/data && npm run build
+  mkdir -p /app/data && npm run build -- --webpack
 
 # ── Runner base ────────────────────────────────────────────────────────────
 FROM base AS runner-base
@@ -83,25 +85,37 @@ COPY --from=builder /app/node_modules/split2 ./node_modules/split2
 # traced by Next.js standalone output — copy them explicitly.
 COPY --from=builder /app/src/lib/db/migrations ./migrations
 ENV OMNIROUTE_MIGRATIONS_DIR=/app/migrations
+# MITM server.cjs is spawned at runtime via child_process — not traced by nft
+COPY --from=builder /app/src/mitm/server.cjs ./src/mitm/server.cjs
+# Runtime docs are pruned by .dockerignore to English markdown + OpenAPI.
+# Next.js standalone tracing does not include docs read via fs.
+COPY --from=builder /app/.next/standalone/docs ./docs
 
-# Hand /app over to the baked-in `node` non-root user (UID/GID 1000) so the
-# runtime process never holds root privileges. The chown happens after all
-# COPYs so it covers files originally owned by root in the builder stage.
+COPY --from=builder /app/scripts/dev/run-standalone.mjs ./dev/run-standalone.mjs
+COPY --from=builder /app/scripts/dev/docker-entrypoint.sh ./docker-entrypoint.sh
+COPY --from=builder /app/scripts/dev/standalone-server-ws.mjs ./server-ws.mjs
+COPY --from=builder /app/scripts/dev/responses-ws-proxy.mjs ./responses-ws-proxy.mjs
+COPY --from=builder /app/scripts/dev/v1-ws-bridge.mjs ./v1-ws-bridge.mjs
+COPY --from=builder /app/scripts/build/runtime-env.mjs ./build/runtime-env.mjs
+COPY --from=builder /app/scripts/build/bootstrap-env.mjs ./build/bootstrap-env.mjs
+COPY --from=builder /app/scripts/dev/healthcheck.mjs ./healthcheck.mjs
+
+RUN node -e "require('better-sqlite3')(':memory:').close()"
+
+# Hand /app over to the baked-in `node` user (UID/GID 1000). The entrypoint
+# starts as root only long enough to repair mounted DATA_DIR ownership, then
+# execs the app as `node`.
 RUN chown -R node:node /app
+RUN chmod +x /app/docker-entrypoint.sh
 
 EXPOSE 20128
 
-# Drop to non-root before ENTRYPOINT/CMD so every derived stage (runner-cli,
-# runner-web) also runs as a non-root user unless they explicitly switch back.
-USER node
-
-# Warns if the mounted data volume has wrong ownership
-COPY --chmod=755 scripts/check-permissions.sh /tmp/check-permissions.sh
-ENTRYPOINT ["/tmp/check-permissions.sh"]
+USER root
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD ["node", "healthcheck.mjs"]
 
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["node", "dev/run-standalone.mjs"]
 
 # ── Runner Web (web-cookie providers: Gemini Web, Claude Turnstile) ───────────
@@ -136,13 +150,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   && chown -R node:node /home/node/.cache \
   && rm -rf /var/lib/apt/lists/*
 
-USER node
+USER root
 
 FROM runner-base AS runner-cli
 
-# Drop back to root briefly so we can install system + global npm packages,
-# then return to the `node` non-root user before the CMD inherited from
-# runner-base runs.
+# runner-base launches through docker-entrypoint.sh as root so it can repair
+# mounted DATA_DIR ownership before dropping to `node`; keep that pattern here
+# after installing the extra CLI packages.
 USER root
 
 # Install system dependencies required by openclaw (git+ssh references).
@@ -156,5 +170,3 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Install CLI tools globally. Separate layer from apt for better cache reuse.
 RUN --mount=type=cache,target=/root/.npm \
   npm install -g --no-audit --no-fund @openai/codex @anthropic-ai/claude-code droid openclaw@latest
-
-USER node

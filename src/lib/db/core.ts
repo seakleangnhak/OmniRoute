@@ -149,6 +149,36 @@ function openSqliteDatabase(sqliteFile: string, options?: Record<string, unknown
   );
 }
 
+function assertRuntimeDataDirWritable(sqliteFile: string): void {
+  const dataDir = path.dirname(sqliteFile);
+  const testFile = path.join(dataDir, `.omniroute-write-test-${process.pid}-${Date.now()}`);
+
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(testFile, "ok");
+    fs.unlinkSync(testFile);
+
+    if (fs.existsSync(sqliteFile)) {
+      fs.accessSync(sqliteFile, fs.constants.R_OK | fs.constants.W_OK);
+    }
+  } catch (error: unknown) {
+    try {
+      if (fs.existsSync(testFile)) fs.unlinkSync(testFile);
+    } catch {
+      /* ignore cleanup errors */
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `[DB] DATA_DIR is not writable: ${dataDir}. ` +
+        `SQLite needs write access to storage.sqlite plus its WAL/SHM sidecar files. ` +
+        `For Docker/Dokploy, make the mounted volume writable by UID/GID 1000 ` +
+        `(for example: chown -R 1000:1000 ${dataDir}) or mount a writable DATA_DIR. ` +
+        `Original error: ${message}`
+    );
+  }
+}
+
 function parseSqliteMaxSizeMb(value: string | undefined): number {
   if (value === undefined || value.trim() === "") return DEFAULT_SQLITE_MAX_SIZE_MB;
   const parsed = Number.parseInt(value, 10);
@@ -1222,6 +1252,7 @@ export function getDbInstance(): SqliteDatabase {
   if (!sqliteFile) {
     throw new Error("SQLITE_FILE is unavailable for local mode");
   }
+  assertRuntimeDataDirWritable(sqliteFile);
   const jsonDbFile = JSON_DB_FILE;
   const probeFailureBackups = listProbeFailureBackups(sqliteFile);
   if (!fs.existsSync(sqliteFile) && probeFailureBackups.length > 0) {

@@ -5,6 +5,7 @@ import { HTTP_STATUS } from "@omniroute/open-sse/config/constants.ts";
 import { getRegistryEntry } from "@omniroute/open-sse/config/providerRegistry.ts";
 import { providerChatCompletionSchema } from "@/shared/validation/schemas";
 import { isValidationFailure, validateBody } from "@/shared/validation/helpers";
+import { enforceClientApiAuth } from "../../../../_helpers/clientApiAuth";
 
 let initialized = false;
 
@@ -32,6 +33,9 @@ export async function OPTIONS() {
  * Routes to the specified provider, validating model/provider match.
  */
 export async function POST(request, { params }) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   const { provider: rawProvider } = await params;
 
   const providerEntry = getRegistryEntry(rawProvider);

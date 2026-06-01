@@ -77,8 +77,10 @@ The guardrail never blocks; it only annotates (`meta.detections`,
 ### Prompt Injection (`promptInjection.ts`)
 
 Detects adversarial structures in user-supplied content and enforces the
-configured policy. Behavior is driven by environment variables and constructor
-options:
+configured policy. Trusted request scaffolding (`system`, `developer`, and
+assistant-role content) is not scanned for prompt-injection patterns; user-like,
+tool, function, and unknown message roles are scanned. Behavior is driven by
+environment variables and constructor options:
 
 | Setting         | Env var                                         | Default | Effect                                  |
 | --------------- | ----------------------------------------------- | ------- | --------------------------------------- |

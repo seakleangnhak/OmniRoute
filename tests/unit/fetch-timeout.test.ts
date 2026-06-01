@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 const originalFetch = globalThis.fetch;
 const originalTimeoutEnv = process.env.FETCH_TIMEOUT_MS;
+const originalDefaultTimeoutEnv = process.env.OMNIROUTE_DEFAULT_FETCH_TIMEOUT_MS;
 
 async function loadFetchTimeoutModule(tag) {
   return import(`../../src/shared/utils/fetchTimeout.ts?case=${tag}-${Date.now()}`);
@@ -15,6 +16,20 @@ test.afterEach(() => {
   } else {
     process.env.FETCH_TIMEOUT_MS = originalTimeoutEnv;
   }
+  if (originalDefaultTimeoutEnv === undefined) {
+    delete process.env.OMNIROUTE_DEFAULT_FETCH_TIMEOUT_MS;
+  } else {
+    process.env.OMNIROUTE_DEFAULT_FETCH_TIMEOUT_MS = originalDefaultTimeoutEnv;
+  }
+});
+
+test("fetchWithTimeout defaults to the 10s fast-fail window", async () => {
+  delete process.env.FETCH_TIMEOUT_MS;
+  delete process.env.OMNIROUTE_DEFAULT_FETCH_TIMEOUT_MS;
+
+  const mod = await loadFetchTimeoutModule("default-timeout");
+
+  assert.equal(mod.getConfiguredTimeout(), 10_000);
 });
 
 test("fetchWithTimeout forwards options and exposes the configured timeout", async () => {

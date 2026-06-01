@@ -27,13 +27,13 @@ function requestWantsStreaming(req: IncomingMessage): boolean {
   if (accept.includes("text/event-stream")) return true;
 
   const pathname = (req.url || "/").split("?")[0] || "/";
-  return /^\/(?:v1\/)?(?:responses|chat\/completions)(?:\/|$)/.test(pathname);
+  return /^\/(?:v1\/)?(?:responses|chat\/completions|completions|codex)(?:\/|$)/.test(pathname);
 }
 
 function getProxyTimeoutMs(req: IncomingMessage): number {
-  if (!requestWantsStreaming(req)) return API_BRIDGE_TIMEOUTS.proxyTimeoutMs;
-
-  return Math.max(API_BRIDGE_TIMEOUTS.proxyTimeoutMs, API_BRIDGE_TIMEOUTS.serverRequestTimeoutMs);
+  return requestWantsStreaming(req)
+    ? API_BRIDGE_TIMEOUTS.streamProxyTimeoutMs
+    : API_BRIDGE_TIMEOUTS.proxyTimeoutMs;
 }
 
 function proxyRequest(req: IncomingMessage, res: ServerResponse, dashboardPort: number): void {

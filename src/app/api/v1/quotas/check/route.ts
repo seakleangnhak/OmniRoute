@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAuthenticated } from "@/shared/utils/apiAuth";
 import { checkQuota } from "@/lib/db/registeredKeys";
+import { enforceClientApiAuth } from "../../_helpers/clientApiAuth";
 
 /**
  * GET /api/v1/quotas/check?provider=&accountId=
@@ -9,6 +10,9 @@ import { checkQuota } from "@/lib/db/registeredKeys";
  * without actually issuing one. Use this to pre-validate before POST /registered-keys.
  */
 export async function GET(request: Request) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   if (!(await isAuthenticated(request))) {
     return NextResponse.json({ error: { message: "Authentication required" } }, { status: 401 });
   }

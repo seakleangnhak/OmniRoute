@@ -17,7 +17,6 @@ import {
   isAnthropicCompatibleProvider,
   isLocalProvider,
   isOpenAICompatibleProvider,
-  isLocalProvider,
   isSelfHostedChatProvider,
   providerAllowsOptionalApiKey,
 } from "@/shared/constants/providers";

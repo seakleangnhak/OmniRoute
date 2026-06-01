@@ -1254,6 +1254,50 @@ test("handleComboChat round-robin falls through semaphore timeouts and malformed
   }
 });
 
+test("handleComboChat round-robin reports capacity when single target semaphore times out", async () => {
+  const release = await acquireSemaphore(
+    getComboTargetExecutionKey("rr-single-timeout", 0, "model-a"),
+    {
+      maxConcurrency: 1,
+      timeoutMs: 100,
+    }
+  );
+  const log = createLog();
+
+  try {
+    const result = await handleComboChat({
+      body: {},
+      combo: {
+        name: "rr-single-timeout",
+        strategy: "round-robin",
+        models: ["model-a"],
+      },
+      handleSingleModel: async () => {
+        throw new Error("handleSingleModel should not run while semaphore is saturated");
+      },
+      isModelAvailable: async () => true,
+      log,
+      settings: {
+        comboDefaults: {
+          concurrencyPerModel: 1,
+          queueTimeoutMs: 5,
+          maxRetries: 0,
+          retryDelayMs: 1,
+        },
+      },
+      relayOptions: null as any,
+      allCombos: null,
+    });
+    const payload = (await result.json()) as any;
+
+    assert.equal(result.status, 503);
+    assert.match(payload.error.message, /no fallback targets configured/);
+    assert.ok(log.entries.some((entry) => /no fallback target configured/.test(entry.msg)));
+  } finally {
+    release();
+  }
+});
+
 test("handleComboChat round-robin surfaces retry-after metadata after exhausting all models", async () => {
   const sooner = new Date(Date.now() + 1_500).toISOString();
   const later = new Date(Date.now() + 7_000).toISOString();

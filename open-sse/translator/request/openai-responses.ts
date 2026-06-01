@@ -27,6 +27,32 @@ function toArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
+function normalizeInputItemForChat(value: unknown): unknown {
+  if (typeof value === "string") {
+    return { type: "message", role: "user", content: value };
+  }
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+
+  const item = value as JsonRecord;
+  if (item.type || item.role) {
+    return item.type ? item : { type: "message", ...item };
+  }
+
+  if (typeof item.text === "string") {
+    return { type: "message", role: "user", content: item.text };
+  }
+
+  return item;
+}
+
+function toInputItemsForChat(value: unknown): unknown[] {
+  if (typeof value === "string") return [normalizeInputItemForChat(value)];
+  if (Array.isArray(value)) return value.map(normalizeInputItemForChat);
+  if (value && typeof value === "object") return [normalizeInputItemForChat(value)];
+  return [];
+}
+
 function toString(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
@@ -128,7 +154,7 @@ export function openaiResponsesToOpenAIRequest(
   let currentAssistantMsg: JsonRecord | null = null;
   let pendingToolResults: JsonRecord[] = [];
 
-  const inputItems = toArray(root.input);
+  const inputItems = toInputItemsForChat(root.input);
   for (const itemValue of inputItems) {
     const item = toRecord(itemValue);
 

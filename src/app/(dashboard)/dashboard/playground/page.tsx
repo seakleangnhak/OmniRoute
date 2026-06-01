@@ -33,6 +33,7 @@ interface ConnectionOption {
   email?: string;
   provider: string;
   authType: string;
+  isActive?: boolean;
 }
 
 // Endpoint options will be generated dynamically with translations
@@ -289,6 +290,7 @@ export default function PlaygroundPage() {
   const [responseStatus, setResponseStatus] = useState<number | null>(null);
   const [responseDuration, setResponseDuration] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const discoveredModelConnectionsRef = useRef<Set<string>>(new Set());
 
   // File upload state
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -318,6 +320,13 @@ export default function PlaygroundPage() {
     const resolvedProvider = ALIAS_TO_ID[selectedProvider] || selectedProvider;
     return c.provider === resolvedProvider || c.provider === selectedProvider;
   });
+  const effectiveConnectionId =
+    selectedConnection || providerConnections.find((c) => c.isActive !== false)?.id || "";
+
+  useEffect(() => {
+    if (selectedProvider || providers.length === 0) return;
+    setSelectedProvider(providers[0].value);
+  }, [providers, selectedProvider]);
 
   // Fetch models and ALL connections at startup
   useEffect(() => {
@@ -338,9 +347,6 @@ export default function PlaygroundPage() {
           .sort()
           .map((p) => ({ value: p, label: p }));
         setProviders(providerOpts);
-        if (providerOpts.length > 0) {
-          setSelectedProvider(providerOpts[0].value);
-        }
       })
       .catch((err) => {
         console.error("[playground] Failed to load models:", err);
@@ -358,9 +364,20 @@ export default function PlaygroundPage() {
             email: conn.email,
             provider: conn.provider,
             authType: conn.authType || "apiKey",
+            isActive: conn.isActive !== false,
           });
         }
         setAllConnections(conns);
+        const connectionProviders = new Set(
+          conns.map((conn) => conn.provider).filter((provider): provider is string => !!provider)
+        );
+        setProviders((prev) => {
+          const merged = new Map(prev.map((provider) => [provider.value, provider]));
+          for (const provider of connectionProviders) {
+            if (!merged.has(provider)) merged.set(provider, { value: provider, label: provider });
+          }
+          return Array.from(merged.values()).sort((a, b) => a.label.localeCompare(b.label));
+        });
       })
       .catch(() => {});
   }, []);
@@ -385,6 +402,71 @@ export default function PlaygroundPage() {
     }
     return JSON.stringify(template, null, 2);
   };
+
+  useEffect(() => {
+    if (!selectedProvider || selectedModel) return;
+    const firstModel = models.find(
+      (m) => typeof m?.id === "string" && m.id.startsWith(`${selectedProvider}/`)
+    )?.id;
+    if (!firstModel) return;
+    setSelectedModel(firstModel);
+    setRequestBody(generateDefaultBody(selectedEndpoint, firstModel));
+  }, [models, selectedEndpoint, selectedModel, selectedProvider]);
+
+  useEffect(() => {
+    if (!selectedProvider || !effectiveConnectionId) return;
+    if (discoveredModelConnectionsRef.current.has(effectiveConnectionId)) return;
+    discoveredModelConnectionsRef.current.add(effectiveConnectionId);
+
+    let cancelled = false;
+    const loadConnectionModels = async () => {
+      try {
+        const res = await fetch(
+          `/api/providers/${encodeURIComponent(effectiveConnectionId)}/models?refresh=true`,
+          { cache: "no-store" }
+        );
+        if (!res.ok) return;
+        const data = (await res.json()) as { models?: ModelInfo[]; data?: ModelInfo[] };
+        const rawModels = data.models ?? data.data ?? [];
+        if (cancelled || rawModels.length === 0) return;
+
+        const resolvedProvider = ALIAS_TO_ID[selectedProvider] || selectedProvider;
+        const discoveredModels = rawModels
+          .filter((model) => typeof model?.id === "string" && model.id.trim().length > 0)
+          .map((model) => {
+            const rawId = model.id.trim();
+            return {
+              ...model,
+              id: rawId.includes("/") ? rawId : `${selectedProvider}/${rawId}`,
+              object: model.object || "model",
+              owned_by: model.owned_by || resolvedProvider,
+            };
+          });
+        if (discoveredModels.length === 0) return;
+
+        setModels((prev) => {
+          const merged = new Map(prev.map((model) => [model.id, model]));
+          for (const model of discoveredModels) merged.set(model.id, model);
+          return Array.from(merged.values());
+        });
+
+        const hasSelectedModelForProvider =
+          selectedModel && selectedModel.startsWith(`${selectedProvider}/`);
+        if (!hasSelectedModelForProvider) {
+          const firstModel = discoveredModels[0].id;
+          setSelectedModel(firstModel);
+          setRequestBody(generateDefaultBody(selectedEndpoint, firstModel));
+        }
+      } catch (err) {
+        console.error("[playground] Failed to load provider models:", err);
+      }
+    };
+
+    void loadConnectionModels();
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveConnectionId, selectedEndpoint, selectedModel, selectedProvider]);
 
   const handleProviderChange = (newProvider: string) => {
     setSelectedProvider(newProvider);
@@ -518,8 +600,8 @@ export default function PlaygroundPage() {
           /* ignore parse errors */
         }
         const fetchHeaders: Record<string, string> = {};
-        if (selectedConnection) {
-          fetchHeaders["X-OmniRoute-Connection"] = selectedConnection;
+        if (effectiveConnectionId) {
+          fetchHeaders["X-OmniRoute-Connection"] = effectiveConnectionId;
         }
         res = await fetch(`/api${path}`, {
           method: "POST",
@@ -537,8 +619,11 @@ export default function PlaygroundPage() {
           parsed = buildChatBodyWithImages(parsed, uploadedImages);
         }
         const fetchHeaders: Record<string, string> = { "Content-Type": "application/json" };
-        if (selectedConnection) {
-          fetchHeaders["X-OmniRoute-Connection"] = selectedConnection;
+        if (parsed?.stream === true) {
+          fetchHeaders["Accept"] = "text/event-stream";
+        }
+        if (effectiveConnectionId) {
+          fetchHeaders["X-OmniRoute-Connection"] = effectiveConnectionId;
         }
         res = await fetch(`/api${path}`, {
           method: "POST",

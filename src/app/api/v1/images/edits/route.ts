@@ -6,6 +6,7 @@ import { HTTP_STATUS } from "@omniroute/open-sse/config/constants.ts";
 import * as log from "@/sse/utils/logger";
 import { toJsonErrorPayload } from "@/shared/utils/upstreamError";
 import { enforceApiKeyPolicy } from "@/shared/utils/apiKeyPolicy";
+import { enforceClientApiAuth } from "../../_helpers/clientApiAuth";
 
 /**
  * /v1/images/edits — image edit endpoint matching OpenAI's images-edit API.
@@ -172,6 +173,9 @@ async function readImageEditInput(request: Request): Promise<ImageEditInput> {
 }
 
 export async function POST(request: Request) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   let input: ImageEditInput;
   try {
     input = await readImageEditInput(request);

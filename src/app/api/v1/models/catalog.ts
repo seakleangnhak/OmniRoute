@@ -159,8 +159,6 @@ async function getModelCatalogAuthRejection(
   settings: Record<string, any>,
   headers: Record<string, string>
 ): Promise<Response | null> {
-  if (settings.requireAuthForModels !== true || !(await isAuthRequired(request))) return null;
-
   const bearer = extractBearer(request.headers);
   if (bearer) {
     if (await validateCatalogBearer(bearer)) return null;
@@ -178,6 +176,8 @@ async function getModelCatalogAuthRejection(
       }
     );
   }
+
+  if (settings.requireAuthForModels !== true || !(await isAuthRequired(request))) return null;
 
   if (await isDashboardSessionAuthenticated(request)) return null;
 

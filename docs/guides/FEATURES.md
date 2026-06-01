@@ -275,11 +275,11 @@ Key features:
 
 ## 🌐 V1 WebSocket Bridge _(v3.6.6+)_
 
-OmniRoute now supports **OpenAI-compatible WebSocket clients** via the `/v1/ws` upgrade endpoint. The custom `scripts/dev/v1-ws-bridge.mjs` server wraps Next.js and upgrades WS connections to full bidirectional streaming sessions. Authentication uses the same API key or session cookie as HTTP requests.
+OmniRoute now supports **OpenAI-compatible WebSocket clients** via the `/v1/ws` upgrade endpoint. The custom `scripts/dev/v1-ws-bridge.mjs` server wraps Next.js and upgrades WS connections to full bidirectional streaming sessions. Authentication is required by default and uses the same API key or session cookie as HTTP requests.
 
 Key behaviours:
 
-- WS upgrade validated by `src/lib/ws/handshake.ts` before the connection is established
+- WS upgrade auth is validated by `src/lib/ws/handshake.ts` before the connection is established
 - Streams terminated cleanly on session close or upstream error
 - Works alongside the existing HTTP+SSE streaming path simultaneously
 

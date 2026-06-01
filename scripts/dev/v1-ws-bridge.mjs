@@ -155,6 +155,64 @@ function normalizeEndpoint(rawEndpoint) {
   return `${parsed.pathname}${parsed.search}`;
 }
 
+function isPlainObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
+}
+
+function isChatRequestPayload(value) {
+  return isPlainObject(value) && isText(value.model) && Array.isArray(value.messages);
+}
+
+function inferEndpointFromProtocol(message) {
+  const rawProtocol = isText(message.protocol)
+    ? message.protocol
+    : isText(message.api_format)
+      ? message.api_format
+      : isText(message.format)
+        ? message.format
+        : null;
+
+  const protocol = rawProtocol?.trim().toLowerCase();
+  if (["claude", "anthropic", "messages"].includes(protocol)) return "/v1/messages";
+  if (["openai", "chat.completions", "chat_completions"].includes(protocol)) {
+    return "/v1/chat/completions";
+  }
+
+  if (isText(message.anthropic_version) || isText(message.anthropicVersion)) {
+    return "/v1/messages";
+  }
+
+  // Anthropic Messages requires max_tokens. OpenAI clients may still send it,
+  // but max_completion_tokens is the OpenAI-specific spelling for newer models.
+  if (Number.isFinite(message.max_tokens) && message.max_completion_tokens === undefined) {
+    return "/v1/messages";
+  }
+
+  return "/v1/chat/completions";
+}
+
+function stripWsOnlyFields(message) {
+  const { endpoint, protocol, api_format: apiFormat, format, id, type, ...payload } = message;
+  void endpoint;
+  void protocol;
+  void apiFormat;
+  void format;
+  void id;
+  void type;
+  return payload;
+}
+
+function createRawProtocolEnvelope(message) {
+  if (!isChatRequestPayload(message)) return null;
+
+  return {
+    type: "request",
+    id: isText(message.id) ? message.id : randomUUID(),
+    endpoint: isText(message.endpoint) ? message.endpoint : inferEndpointFromProtocol(message),
+    payload: stripWsOnlyFields(message),
+  };
+}
+
 function getForwardHeaders(requestUrl, requestHeaders) {
   const headers = {
     accept: "text/event-stream",
@@ -354,6 +412,12 @@ class WebSocketSession {
   async handleMessage(message) {
     if (!message || typeof message !== "object" || Array.isArray(message)) {
       this.sendProtocolError("invalid_envelope", "WebSocket message must be an object");
+      return;
+    }
+
+    const rawProtocolEnvelope = createRawProtocolEnvelope(message);
+    if (rawProtocolEnvelope) {
+      await this.handleMessage(rawProtocolEnvelope);
       return;
     }
 
