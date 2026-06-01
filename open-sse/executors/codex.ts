@@ -155,13 +155,15 @@ export interface CodexQuotaSnapshot {
  *   x-codex-5h-usage / x-codex-5h-limit / x-codex-5h-reset-at
  *   x-codex-7d-usage / x-codex-7d-limit / x-codex-7d-reset-at
  */
-export function parseCodexQuotaHeaders(headers: Headers): CodexQuotaSnapshot | null {
-  const usage5h = headers.get("x-codex-5h-usage");
-  const limit5h = headers.get("x-codex-5h-limit");
-  const resetAt5h = headers.get("x-codex-5h-reset-at");
-  const usage7d = headers.get("x-codex-7d-usage");
-  const limit7d = headers.get("x-codex-7d-limit");
-  const resetAt7d = headers.get("x-codex-7d-reset-at");
+export function parseCodexQuotaHeaders(
+  headers: Record<string, string>
+): CodexQuotaSnapshot | null {
+  const usage5h = headers["x-codex-5h-usage"] ?? null;
+  const limit5h = headers["x-codex-5h-limit"] ?? null;
+  const resetAt5h = headers["x-codex-5h-reset-at"] ?? null;
+  const usage7d = headers["x-codex-7d-usage"] ?? null;
+  const limit7d = headers["x-codex-7d-limit"] ?? null;
+  const resetAt7d = headers["x-codex-7d-reset-at"] ?? null;
 
   // Return null if none of the quota headers are present (not a quota-aware response)
   if (!usage5h && !limit5h && !resetAt5h && !usage7d && !limit7d && !resetAt7d) {
@@ -373,6 +375,46 @@ function stripStoredItemReferences(body: Record<string, unknown>): void {
   if (strippedCount > 0) {
     console.debug(
       `[Codex] stripStoredItemReferences: sanitized ${strippedCount} server-generated ID(s) from input`
+    );
+  }
+}
+
+function repairMissingCodexFunctionCallOutputs(body: Record<string, unknown>): void {
+  if (!Array.isArray(body.input)) return;
+
+  const existingOutputIds = new Set<string>();
+  for (const item of body.input) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    if (record.type !== "function_call_output") continue;
+    if (typeof record.call_id === "string" && record.call_id.trim()) {
+      existingOutputIds.add(record.call_id.trim());
+    }
+  }
+
+  const repaired: unknown[] = [];
+  let insertedCount = 0;
+  for (const item of body.input) {
+    repaired.push(item);
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    if (record.type !== "function_call") continue;
+    const callId = typeof record.call_id === "string" ? record.call_id.trim() : "";
+    if (!callId || existingOutputIds.has(callId)) continue;
+
+    repaired.push({
+      type: "function_call_output",
+      call_id: callId,
+      output: "",
+    });
+    existingOutputIds.add(callId);
+    insertedCount++;
+  }
+
+  if (insertedCount > 0) {
+    body.input = repaired;
+    console.debug(
+      `[Codex] repairMissingCodexFunctionCallOutputs: inserted ${insertedCount} empty function_call_output item(s)`
     );
   }
 }
@@ -1136,6 +1178,7 @@ export class CodexExecutor extends BaseExecutor {
     if (Array.isArray(body.input)) {
       body.input = sanitizeResponsesInputItems(body.input, false);
     }
+    repairMissingCodexFunctionCallOutputs(body);
 
     // ── Cache-aware system prompt handling (both paths) ──
     //

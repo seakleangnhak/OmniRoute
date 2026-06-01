@@ -364,6 +364,58 @@ test("getProviderCredentialsWithQuotaPreflight invokes the fetcher when an overr
   assert.equal(fetcherCalls, 1, "fetcher should have been invoked exactly once");
 });
 
+test("getProviderCredentialsWithQuotaPreflight: explicit quotaPreflightEnabled:false bypasses preflight even when provider has global window defaults (#2831)", async () => {
+  // Regression: when a provider has providerWindowDefaults set AND a connection
+  // carries quotaWindowThresholds, the AND-of-negations gate in auth.ts would
+  // proceed to preflight even if the connection explicitly opted out with
+  // providerSpecificData.quotaPreflightEnabled === false.
+  const conn = await seedConnection("github", {
+    name: "github-explicit-opt-out",
+    apiKey: "ghp-opt-out-test",
+    providerSpecificData: { quotaPreflightEnabled: false },
+  });
+  // Give the connection per-window overrides (simulates a user-configured
+  // threshold) — this is the field that previously caused the gate to keep going.
+  await (await import("../../src/lib/db/providers.ts")).updateProviderConnection(conn.id, {
+    quotaWindowThresholds: { primary: 50 },
+  });
+
+  // Seed provider-level window defaults so providerHasDefaults === true.
+  await settingsDb.updateSettings({
+    resilienceSettings: {
+      quotaPreflight: {
+        defaultThresholdPercent: 2,
+        warnThresholdPercent: 20,
+        providerWindowDefaults: { github: { primary: 10 } },
+      },
+    },
+  });
+
+  const quotaPreflight = await import("../../open-sse/services/quotaPreflight.ts");
+  let fetcherCalls = 0;
+  quotaPreflight.registerQuotaFetcher("github", async () => {
+    fetcherCalls++;
+    // Return a quota that would block if preflight actually ran.
+    return { used: 98, total: 100, percentUsed: 0.98 };
+  });
+
+  const selected = await auth.getProviderCredentialsWithQuotaPreflight("github");
+
+  assert.equal(
+    fetcherCalls,
+    0,
+    "fetcher must NOT run when connection explicitly opts out with quotaPreflightEnabled: false"
+  );
+  assert.equal(
+    (selected as any).connectionId,
+    conn.id,
+    "opted-out connection must be returned directly without being blocked by preflight"
+  );
+
+  // Cleanup: reset settings so subsequent tests see factory defaults.
+  await settingsDb.updateSettings({ resilienceSettings: {} });
+});
+
 test("getProviderCredentials keeps separate codex affinity per session", async () => {
   await settingsDb.updateSettings({
     fallbackStrategy: "round-robin",
@@ -607,6 +659,22 @@ test("getProviderCredentials retains rate-limited accounts when allowSuppressedC
   assert.equal(blocked.allRateLimited, true);
   assert.equal(bypassed.connectionId, connection.id);
 });
+
+test("getProviderCredentials retains rate-limited accounts when allowRateLimitedConnections is enabled", async () => {
+  const connection = await seedConnection("openai", {
+    name: "allow-rate-limit-option",
+    rateLimitedUntil: futureIso(),
+  });
+
+  const blocked = await auth.getProviderCredentials("openai");
+  const bypassed = await auth.getProviderCredentials("openai", null, null, null, {
+    allowRateLimitedConnections: true,
+  });
+
+  assert.equal(blocked.allRateLimited, true);
+  assert.equal(bypassed.connectionId, connection.id);
+});
+
 
 test("getProviderCredentials retains terminal accounts for combo live tests", async () => {
   const connection = await seedConnection("openai", {

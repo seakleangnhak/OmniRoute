@@ -71,16 +71,14 @@ async function withEnv<T>(entries: Record<string, string | undefined>, fn: () =>
 }
 
 test("Codex helper functions isolate rate-limit scopes and parse quota headers", () => {
-  const quota = parseCodexQuotaHeaders(
-    new Headers({
-      "x-codex-5h-usage": "100",
-      "x-codex-5h-limit": "500",
-      "x-codex-5h-reset-at": new Date(Date.now() + 60_000).toISOString(),
-      "x-codex-7d-usage": "1000",
-      "x-codex-7d-limit": "5000",
-      "x-codex-7d-reset-at": new Date(Date.now() + 120_000).toISOString(),
-    })
-  );
+  const quota = parseCodexQuotaHeaders({
+    "x-codex-5h-usage": "100",
+    "x-codex-5h-limit": "500",
+    "x-codex-5h-reset-at": new Date(Date.now() + 60_000).toISOString(),
+    "x-codex-7d-usage": "1000",
+    "x-codex-7d-limit": "5000",
+    "x-codex-7d-reset-at": new Date(Date.now() + 120_000).toISOString(),
+  });
 
   assert.equal(getCodexModelScope("codex-spark-mini"), "spark");
   assert.equal(getCodexModelScope("gpt-5.3-codex"), "codex");
@@ -510,6 +508,53 @@ test("CodexExecutor.transformRequest strips raw internal assistant commentary wi
     result.input.some((item) => item.type === "function_call_output"),
     true
   );
+});
+
+test("CodexExecutor.transformRequest inserts missing function_call_output items", () => {
+  const executor = new CodexExecutor();
+  const result = executor.transformRequest(
+    "gpt-5.5-xhigh",
+    {
+      _nativeCodexPassthrough: true,
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Continue." }],
+        },
+        {
+          type: "function_call",
+          call_id: "call_missing_result",
+          name: "read_file",
+          arguments: "{}",
+        },
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Next turn." }],
+        },
+      ],
+      stream: false,
+    },
+    false,
+    {
+      requestEndpointPath: "/responses",
+    }
+  );
+
+  const missingOutputIndex = result.input.findIndex(
+    (item) => item.type === "function_call_output" && item.call_id === "call_missing_result"
+  );
+  const functionCallIndex = result.input.findIndex(
+    (item) => item.type === "function_call" && item.call_id === "call_missing_result"
+  );
+
+  assert.equal(missingOutputIndex, functionCallIndex + 1);
+  assert.deepEqual(result.input[missingOutputIndex], {
+    type: "function_call_output",
+    call_id: "call_missing_result",
+    output: "",
+  });
 });
 
 test("CodexExecutor.transformRequest strips internal assistant commentary before mapping messages to input", () => {
