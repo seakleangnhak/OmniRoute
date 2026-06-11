@@ -20,6 +20,7 @@ import EmailPrivacyToggle from "@/shared/components/EmailPrivacyToggle";
 import QuotaCutoffModal from "./QuotaCutoffModal";
 import QuotaCardGrid from "./QuotaCardGrid";
 import { translateUsageOrFallback, type UsageTranslationValues } from "./i18nFallback";
+import { compareTr } from "@/shared/utils/turkishText";
 
 const LS_PURCHASE_FILTER = "omniroute:limits:purchaseFilter";
 const LS_STATUS_FILTER = "omniroute:limits:statusFilter";
@@ -121,6 +122,21 @@ function getSoonestResetMs(quotas: any[] | undefined): number {
     if (Number.isFinite(ts) && ts > now && ts < soonest) soonest = ts;
   }
   return soonest;
+}
+
+function shouldAutoRefreshQuota(provider: string, cached: any): boolean {
+  const quotas = cached?.quotas;
+  if (!Array.isArray(quotas) || quotas.length === 0) return true;
+  if (provider !== "antigravity" && provider !== "agy") return false;
+
+  return quotas.some(
+    (q: any) =>
+      q &&
+      typeof q.modelKey === "string" &&
+      q.modelKey.startsWith("gemini-") &&
+      !q.isCredits &&
+      q.quotaSource !== "retrieveUserQuota"
+  );
 }
 
 const getQuotaBarWidthClass = (pct: number) => {
@@ -362,10 +378,17 @@ export default function ProviderLimits({
           const errorMsg = errorData.error || response.statusText;
           if (response.status === 404) return;
           if (response.status === 401) {
+            // The on-demand path already attempts a forced, serialized re-mint
+            // before surfacing a 401, so a 401 here means the token is genuinely
+            // dead — make that actionable instead of a silent empty card.
+            const reauthMsg = /re-?authenticat|sign in|log in/i.test(errorMsg)
+              ? errorMsg
+              : `${errorMsg} — re-authenticate this account.`;
             setQuotaData((prev) => ({
               ...prev,
-              [connectionId]: { quotas: [], message: errorMsg },
+              [connectionId]: { quotas: [], message: reauthMsg },
             }));
+            setErrors((prev) => ({ ...prev, [connectionId]: reauthMsg }));
             return;
           }
           throw new Error(`HTTP ${response.status}: ${errorMsg}`);
@@ -593,7 +616,7 @@ export default function ProviderLimits({
       const tag = (conn.providerSpecificData?.tag as string | undefined)?.trim();
       if (tag) tags.add(tag);
     }
-    return [...tags].sort((a, b) => a.localeCompare(b));
+    return [...tags].sort((a, b) => compareTr(a, b));
   }, [sortedConnections]);
 
   const envCounts = useMemo(() => {
@@ -649,6 +672,24 @@ export default function ProviderLimits({
     envFilter,
     quotaData,
   ]);
+
+  // Auto-fetch LIVE quota on open for visible connections that have no cached
+  // quota yet (e.g. a Codex account whose access_token expired — its per-connection
+  // live fetch refreshes the token serialized/cascade-safe and surfaces real quota).
+  // Scoped to what's on screen and to the entries actually missing data (the ones
+  // that already have cache render instantly and are not re-fetched), and runs once
+  // per page open so it never loops on the quotaData it writes.
+  const autoLiveFetchedRef = useRef(false);
+  useEffect(() => {
+    if (initialLoading || autoLiveFetchedRef.current || visibleConnections.length === 0) return;
+    autoLiveFetchedRef.current = true;
+    for (const conn of visibleConnections) {
+      const cached = quotaData[conn.id];
+      if (shouldAutoRefreshQuota(conn.provider, cached)) {
+        void fetchQuota(conn.id, conn.provider, { force: true }).catch(() => {});
+      }
+    }
+  }, [initialLoading, visibleConnections, quotaData, fetchQuota]);
 
   const handleSetPurchaseFilter = useCallback((value: PurchaseTypeKey) => {
     setPurchaseTypeFilter(value);
@@ -752,7 +793,9 @@ export default function ProviderLimits({
           onClick={refreshAll}
           disabled={refreshingAll}
           className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-bg-subtle border border-border text-text-main text-[13px] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-          title={autoRefreshIntervalMs > 0 ? tr("autoRefreshing", "Auto-refreshing") : t("refreshAll")}
+          title={
+            autoRefreshIntervalMs > 0 ? tr("autoRefreshing", "Auto-refreshing") : t("refreshAll")
+          }
         >
           <span
             className={`material-symbols-outlined text-[16px] ${refreshingAll ? "animate-spin" : ""}`}
@@ -763,7 +806,10 @@ export default function ProviderLimits({
             ? tr("refreshing", "Refreshing")
             : autoRefreshIntervalMs > 0
               ? `${tr("autoRefreshing", "Auto-refreshing")} ${formatAutoRefreshCountdown(
-                  Math.max(0, autoRefreshIntervalMs - (autoRefreshClock - lastRefreshAllAtRef.current))
+                  Math.max(
+                    0,
+                    autoRefreshIntervalMs - (autoRefreshClock - lastRefreshAllAtRef.current)
+                  )
                 )}`
               : t("refreshAll")}
         </button>

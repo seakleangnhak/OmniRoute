@@ -7,16 +7,18 @@ import {
   getAntigravityFetchAvailableModelsUrls,
   ANTIGRAVITY_BASE_URLS,
 } from "../config/antigravityUpstream.ts";
-import { isUserCallableAntigravityModelId } from "../config/antigravityModelAliases.ts";
+import {
+  isUserCallableAntigravityModelId,
+  toClientAntigravityQuotaModelId,
+} from "../config/antigravityModelAliases.ts";
+import { isUserCallableAgyModelId } from "../config/agyModels.ts";
 import { getGlmQuotaUrl } from "../config/glmProvider.ts";
 import { getGitHubCopilotInternalUserHeaders } from "../config/providerHeaderProfiles.ts";
 import { safePercentage } from "@/shared/utils/formatting";
+import { getDbInstance } from "@/lib/db/core";
 import { fetchBailianQuota, type BailianTripleWindowQuota } from "./bailianQuotaFetcher.ts";
 import { fetchDeepseekQuota, type DeepseekQuota } from "./deepseekQuotaFetcher.ts";
-import {
-  fetchOpencodeQuota,
-  type OpencodeTripleWindowQuota,
-} from "./opencodeQuotaFetcher.ts";
+import { fetchOpencodeQuota, type OpencodeTripleWindowQuota } from "./opencodeQuotaFetcher.ts";
 import {
   applyAntigravityClientProfileHeaders,
   getAntigravityBootstrapHeaders,
@@ -139,6 +141,7 @@ type UsageQuota = {
    * NOT a confirmed-exhausted state. Antigravity-specific.
    */
   fractionReported?: boolean;
+  quotaSource?: "retrieveUserQuota" | "fetchAvailableModels" | "localUsageHistory";
   displayName?: string;
   details?: Array<{
     name: string;
@@ -406,7 +409,13 @@ function getMiniMaxQuotaResetAt(
 
 function isMiniMaxTextQuotaModel(modelName: string): boolean {
   const normalized = modelName.trim().toLowerCase();
-  return normalized.startsWith("minimax-m") || normalized.startsWith("coding-plan");
+  return (
+    normalized.startsWith("minimax-m") ||
+    normalized.startsWith("coding-plan") ||
+    // MiniMax Coding Plan surfaces the text/coding quota under model "general"
+    // (media buckets like "video"/"image"/"music" are excluded).
+    normalized === "general"
+  );
 }
 
 function getMiniMaxSessionTotal(model: JsonRecord): number {
@@ -442,6 +451,66 @@ function createMiniMaxQuotaFromCount(
 ): UsageQuota {
   const used = countMeansRemaining ? Math.max(total - count, 0) : count;
   return createQuotaFromUsage(used, total, resetAt);
+}
+
+/**
+ * MiniMax Coding Plan exposes per-window remaining as a 0–100 percent
+ * (`current_interval_remaining_percent` / `current_weekly_remaining_percent`)
+ * with zero request counts. Read it defensively (string-encoded numbers ok).
+ */
+function getMiniMaxRemainingPercent(
+  model: JsonRecord,
+  snakeKey: string,
+  camelKey: string
+): number | null {
+  const raw = getFieldValue(model, snakeKey, camelKey);
+  if (raw === null || raw === undefined || raw === "") return null;
+  const parsed = toNumber(raw, NaN);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : null;
+}
+
+/** Build a 0–100 percent-based window quota (used = 100 − remaining). */
+function createMiniMaxQuotaFromPercent(
+  remainingPercent: number,
+  resetAt: string | null
+): UsageQuota {
+  const clamped = Math.max(0, Math.min(100, remainingPercent));
+  return createQuotaFromUsage(100 - clamped, 100, resetAt);
+}
+
+/**
+ * Build one MiniMax usage window (session or weekly) from the representative
+ * model. Token Plan keys report request counts (`*_total_count`); Coding Plan
+ * keys report zero counts and a `*_remaining_percent` instead — fall back to
+ * that so the Coding Plan still surfaces a quota. The percent signal is keyed
+ * off "counts == 0 + percent present", NOT the endpoint URL, because the
+ * `token_plan/remains` and `coding_plan/remains` endpoints return identical
+ * Coding-Plan payloads for a Coding Plan key.
+ */
+function buildMiniMaxWindow(
+  models: JsonRecord[],
+  getTotal: (model: JsonRecord) => number,
+  usageCountKeys: [string, string],
+  percentKeys: [string, string],
+  resetKeys: [string, string, string, string],
+  capturedAtMs: number,
+  countMeansRemaining: boolean
+): UsageQuota | null {
+  const model = pickMiniMaxRepresentativeModel(models, getTotal);
+  if (!model) return null;
+
+  const resetAt = getMiniMaxQuotaResetAt(model, capturedAtMs, ...resetKeys);
+  const total = getTotal(model);
+
+  if (total > 0) {
+    const count = Math.max(0, toNumber(getFieldValue(model, ...usageCountKeys), 0));
+    return createMiniMaxQuotaFromCount(total, count, resetAt, countMeansRemaining);
+  }
+
+  const remainingPercent = getMiniMaxRemainingPercent(model, ...percentKeys);
+  return remainingPercent !== null
+    ? createMiniMaxQuotaFromPercent(remainingPercent, resetAt)
+    : null;
 }
 
 function getMiniMaxAuthErrorMessage(message: string): string {
@@ -559,58 +628,31 @@ async function getMiniMaxUsage(apiKey: string, provider: "minimax" | "minimax-cn
 
       const countMeansRemaining = usageUrl.includes("/coding_plan/remains");
       const quotas: Record<string, UsageQuota> = {};
-      const sessionModel = pickMiniMaxRepresentativeModel(textModels, getMiniMaxSessionTotal);
-      if (sessionModel) {
-        const total = getMiniMaxSessionTotal(sessionModel);
-        const count = Math.max(
-          0,
-          toNumber(
-            getFieldValue(
-              sessionModel,
-              "current_interval_usage_count",
-              "currentIntervalUsageCount"
-            ),
-            0
-          )
-        );
-        quotas["session (5h)"] = createMiniMaxQuotaFromCount(
-          total,
-          count,
-          getMiniMaxQuotaResetAt(
-            sessionModel,
-            capturedAtMs,
-            "remains_time",
-            "remainsTime",
-            "end_time",
-            "endTime"
-          ),
-          countMeansRemaining
-        );
+
+      const sessionQuota = buildMiniMaxWindow(
+        textModels,
+        getMiniMaxSessionTotal,
+        ["current_interval_usage_count", "currentIntervalUsageCount"],
+        ["current_interval_remaining_percent", "currentIntervalRemainingPercent"],
+        ["remains_time", "remainsTime", "end_time", "endTime"],
+        capturedAtMs,
+        countMeansRemaining
+      );
+      if (sessionQuota) {
+        quotas["session (5h)"] = sessionQuota;
       }
 
-      const weeklyModel = pickMiniMaxRepresentativeModel(textModels, getMiniMaxWeeklyTotal);
-      if (weeklyModel && getMiniMaxWeeklyTotal(weeklyModel) > 0) {
-        const total = getMiniMaxWeeklyTotal(weeklyModel);
-        const count = Math.max(
-          0,
-          toNumber(
-            getFieldValue(weeklyModel, "current_weekly_usage_count", "currentWeeklyUsageCount"),
-            0
-          )
-        );
-        quotas["weekly (7d)"] = createMiniMaxQuotaFromCount(
-          total,
-          count,
-          getMiniMaxQuotaResetAt(
-            weeklyModel,
-            capturedAtMs,
-            "weekly_remains_time",
-            "weeklyRemainsTime",
-            "weekly_end_time",
-            "weeklyEndTime"
-          ),
-          countMeansRemaining
-        );
+      const weeklyQuota = buildMiniMaxWindow(
+        textModels,
+        getMiniMaxWeeklyTotal,
+        ["current_weekly_usage_count", "currentWeeklyUsageCount"],
+        ["current_weekly_remaining_percent", "currentWeeklyRemainingPercent"],
+        ["weekly_remains_time", "weeklyRemainsTime", "weekly_end_time", "weeklyEndTime"],
+        capturedAtMs,
+        countMeansRemaining
+      );
+      if (weeklyQuota) {
+        quotas["weekly (7d)"] = weeklyQuota;
       }
 
       if (Object.keys(quotas).length === 0) {
@@ -773,6 +815,20 @@ function orderGlmQuotas(quotas: Record<string, UsageQuota>): Record<string, Usag
   return ordered;
 }
 
+/**
+ * Remaining-percentage for a GLM/z.ai TIME_LIMIT ("Monthly") quota. With an absolute
+ * monthly cap (`total > 0`) it is `remaining / total`. Coding plans that have no
+ * monthly cap (only 5-hour windows) report `total = 0`; in that case fall back to the
+ * percentage-derived remaining so "no monthly cap" renders as full/100% instead of a
+ * misleading 0% (#3580).
+ */
+export function glmMonthlyRemainingPercentage(total: number, remaining: number): number {
+  if (total > 0) {
+    return Math.max(0, Math.min(100, Math.round((remaining / total) * 100)));
+  }
+  return Math.max(0, Math.min(100, Math.round(remaining)));
+}
+
 async function getGlmUsage(apiKey: string, providerSpecificData?: Record<string, unknown>) {
   if (!apiKey) {
     return { message: "API key not available. Add a coding plan API key to view usage." };
@@ -837,8 +893,7 @@ async function getGlmUsage(apiKey: string, providerSpecificData?: Record<string,
       const total = toNumber(src.usage, toNumber(src.total, 0));
       const remaining = toNumber(src.remaining, Math.max(0, 100 - toPercentage(src.percentage)));
       const used = toNumber(src.currentValue, Math.max(0, total - remaining));
-      const remainingPercentage =
-        total > 0 ? Math.max(0, Math.min(100, Math.round((remaining / total) * 100))) : 0;
+      const remainingPercentage = glmMonthlyRemainingPercentage(total, remaining);
 
       quotas["mcp_monthly"] = {
         used,
@@ -889,17 +944,29 @@ async function getOpenCodeGoUsage(apiKey: string) {
   });
 
   if (!res.ok) {
-    if (res.status === 401 || res.status === 403) throw new Error("Invalid OpenCode Go API key");
-    throw new Error(`OpenCode Go quota API error (${res.status})`);
+    if (res.status === 401 || res.status === 403) {
+      return {
+        message: "OpenCode Go quota endpoint rejected this API key. Chat requests still work.",
+      };
+    }
+    return { message: `OpenCode Go quota API error (${res.status})` };
   }
 
-  const json = await res.json();
-  const code = toNumber(json.code, 200);
-  if (code === 401 || code === 403 || json.success === false) {
-    throw new Error("Invalid OpenCode Go API key");
+  let json: unknown;
+  try {
+    json = await res.json();
+  } catch {
+    return { message: "OpenCode Go quota response parsing failed." };
   }
 
-  const data = toRecord(json.data);
+  const code = toNumber((json as Record<string, unknown>).code, 200);
+  if (code === 401 || code === 403 || (json as Record<string, unknown>).success === false) {
+    return {
+      message: "OpenCode Go quota endpoint rejected this API key. Chat requests still work.",
+    };
+  }
+
+  const data = toRecord((json as Record<string, unknown>).data);
   const limits: unknown[] = Array.isArray(data.limits) ? data.limits : [];
   const quotas: Record<string, UsageQuota> = {};
 
@@ -1051,6 +1118,43 @@ async function getDeepseekUsage(connectionId: string, apiKey: string) {
   }
 }
 
+// Xiaomi MiMo Token Plan monthly limit (tokens). Keep in sync with the
+// "xiaomi-mimo" preset in src/lib/quota/planRegistry.ts.
+const XIAOMI_MIMO_MONTHLY_TOKEN_LIMIT = 4_100_000_000;
+
+/**
+ * Xiaomi MiMo — SELF-TRACKED monthly quota.
+ *
+ * Xiaomi exposes plan usage only behind the console session cookie (the API key
+ * cannot reach the `tokenPlan/usage` endpoint), so there is no upstream usage
+ * API to call. Instead we count the tokens OmniRoute itself routed to this
+ * connection in the current UTC month (from `usage_history`) and compare them
+ * to the known Token Plan monthly limit. This reflects only traffic that went
+ * through OmniRoute, not the provider's own dashboard figure.
+ */
+async function getXiaomiMimoUsage(connectionId: string) {
+  if (!connectionId) {
+    return { message: "Xiaomi MiMo: connection id unavailable for self-tracked quota." };
+  }
+  try {
+    const { getMonthlyProviderTokensForConnection } = await import("@/lib/usage/usageStats");
+    const used = getMonthlyProviderTokensForConnection("xiaomi-mimo", connectionId);
+    const total = XIAOMI_MIMO_MONTHLY_TOKEN_LIMIT;
+    const now = new Date();
+    const resetAt = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)
+    ).toISOString();
+    return {
+      plan: "Xiaomi MiMo Token Plan (OmniRoute-tracked)",
+      quotas: {
+        monthly: createQuotaFromUsage(used, total, resetAt),
+      },
+    };
+  } catch (error) {
+    return { message: `Xiaomi MiMo self-tracked usage error: ${(error as Error).message}` };
+  }
+}
+
 /**
  * OpenCode Go / OpenCode / OpenCode Zen Usage
  * Delegates to the dedicated opencodeQuotaFetcher and shapes the result into
@@ -1064,7 +1168,9 @@ async function getOpencodeUsage(connectionId: string, apiKey: string) {
   }
 
   try {
-    const quota = (await fetchOpencodeQuota(connectionId, { apiKey })) as OpencodeTripleWindowQuota | null;
+    const quota = (await fetchOpencodeQuota(connectionId, {
+      apiKey,
+    })) as OpencodeTripleWindowQuota | null;
 
     if (!quota) {
       return { message: "OpenCode connected. Unable to fetch quota data." };
@@ -1348,6 +1454,7 @@ export const USAGE_FETCHER_PROVIDERS = [
   "github",
   "gemini-cli",
   "antigravity",
+  "agy",
   "claude",
   "codex",
   "cursor",
@@ -1367,9 +1474,9 @@ export const USAGE_FETCHER_PROVIDERS = [
   "bailian-coding-plan",
   "nanogpt",
   "deepseek",
-  "opencode-go",
   "opencode",
   "opencode-zen",
+  "xiaomi-mimo",
 ] as const;
 
 export type UsageFetcherProvider = (typeof USAGE_FETCHER_PROVIDERS)[number];
@@ -1391,7 +1498,15 @@ export async function getUsageForProvider(
     case "gemini-cli":
       return await getGeminiUsage(accessToken, providerSpecificData, projectId);
     case "antigravity":
-      return await getAntigravityUsage(accessToken, providerSpecificData, projectId, id, options);
+    case "agy":
+      return await getAntigravityUsage(
+        provider,
+        accessToken,
+        providerSpecificData,
+        projectId,
+        id,
+        options
+      );
     case "claude":
       return await getClaudeUsage(accessToken);
     case "codex":
@@ -1428,10 +1543,11 @@ export async function getUsageForProvider(
       return await getNanoGptUsage(apiKey || "");
     case "deepseek":
       return await getDeepseekUsage(id || "", apiKey || "");
-    case "opencode-go":
     case "opencode":
     case "opencode-zen":
       return await getOpencodeUsage(id || "", apiKey || "");
+    case "xiaomi-mimo":
+      return await getXiaomiMimoUsage(id || "");
     default:
       return { message: `Usage API not implemented for ${provider}` };
   }
@@ -1543,10 +1659,7 @@ async function getGitHubUsage(accessToken?: string, providerSpecificData?: JsonR
       const addLimitedQuota = (name: string) => {
         const total = toNumber(getFieldValue(monthlyQuotas, name, name), 0);
         if (total <= 0) return null;
-        const remainingRaw = Math.max(
-          0,
-          toNumber(getFieldValue(remainingQuotas, name, name), 0)
-        );
+        const remainingRaw = Math.max(0, toNumber(getFieldValue(remainingQuotas, name, name), 0));
         const remaining = Math.min(remainingRaw, total);
         const used = Math.max(total - remaining, 0);
         quotas[name] = {
@@ -1818,6 +1931,8 @@ const ANTIGRAVITY_MODELS_CACHE_TTL_MS = 60 * 1000;
 const ANTIGRAVITY_CREDIT_PROBE_TTL_MS = 5 * 60 * 1000;
 const _antigravityAvailableModelsCache = new Map<string, { data: unknown; fetchedAt: number }>();
 const _antigravityAvailableModelsInflight = new Map<string, Promise<unknown>>();
+const _antigravityUserQuotaCache = new Map<string, { data: unknown; fetchedAt: number }>();
+const _antigravityUserQuotaInflight = new Map<string, Promise<unknown>>();
 const _antigravityCreditProbeCache = new Map<string, { data: number | null; fetchedAt: number }>();
 const _antigravityCreditProbeInflight = new Map<string, Promise<number | null>>();
 
@@ -1826,25 +1941,106 @@ const _antigravityCreditProbeInflight = new Map<string, Promise<number | null>>(
 // purges stale entries so keys accessed once and never again don't leak memory.
 // The 2 inflight Maps (availableModelsInflight, creditProbeInflight) self-clean
 // when the Promise resolves/rejects, so they are NOT touched here.
-const _usageCacheCleanupTimer = setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of _geminiCliSubCache) {
-    if (now - entry.fetchedAt > GEMINI_CLI_CACHE_TTL_MS) _geminiCliSubCache.delete(key);
-  }
-  for (const [key, entry] of _antigravitySubCache) {
-    if (now - entry.fetchedAt > ANTIGRAVITY_CACHE_TTL_MS) _antigravitySubCache.delete(key);
-  }
-  for (const [key, entry] of _antigravityAvailableModelsCache) {
-    if (now - entry.fetchedAt > ANTIGRAVITY_MODELS_CACHE_TTL_MS) _antigravityAvailableModelsCache.delete(key);
-  }
-  for (const [key, entry] of _antigravityCreditProbeCache) {
-    if (now - entry.fetchedAt > ANTIGRAVITY_CREDIT_PROBE_TTL_MS) _antigravityCreditProbeCache.delete(key);
-  }
-}, 5 * 60 * 1000); // every 5 minutes
+const _usageCacheCleanupTimer = setInterval(
+  () => {
+    const now = Date.now();
+    for (const [key, entry] of _geminiCliSubCache) {
+      if (now - entry.fetchedAt > GEMINI_CLI_CACHE_TTL_MS) _geminiCliSubCache.delete(key);
+    }
+    for (const [key, entry] of _antigravitySubCache) {
+      if (now - entry.fetchedAt > ANTIGRAVITY_CACHE_TTL_MS) _antigravitySubCache.delete(key);
+    }
+    for (const [key, entry] of _antigravityAvailableModelsCache) {
+      if (now - entry.fetchedAt > ANTIGRAVITY_MODELS_CACHE_TTL_MS)
+        _antigravityAvailableModelsCache.delete(key);
+    }
+    for (const [key, entry] of _antigravityUserQuotaCache) {
+      if (now - entry.fetchedAt > ANTIGRAVITY_MODELS_CACHE_TTL_MS)
+        _antigravityUserQuotaCache.delete(key);
+    }
+    for (const [key, entry] of _antigravityCreditProbeCache) {
+      if (now - entry.fetchedAt > ANTIGRAVITY_CREDIT_PROBE_TTL_MS)
+        _antigravityCreditProbeCache.delete(key);
+    }
+  },
+  5 * 60 * 1000
+); // every 5 minutes
 _usageCacheCleanupTimer.unref?.(); // Don't prevent process exit
 
 interface AntigravityUsageOptions {
   forceRefresh?: boolean;
+}
+
+const ANTIGRAVITY_LOCAL_USAGE_WINDOW_MS = 5 * 60 * 60 * 1000;
+const ANTIGRAVITY_LOCAL_USAGE_TOKENS_PER_UNIT = 1000;
+
+// `toClientAntigravityQuotaModelId` was an inline if-ladder here; it is now the single
+// source of truth in open-sse/config/antigravityModelAliases.ts (imported above), shared
+// with the provider-limits cache sanitizer. (#3821-review LEDGER-5)
+
+function getAntigravityLocalUsageUnits(
+  provider: "antigravity" | "agy",
+  connectionId: string | undefined,
+  modelId: string,
+  resetAt: string | null
+): number {
+  if (!connectionId || !modelId || !resetAt) return 0;
+
+  const resetMs = Date.parse(resetAt);
+  if (!Number.isFinite(resetMs)) return 0;
+
+  const windowStart = new Date(resetMs - ANTIGRAVITY_LOCAL_USAGE_WINDOW_MS).toISOString();
+  const windowEnd = new Date(resetMs).toISOString();
+
+  try {
+    const db = getDbInstance() as unknown as {
+      prepare: (sql: string) => { get: (...params: unknown[]) => unknown };
+    };
+    const row = db
+      .prepare(
+        `SELECT COALESCE(SUM(
+           COALESCE(tokens_input, 0) + COALESCE(tokens_output, 0) + COALESCE(tokens_reasoning, 0)
+         ), 0) AS tokens
+         FROM usage_history
+         WHERE provider = ?
+           AND connection_id = ?
+           AND model = ?
+           AND success = 1
+           AND timestamp >= ?
+           AND timestamp < ?`
+      )
+      .get(provider, connectionId, modelId, windowStart, windowEnd) as
+      | { tokens?: unknown }
+      | undefined;
+
+    const tokens = Number(row?.tokens || 0);
+    if (!Number.isFinite(tokens) || tokens <= 0) return 0;
+    return Math.max(1, Math.ceil(tokens / ANTIGRAVITY_LOCAL_USAGE_TOKENS_PER_UNIT));
+  } catch {
+    return 0;
+  }
+}
+
+function applyLocalUsageFallback(
+  quota: UsageQuota,
+  provider: "antigravity" | "agy",
+  connectionId: string | undefined,
+  modelId: string
+): UsageQuota {
+  if (quota.quotaSource !== "fetchAvailableModels" || quota.used > 0 || quota.unlimited) {
+    return quota;
+  }
+
+  const localUsed = getAntigravityLocalUsageUnits(provider, connectionId, modelId, quota.resetAt);
+  if (localUsed <= 0 || quota.total <= 0) return quota;
+
+  const used = Math.min(quota.total, localUsed);
+  return {
+    ...quota,
+    used,
+    remainingPercentage: Math.max(0, ((quota.total - used) / quota.total) * 100),
+    quotaSource: "localUsageHistory",
+  };
 }
 
 function buildAntigravityUsageCacheKey(accessToken: string, projectId?: string | null): string {
@@ -1915,6 +2111,57 @@ async function fetchAntigravityAvailableModelsCached(
   return promise;
 }
 
+async function fetchAntigravityUserQuotaCached(
+  accessToken: string,
+  projectId?: string | null,
+  options: AntigravityUsageOptions = {}
+): Promise<unknown | null> {
+  if (!accessToken || !projectId) return null;
+
+  const cacheKey = buildAntigravityUsageCacheKey(accessToken, projectId);
+  const cached = _antigravityUserQuotaCache.get(cacheKey);
+  if (
+    !options.forceRefresh &&
+    cached &&
+    Date.now() - cached.fetchedAt < ANTIGRAVITY_MODELS_CACHE_TTL_MS
+  ) {
+    return cached.data;
+  }
+
+  const inflight = _antigravityUserQuotaInflight.get(cacheKey);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    try {
+      const response = await fetch(
+        "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ project: projectId }),
+          signal: AbortSignal.timeout(10000),
+        }
+      );
+
+      if (!response.ok) return null;
+
+      const data = await response.json();
+      _antigravityUserQuotaCache.set(cacheKey, { data, fetchedAt: Date.now() });
+      return data;
+    } catch {
+      return null;
+    }
+  })().finally(() => {
+    _antigravityUserQuotaInflight.delete(cacheKey);
+  });
+
+  _antigravityUserQuotaInflight.set(cacheKey, promise);
+  return promise;
+}
+
 function extractCodeAssistTierId(subscription: JsonRecord): string {
   const tierId = extractCodeAssistOnboardTierId(subscription);
   if (tierId === "legacy-tier") return "";
@@ -1951,7 +2198,10 @@ function mapSubscriptionTierStringToPlanLabel(tierText: string): string | null {
   if (upper.includes("PLUS")) return "Plus";
   if (upper.includes("LITE")) return "Lite";
   if (upper.includes("INDIVIDUAL") || upper.includes("FREE")) return "Free";
-  const normalizedId = upper.replace(/\s*\(RESTRICTED\)\s*$/i, "").trim();
+  // Strip a trailing "(RESTRICTED)" marker. Match the fixed literal anywhere then
+  // trim, instead of /\s*\(RESTRICTED\)\s*$/ whose overlapping \s* runs backtrack
+  // polynomially on whitespace-heavy upstream input (js/polynomial-redos).
+  const normalizedId = upper.replace(/\(RESTRICTED\)/i, "").trim();
   if (normalizedId) {
     const mapped = mapCodeAssistTierIdToLabel(normalizedId);
     if (mapped) return mapped;
@@ -2160,12 +2410,14 @@ async function probeAntigravityCreditBalanceUncached(
 }
 
 /**
- * Antigravity Usage - Fetch quota from Google Cloud Code API
- * Uses fetchAvailableModels API which returns ALL models (including Claude)
- * with per-model quotaInfo (remainingFraction, resetTime).
- * retrieveUserQuota only returns Gemini models — not suitable for Antigravity.
+ * Antigravity Usage - Fetch quota from Google Cloud Code API.
+ * fetchAvailableModels is catalog/eligibility data and may keep reporting full buckets
+ * after real usage. retrieveUserQuota is the consumption signal for Gemini-family
+ * buckets, so prefer it when present and fall back to fetchAvailableModels only for
+ * models that have no retrieveUserQuota entry (for example Claude/GPT OSS buckets).
  */
 async function getAntigravityUsage(
+  provider: "antigravity" | "agy",
   accessToken?: string,
   providerSpecificData?: JsonRecord,
   connectionProjectId?: string,
@@ -2216,33 +2468,52 @@ async function getAntigravityUsage(
       );
     }
 
-    const data = await fetchAntigravityAvailableModelsCached(accessToken, projectId, options);
+    const [data, userQuotaData] = await Promise.all([
+      fetchAntigravityAvailableModelsCached(accessToken, projectId, options),
+      fetchAntigravityUserQuotaCached(accessToken, projectId, options),
+    ]);
     const dataObj = toRecord(data);
     if (dataObj.__antigravityForbidden === true) {
       return { message: "Antigravity access forbidden. Check subscription." };
     }
     const modelEntries = toRecord(dataObj.models);
+    const userQuotaEntries = new Map<string, JsonRecord>();
+    const userQuotaObj = toRecord(userQuotaData);
+    if (Array.isArray(userQuotaObj.buckets)) {
+      for (const bucketValue of userQuotaObj.buckets) {
+        const bucket = toRecord(bucketValue);
+        const modelId = toClientAntigravityQuotaModelId(String(bucket.modelId || "").trim());
+        if (!modelId) continue;
+        userQuotaEntries.set(modelId, bucket);
+      }
+    }
     const quotas: Record<string, UsageQuota> = {};
 
     // Parse per-model quota info from fetchAvailableModels response.
-    for (const [modelKey, infoValue] of Object.entries(modelEntries)) {
+    for (const [rawModelKey, infoValue] of Object.entries(modelEntries)) {
       const info = toRecord(infoValue);
       const quotaInfo = toRecord(info.quotaInfo);
+      const modelKey = toClientAntigravityQuotaModelId(rawModelKey);
 
       // Skip internal, excluded, and models without quota info
       if (
+        !modelKey ||
         info.isInternal === true ||
-        !isUserCallableAntigravityModelId(modelKey) ||
+        !(provider === "agy"
+          ? isUserCallableAgyModelId(modelKey)
+          : isUserCallableAntigravityModelId(modelKey)) ||
         Object.keys(quotaInfo).length === 0
       ) {
         continue;
       }
 
-      const rawFraction = toNumber(quotaInfo.remainingFraction, -1);
-      const resetAt = parseResetTime(quotaInfo.resetTime);
+      const liveQuota = userQuotaEntries.get(modelKey);
+      const quotaSource = liveQuota || quotaInfo;
+      const rawFraction = toNumber(quotaSource.remainingFraction, -1);
+      const resetAt = parseResetTime(quotaSource.resetTime);
       // Distinguish "upstream did not report remainingFraction" from "remaining is 0%".
-      // A schema drift in Antigravity's quota API (very plausible — internal Google product)
-      // would otherwise silently mark every model as exhausted across the dashboard.
+      // fetchAvailableModels is a catalog view and can be stale/full; retrieveUserQuota is
+      // the source of truth for actual Gemini consumption when it includes the model.
       const fractionReported = rawFraction >= 0;
       if (!fractionReported) {
         console.warn(
@@ -2259,13 +2530,50 @@ async function getAntigravityUsage(
       const remaining = Math.round(total * remainingFraction);
       const used = isUnlimited ? 0 : Math.max(0, total - remaining);
 
+      quotas[modelKey] = applyLocalUsageFallback(
+        {
+          used,
+          total: isUnlimited ? 0 : total,
+          resetAt,
+          remainingPercentage: isUnlimited ? 100 : remainingPercentage,
+          unlimited: isUnlimited,
+          fractionReported,
+          quotaSource: liveQuota ? "retrieveUserQuota" : "fetchAvailableModels",
+        },
+        provider,
+        connectionId,
+        modelKey
+      );
+    }
+
+    // Include retrieveUserQuota buckets not listed in the static/public Antigravity catalog yet.
+    // This keeps Provider Limits honest when Google adds a new Gemini tier before our catalog is
+    // updated. Hidden/internal catalog entries above are still filtered by the public pass.
+    for (const [modelKey, bucket] of userQuotaEntries) {
+      if (
+        quotas[modelKey] ||
+        !(provider === "agy"
+          ? isUserCallableAgyModelId(modelKey)
+          : isUserCallableAntigravityModelId(modelKey))
+      ) {
+        continue;
+      }
+      const rawFraction = toNumber(bucket.remainingFraction, -1);
+      if (rawFraction < 0) continue;
+      const remainingFraction = Math.max(0, Math.min(1, rawFraction));
+      const resetAt = parseResetTime(bucket.resetTime);
+      const isUnlimited = !resetAt && remainingFraction >= 1;
+      const QUOTA_NORMALIZED_BASE = 1000;
+      const total = QUOTA_NORMALIZED_BASE;
+      const remaining = Math.round(total * remainingFraction);
       quotas[modelKey] = {
-        used,
+        used: isUnlimited ? 0 : Math.max(0, total - remaining),
         total: isUnlimited ? 0 : total,
         resetAt,
-        remainingPercentage: isUnlimited ? 100 : remainingPercentage,
+        remainingPercentage: isUnlimited ? 100 : remainingFraction * 100,
         unlimited: isUnlimited,
-        fractionReported,
+        fractionReported: true,
+        quotaSource: "retrieveUserQuota",
       };
     }
 
@@ -2639,6 +2947,55 @@ async function getCodexUsage(
 }
 
 /**
+ * Build the Kiro usage result from a GetUsageLimits response. When the account returns no
+ * usage breakdown (some AWS IAM / Builder ID accounts don't expose per-resource quota via
+ * GetUsageLimits), return an informative message instead of empty `quotas:{}` — otherwise the
+ * dashboard renders a blank quota card with no explanation (#3506). Exported for testing.
+ */
+export function buildKiroUsageResult(
+  data: JsonRecord
+): { plan: string; quotas: Record<string, UsageQuota> } | { message: string } {
+  const usageList = Array.isArray(data.usageBreakdownList) ? data.usageBreakdownList : [];
+  const quotaInfo: Record<string, UsageQuota> = {};
+  const resetAt = parseResetTime(data.nextDateReset || data.resetDate);
+
+  usageList.forEach((breakdownValue: unknown) => {
+    const breakdown = toRecord(breakdownValue);
+    const resourceType =
+      typeof breakdown.resourceType === "string" ? breakdown.resourceType.toLowerCase() : "unknown";
+    const used = toNumber(breakdown.currentUsageWithPrecision, 0);
+    const total = toNumber(breakdown.usageLimitWithPrecision, 0);
+
+    quotaInfo[resourceType] = { used, total, remaining: total - used, resetAt, unlimited: false };
+
+    const freeTrialInfo = toRecord(breakdown.freeTrialInfo);
+    if (Object.keys(freeTrialInfo).length > 0) {
+      const freeUsed = toNumber(freeTrialInfo.currentUsageWithPrecision, 0);
+      const freeTotal = toNumber(freeTrialInfo.usageLimitWithPrecision, 0);
+      quotaInfo[`${resourceType}_freetrial`] = {
+        used: freeUsed,
+        total: freeTotal,
+        remaining: freeTotal - freeUsed,
+        resetAt,
+        unlimited: false,
+      };
+    }
+  });
+
+  if (Object.keys(quotaInfo).length === 0) {
+    return {
+      message:
+        "Kiro connected, but the account returned no usage breakdown. Some AWS IAM / Builder ID accounts don't expose per-resource quota via GetUsageLimits.",
+    };
+  }
+
+  return {
+    plan: String(toRecord(data.subscriptionInfo).subscriptionTitle || "").trim() || "Kiro",
+    quotas: quotaInfo,
+  };
+}
+
+/**
  * Kiro (AWS CodeWhisperer) Usage
  */
 async function getKiroUsage(accessToken?: string, providerSpecificData?: JsonRecord) {
@@ -2672,51 +3029,7 @@ async function getKiroUsage(accessToken?: string, providerSpecificData?: JsonRec
     }
 
     const data = toRecord(await response.json());
-
-    // Parse usage data from usageBreakdownList
-    const usageList = Array.isArray(data.usageBreakdownList) ? data.usageBreakdownList : [];
-    const quotaInfo: Record<string, UsageQuota> = {};
-
-    // Parse reset time - supports multiple formats (nextDateReset, resetDate, etc.)
-    const resetAt = parseResetTime(data.nextDateReset || data.resetDate);
-
-    usageList.forEach((breakdownValue: unknown) => {
-      const breakdown = toRecord(breakdownValue);
-      const resourceType =
-        typeof breakdown.resourceType === "string"
-          ? breakdown.resourceType.toLowerCase()
-          : "unknown";
-      const used = toNumber(breakdown.currentUsageWithPrecision, 0);
-      const total = toNumber(breakdown.usageLimitWithPrecision, 0);
-
-      quotaInfo[resourceType] = {
-        used,
-        total,
-        remaining: total - used,
-        resetAt,
-        unlimited: false,
-      };
-
-      // Add free trial if available
-      const freeTrialInfo = toRecord(breakdown.freeTrialInfo);
-      if (Object.keys(freeTrialInfo).length > 0) {
-        const freeUsed = toNumber(freeTrialInfo.currentUsageWithPrecision, 0);
-        const freeTotal = toNumber(freeTrialInfo.usageLimitWithPrecision, 0);
-
-        quotaInfo[`${resourceType}_freetrial`] = {
-          used: freeUsed,
-          total: freeTotal,
-          remaining: freeTotal - freeUsed,
-          resetAt,
-          unlimited: false,
-        };
-      }
-    });
-
-    return {
-      plan: String(toRecord(data.subscriptionInfo).subscriptionTitle || "").trim() || "Kiro",
-      quotas: quotaInfo,
-    };
+    return buildKiroUsageResult(data);
   } catch (error) {
     throw new Error(`Failed to fetch Kiro usage: ${error.message}`);
   }
@@ -2939,4 +3252,21 @@ export const __testing = {
   getMiniMaxPlanLabel,
   inferMiniMaxPlanLabelFromTotals,
   getOpencodeUsage,
+  getClaudePlanLabel,
+  createQuotaFromUsage,
+  getMiniMaxQuotaResetAt,
+  isMiniMaxTextQuotaModel,
+  getMiniMaxSessionTotal,
+  getMiniMaxWeeklyTotal,
+  createMiniMaxQuotaFromCount,
+  createMiniMaxQuotaFromPercent,
+  getMiniMaxRemainingPercent,
+  getMiniMaxUsage,
+  getXiaomiMimoUsage,
+  getMiniMaxAuthErrorMessage,
+  getMiniMaxErrorSummary,
+  mapCodeAssistSubscriptionToPlanLabel,
+  mapCodeAssistTierIdToLabel,
+  mapSubscriptionTierStringToPlanLabel,
+  toDisplayLabel,
 };

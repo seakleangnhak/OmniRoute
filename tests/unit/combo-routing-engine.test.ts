@@ -17,8 +17,10 @@ const {
 } = await import("../../open-sse/services/combo.ts");
 const { normalizeComboStep } = await import("../../src/lib/combos/steps.ts");
 const { registerStrategy } = await import("../../open-sse/services/autoCombo/routerStrategy.ts");
+const { touchSession, clearSessions } = await import("../../open-sse/services/sessionManager.ts");
 const core = await import("../../src/lib/db/core.ts");
 const settingsDb = await import("../../src/lib/db/settings.ts");
+const providersDb = await import("../../src/lib/db/providers.ts");
 const evalsDb = await import("../../src/lib/db/evals.ts");
 const { saveModelsDevCapabilities, clearModelsDevCapabilities } =
   await import("../../src/lib/modelsDevSync.ts");
@@ -145,6 +147,7 @@ test.beforeEach(async () => {
   resetAllCircuitBreakers();
   resetAllSemaphores();
   _resetAllDecks();
+  clearSessions();
   await resetStorage();
 });
 
@@ -2175,6 +2178,86 @@ test("handleComboChat auto strategy honors LKGP after filtering to tool-capable 
   assert.equal(calls[0], "claude/claude-sonnet-4-6");
 });
 
+test("handleComboChat auto strategy preserves selected same-provider connection identity", async () => {
+  const connA = await providersDb.createProviderConnection({
+    provider: "openai",
+    authType: "apikey",
+    name: "OpenAI A",
+    apiKey: "sk-auto-conn-a",
+    defaultModel: "gpt-4o-mini",
+  });
+  const connB = await providersDb.createProviderConnection({
+    provider: "openai",
+    authType: "apikey",
+    name: "OpenAI B",
+    apiKey: "sk-auto-conn-b",
+    defaultModel: "gpt-4o-mini",
+  });
+  touchSession("sticky-auto-session", connB.id);
+
+  const calls: Array<{ modelStr: string; connectionId: string | null | undefined }> = [];
+  const result = await handleComboChat({
+    body: { messages: [{ role: "user", content: "Continue the existing conversation" }] },
+    combo: {
+      id: "auto-same-provider-connection",
+      name: "auto-same-provider-connection",
+      strategy: "auto",
+      models: [
+        {
+          kind: "model",
+          providerId: "openai",
+          model: "openai/gpt-4o-mini",
+          connectionId: connA.id,
+          label: "OpenAI A",
+        },
+        {
+          kind: "model",
+          providerId: "openai",
+          model: "openai/gpt-4o-mini",
+          connectionId: connB.id,
+          label: "OpenAI B",
+        },
+      ],
+      autoConfig: {
+        candidatePool: ["openai"],
+        explorationRate: 0,
+        weights: {
+          quota: 0,
+          health: 0,
+          costInv: 0,
+          latencyInv: 0,
+          taskFit: 0,
+          stability: 0,
+          tierPriority: 0,
+          tierAffinity: 0,
+          specificityMatch: 0,
+          contextAffinity: 1,
+          resetWindowAffinity: 0,
+          connectionDensity: 0,
+        },
+      },
+    },
+    handleSingleModel: async (_body: any, modelStr: any, target: any) => {
+      calls.push({ modelStr, connectionId: target?.connectionId });
+      return okResponse();
+    },
+    isModelAvailable: async () => true,
+    log: createLog(),
+    settings: null,
+    relayOptions: { sessionId: "sticky-auto-session" } as any,
+    allCombos: null,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 1, "successful auto dispatch should call exactly one selected target");
+  assert.deepEqual(calls, [
+    {
+      modelStr: "openai/gpt-4o-mini",
+      connectionId: connB.id,
+    },
+  ]);
+});
+
 test("handleComboChat standalone lkgp strategy prioritizes the last known good provider", async () => {
   await settingsDb.setLKGP("standalone-lkgp", "standalone-lkgp", "anthropic");
 
@@ -2403,6 +2486,9 @@ test("handleComboChat auto strategy can route by SLA targets", async () => {
 });
 
 test("handleComboChat context cache protection pins the model and tags tool-call responses", async () => {
+  // PR #3399: <omniModel> tag extraction replaced by server-side session pinning.
+  // combo uses priority order; the tag in the input message is stripped but no
+  // longer drives routing. No <omniModel> tag is injected in responses.
   const calls: any[] = [];
   const result = await handleComboChat({
     body: {
@@ -2448,14 +2534,14 @@ test("handleComboChat context cache protection pins the model and tags tool-call
 
   const payload = (await result.json()) as any;
   assert.equal(result.ok, true);
-  assert.deepEqual(calls, ["claude/claude-sonnet-4-6"]);
-  assert.match(
-    payload.choices[0].message.content,
-    /<omniModel>claude\/claude-sonnet-4-6<\/omniModel>/
-  );
+  // Server-side pinning: routes via priority order, not the <omniModel> tag.
+  assert.deepEqual(calls, ["openai/gpt-4o-mini"]);
+  // No <omniModel> tag injected into response content (replaced by session store).
+  assert.ok(!payload.choices[0].message.content);
 });
 
-test("handleComboChat context cache protection preserves omniModel tag in streamed output for round-trip pinning", async () => {
+test("handleComboChat context cache protection does not inject omniModel tag in streamed output", async () => {
+  // PR #3399: <omniModel> tag injection in stream output removed (server-side session pinning).
   const result = await handleComboChat({
     body: { stream: true, messages: [{ role: "user", content: "stream it" }] },
     combo: {
@@ -2479,12 +2565,12 @@ test("handleComboChat context cache protection preserves omniModel tag in stream
 
   const text = await result.text();
   assert.equal(result.ok, true);
-  assert.equal(result.headers.get("X-OmniRoute-Model"), "openai/gpt-4o-mini");
   assert.match(text, /hello world/);
-  assert.match(text, /<omniModel>openai\/gpt-4o-mini<\/omniModel>/);
+  assert.doesNotMatch(text, /<omniModel>/);
 });
 
-test("handleComboChat context cache protection injects a hidden tag for tool-call-only streams", async () => {
+test("handleComboChat context cache protection does not inject tag for tool-call-only streams", async () => {
+  // PR #3399: <omniModel> tag injection removed; tool-call streams pass through unmodified.
   const result = await handleComboChat({
     body: { stream: true, messages: [{ role: "user", content: "tool only" }] },
     combo: {
@@ -2509,10 +2595,11 @@ test("handleComboChat context cache protection injects a hidden tag for tool-cal
   const text = await result.text();
   assert.equal(result.ok, true);
   assert.match(text, /"finish_reason":"tool_calls"/);
-  assert.match(text, /<omniModel>openai\/gpt-4o-mini<\/omniModel>/);
+  assert.doesNotMatch(text, /<omniModel>/);
 });
 
 test("handleComboChat context cache protection flushes cleanly when a stream ends without content", async () => {
+  // PR #3399: no <omniModel> tag injected; empty stream passes through [DONE] unchanged.
   const result = await handleComboChat({
     body: { stream: true, messages: [{ role: "user", content: "empty stream" }] },
     combo: {
@@ -2531,9 +2618,8 @@ test("handleComboChat context cache protection flushes cleanly when a stream end
 
   const text = await result.text();
   assert.equal(result.ok, true);
-  assert.equal(result.headers.get("X-OmniRoute-Model"), "openai/gpt-4o-mini");
   assert.match(text, /data: \[DONE\]/);
-  assert.match(text, /"content":"<omniModel>openai\/gpt-4o-mini<\/omniModel>"/);
+  assert.doesNotMatch(text, /<omniModel>/);
 });
 
 test("handleComboChat round-robin resolves nested combos and returns inactive when every target is skipped", async () => {
@@ -2826,5 +2912,127 @@ test("handleComboChat aborts combo when 503 response does NOT contain the unavai
     payload.error?.message?.includes("Server error") ||
       payload.error?.message?.includes("unavailable") ||
       result.status === 503
+  );
+});
+
+test("#3587 reasoning model gets max_tokens buffer applied", async () => {
+  saveModelsDevCapabilities({
+    openai: {
+      "gpt-4o-reasoning": capabilityEntry(4096, { reasoning: true }),
+    },
+  });
+
+  const bodies: Array<Record<string, unknown>> = [];
+  const result = await handleComboChat({
+    body: { max_tokens: 4096 },
+    combo: {
+      name: "reasoning-buffer",
+      models: ["openai/gpt-4o-reasoning"],
+    },
+    handleSingleModel: async (body: any) => {
+      bodies.push(body);
+      return okResponse();
+    },
+    isModelAvailable: async () => true,
+    log: createLog(),
+    settings: null,
+    relayOptions: null as any,
+    allCombos: null,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(bodies.length, 1, "should have called handleSingleModel once");
+  // 4096 * 1.5 = 6144; max(4096+1000, 6144) = 6144
+  assert.equal(bodies[0].max_tokens, 6144, "max_tokens should be buffered for reasoning model");
+});
+
+test("#3587 non-reasoning model does not get max_tokens buffer", async () => {
+  saveModelsDevCapabilities({
+    openai: {
+      "gpt-4o-plain": capabilityEntry(4096, { reasoning: false }),
+    },
+  });
+
+  const bodies: Array<Record<string, unknown>> = [];
+  const result = await handleComboChat({
+    body: { max_tokens: 4096 },
+    combo: {
+      name: "no-reasoning-buffer",
+      models: ["openai/gpt-4o-plain"],
+    },
+    handleSingleModel: async (body: any) => {
+      bodies.push(body);
+      return okResponse();
+    },
+    isModelAvailable: async () => true,
+    log: createLog(),
+    settings: null,
+    relayOptions: null as any,
+    allCombos: null,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(bodies.length, 1, "should have called handleSingleModel once");
+  // Non-reasoning model: max_tokens should NOT be buffered
+  assert.equal(
+    bodies[0].max_tokens,
+    4096,
+    "max_tokens should remain unchanged for non-reasoning model"
+  );
+});
+
+test("#3587 round-robin buffer does NOT compound across reasoning models", async () => {
+  // Two reasoning models in a round-robin combo. The first fails (400) so the
+  // loop falls through to the second. The buffer must be computed from the
+  // ORIGINAL max_tokens for each attempt — never from an already-buffered value —
+  // so both attempts see 6144 (4096 * 1.5), not [6144, 9216, ...]. Regression for
+  // the shared-`body` mutation that compounded the buffer on every RR iteration.
+  saveModelsDevCapabilities({
+    openai: {
+      "rr-reasoning-a": capabilityEntry(4096, { reasoning: true }),
+      "rr-reasoning-b": capabilityEntry(4096, { reasoning: true }),
+    },
+  });
+
+  const seen: Array<{ model: string; maxTokens: unknown }> = [];
+  const result = await handleComboChat({
+    body: { max_tokens: 4096 },
+    combo: {
+      name: "rr-reasoning-no-compound",
+      strategy: "round-robin",
+      models: ["openai/rr-reasoning-a", "openai/rr-reasoning-b"],
+    },
+    handleSingleModel: async (body: any, modelStr: any) => {
+      seen.push({ model: modelStr, maxTokens: body.max_tokens });
+      if (modelStr === "openai/rr-reasoning-a") {
+        return new Response(JSON.stringify({ error: { message: "transient" } }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return okResponse();
+    },
+    isModelAvailable: async () => true,
+    log: createLog(),
+    settings: {
+      comboDefaults: {
+        concurrencyPerModel: 1,
+        queueTimeoutMs: 5,
+        maxRetries: 0,
+        retryDelayMs: 1,
+      },
+    },
+    relayOptions: null as any,
+    allCombos: null,
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(seen.length, 2, "both reasoning models should have been attempted");
+  // Each attempt buffers from the original 4096 → 6144. No compounding.
+  assert.equal(seen[0].maxTokens, 6144, "first reasoning model buffered from original");
+  assert.equal(
+    seen[1].maxTokens,
+    6144,
+    "second reasoning model must ALSO buffer from original 4096, not 6144"
   );
 });

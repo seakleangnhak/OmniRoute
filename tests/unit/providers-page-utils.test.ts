@@ -80,6 +80,40 @@ test("configured-only filter keeps only providers with saved connections", () =>
   assert.equal(providerPageUtils.filterConfiguredProviderEntries(entries, false).length, 3);
 });
 
+test("configured-only filter keeps no-auth providers even without a saved connection (#3290)", () => {
+  const entries = [
+    {
+      providerId: "claude",
+      provider: { id: "claude" },
+      stats: { total: 0 },
+      displayAuthType: "oauth",
+      toggleAuthType: "oauth",
+    },
+    {
+      providerId: "opencode",
+      provider: { id: "opencode" },
+      stats: { total: 0 },
+      displayAuthType: "no-auth",
+      toggleAuthType: "no-auth",
+    },
+    {
+      providerId: "duckduckgo-web",
+      provider: { id: "duckduckgo-web" },
+      stats: { total: 0 },
+      displayAuthType: "no-auth",
+      toggleAuthType: "no-auth",
+    },
+  ];
+
+  // no-auth providers never create a DB connection row (total === 0) but are
+  // always usable and appear in /v1/models — they must survive the filter.
+  const visible = providerPageUtils.filterConfiguredProviderEntries(entries, true);
+  assert.deepEqual(
+    visible.map((entry) => entry.providerId),
+    ["duckduckgo-web", "opencode"]
+  );
+});
+
 test("search filter matches provider name and id case-insensitively", () => {
   const entries = [
     {
@@ -249,7 +283,6 @@ test("static catalog entries resolve local, search, audio, web-cookie and upstre
   const clarifaiProvider = providerPageUtils.resolveDashboardProviderInfo("clarifai");
   const empowerProvider = providerPageUtils.resolveDashboardProviderInfo("empower");
   const nousProvider = providerPageUtils.resolveDashboardProviderInfo("nous-research");
-  const petalsProvider = providerPageUtils.resolveDashboardProviderInfo("petals");
   const poeProvider = providerPageUtils.resolveDashboardProviderInfo("poe");
   const azureOpenAiProvider = providerPageUtils.resolveDashboardProviderInfo("azure-openai");
   const azureAiProvider = providerPageUtils.resolveDashboardProviderInfo("azure-ai");
@@ -303,8 +336,6 @@ test("static catalog entries resolve local, search, audio, web-cookie and upstre
   assert.equal(empowerProvider?.name, providers.APIKEY_PROVIDERS.empower.name);
   assert.equal(nousProvider?.category, "apikey");
   assert.equal(nousProvider?.name, providers.APIKEY_PROVIDERS["nous-research"].name);
-  assert.equal(petalsProvider?.category, "apikey");
-  assert.equal(petalsProvider?.name, providers.APIKEY_PROVIDERS.petals.name);
   assert.equal(poeProvider?.category, "apikey");
   assert.equal(poeProvider?.name, providers.APIKEY_PROVIDERS.poe.name);
   assert.equal(azureOpenAiProvider?.category, "apikey");
@@ -363,7 +394,6 @@ test("managed provider connection ids include supported static categories and ex
   assert.equal(providerCatalog.isManagedProviderConnectionId("clarifai"), true);
   assert.equal(providerCatalog.isManagedProviderConnectionId("empower"), true);
   assert.equal(providerCatalog.isManagedProviderConnectionId("nous-research"), true);
-  assert.equal(providerCatalog.isManagedProviderConnectionId("petals"), true);
   assert.equal(providerCatalog.isManagedProviderConnectionId("poe"), true);
   assert.equal(providerCatalog.isManagedProviderConnectionId("azure-openai"), true);
   assert.equal(providerCatalog.isManagedProviderConnectionId("azure-ai"), true);
@@ -424,7 +454,6 @@ test("grok-web taxonomy stays web-cookie only and does not leak into api-key ent
   assert.equal("clarifai" in providers.APIKEY_PROVIDERS, true);
   assert.equal("empower" in providers.APIKEY_PROVIDERS, true);
   assert.equal("nous-research" in providers.APIKEY_PROVIDERS, true);
-  assert.equal("petals" in providers.APIKEY_PROVIDERS, true);
   assert.equal("poe" in providers.APIKEY_PROVIDERS, true);
   assert.equal("azure-ai" in providers.APIKEY_PROVIDERS, true);
   assert.equal("bedrock" in providers.APIKEY_PROVIDERS, true);
@@ -510,10 +539,6 @@ test("grok-web taxonomy stays web-cookie only and does not leak into api-key ent
   );
   assert.equal(
     apiKeyEntries.some((entry) => entry.providerId === "nous-research"),
-    true
-  );
-  assert.equal(
-    apiKeyEntries.some((entry) => entry.providerId === "petals"),
     true
   );
   assert.equal(

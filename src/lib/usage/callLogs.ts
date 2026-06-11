@@ -5,8 +5,8 @@
  * filesystem artifacts and are loaded only for explicit detail/export flows.
  */
 
-import fs from "fs";
-import path from "path";
+import fs from "node:fs";
+import path from "node:path";
 import type { RequestPipelinePayloads } from "@omniroute/open-sse/utils/requestLogger.ts";
 import { getDbInstance } from "../db/core";
 import { getRequestDetailLogByCallLogId } from "../db/detailedLogs";
@@ -866,7 +866,7 @@ export async function getCallLogs(filter: any = {}) {
     } else if (filter.status === "ok") {
       conditions.push("cl.status >= 200 AND cl.status < 300");
     } else {
-      const statusCode = parseInt(filter.status, 10);
+      const statusCode = Number.parseInt(filter.status, 10);
       if (!Number.isNaN(statusCode)) {
         conditions.push("cl.status = @statusCode");
         params.statusCode = statusCode;
@@ -963,6 +963,7 @@ export async function getCallLogById(id: string) {
         error: artifactResult.artifact.error ?? entry.error,
         pipelinePayloads: artifactResult.artifact.pipeline ?? buildLegacyPipelinePayloads(id),
         hasPipelineDetails: Boolean(artifactResult.artifact.pipeline) || entry.hasPipelineDetails,
+        active: false,
       };
     }
 
@@ -986,6 +987,7 @@ export async function getCallLogById(id: string) {
         ...legacyInline,
         pipelinePayloads: legacyPipeline,
         hasPipelineDetails: Boolean(legacyPipeline) || entry.hasPipelineDetails,
+        active: false,
       };
     }
   }
@@ -1002,6 +1004,7 @@ export async function getCallLogById(id: string) {
       error: legacyDisk.error ?? entry.error,
       pipelinePayloads: legacyPipeline,
       hasPipelineDetails: Boolean(legacyPipeline) || entry.hasPipelineDetails,
+      active: false,
     };
   }
 
@@ -1015,6 +1018,7 @@ export async function getCallLogById(id: string) {
     error: entry.error,
     pipelinePayloads: legacyPipeline,
     hasPipelineDetails: Boolean(legacyPipeline) || entry.hasPipelineDetails,
+    active: false,
   };
 }
 

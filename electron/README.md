@@ -114,19 +114,23 @@ Built applications are placed in `dist-electron/`:
 4. Launch from Applications.
 
 > ⚠️ **Note:** The app is not signed with an Apple Developer certificate yet. If macOS blocks the app, run:
+>
 > ```bash
 > xattr -cr /Applications/OmniRoute.app
 > ```
+>
 > Or right-click the app → Open → Open (to bypass Gatekeeper on first launch).
 
 ### Windows
 
 **Installer (Recommended):**
+
 1. Download `OmniRoute.Setup.*.exe` from [Releases](https://github.com/diegosouzapw/OmniRoute/releases).
 2. Run the installer.
 3. Launch from Start Menu or Desktop shortcut.
 
 **Portable (No Installation):**
+
 1. Download `OmniRoute.exe` from [Releases](https://github.com/diegosouzapw/OmniRoute/releases).
 2. Run directly from any folder.
 
@@ -229,7 +233,7 @@ Place your icons in `assets/`:
 
 1. Check if port 20128 is available: `lsof -i :20128`
 2. Check console logs for `[Electron]` prefix
-3. Verify the build output exists in `.next/standalone`
+3. Verify the build output exists in `.build/next/standalone`
 
 ### White Screen
 

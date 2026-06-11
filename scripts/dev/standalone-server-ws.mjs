@@ -2,11 +2,14 @@ import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { createResponsesWsProxy } from "./responses-ws-proxy.mjs";
 import { createOmnirouteWsBridge } from "./v1-ws-bridge.mjs";
+import { ensurePeerStampToken, wrapRequestListenerWithPeerStamp } from "./peer-stamp.mjs";
 
 const originalCreateServer = http.createServer.bind(http);
 const bridgesByPort = new Map();
 
 process.env.OMNIROUTE_WS_BRIDGE_SECRET ||= randomUUID();
+// Per-process secret proving the trusted peer-IP stamp came from this server.
+ensurePeerStampToken();
 
 function getPort(server) {
   const address = server.address?.();
@@ -80,7 +83,14 @@ function wrapUpgradeListener(server, listener) {
   };
 }
 
-http.createServer = function createServerWithStandaloneWs(...args) {
+http.createServer = function createServerWithResponsesWs(...args) {
+  // Next's standalone server.js may pass its request listener directly to
+  // createServer; wrap it so the real TCP peer IP is stamped before Next runs.
+  const lastFnIdx = args.map((a) => typeof a === "function").lastIndexOf(true);
+  if (lastFnIdx >= 0) {
+    args[lastFnIdx] = wrapRequestListenerWithPeerStamp(args[lastFnIdx]);
+  }
+
   const server = originalCreateServer(...args);
   attachFallbackUpgradeHandler(server);
 
@@ -91,12 +101,19 @@ http.createServer = function createServerWithStandaloneWs(...args) {
     if (eventName === "upgrade" && typeof listener === "function") {
       return originalOn(eventName, wrapUpgradeListener(server, listener));
     }
+    // …or it may attach the handler via server.on("request"): wrap that too.
+    if (eventName === "request" && typeof listener === "function") {
+      return originalOn(eventName, wrapRequestListenerWithPeerStamp(listener));
+    }
     return originalOn(eventName, listener);
   };
 
   server.addListener = function patchedAddListener(eventName, listener) {
     if (eventName === "upgrade" && typeof listener === "function") {
       return originalAddListener(eventName, wrapUpgradeListener(server, listener));
+    }
+    if (eventName === "request" && typeof listener === "function") {
+      return originalAddListener(eventName, wrapRequestListenerWithPeerStamp(listener));
     }
     return originalAddListener(eventName, listener);
   };

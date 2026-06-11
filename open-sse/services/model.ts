@@ -1,5 +1,4 @@
 import { PROVIDER_ID_TO_ALIAS, PROVIDER_MODELS } from "../config/providerModels.ts";
-import { ANTIGRAVITY_MODEL_ALIASES } from "../config/antigravityModelAliases.ts";
 import { ALIAS_TO_ID } from "../../src/shared/constants/providers";
 import { resolveWildcardAlias } from "./wildcardRouter.ts";
 
@@ -53,6 +52,11 @@ ALIAS_TO_PROVIDER_ID["opencode"] = "opencode-zen";
 // parseModel("xiaomi/mimo-v2-flash") resolves provider = "xiaomi-mimo" instead
 // of falling through to the identity fallback ("xiaomi").
 ALIAS_TO_PROVIDER_ID["xiaomi"] = "xiaomi-mimo";
+// llamacpp/ is the user-visible alias for the llama-cpp self-hosted provider.
+// The canonical ID is "llama-cpp" (with a hyphen), but the catalog and user-facing
+// prefix is "llamacpp". Register it so parseModel("llamacpp/<model>") resolves
+// provider = "llama-cpp" instead of the identity fallback ("llamacpp").
+ALIAS_TO_PROVIDER_ID["llamacpp"] = "llama-cpp";
 
 // Provider-scoped legacy model aliases. Used to normalize provider/model inputs
 // and keep backward compatibility when upstream IDs change.
@@ -82,7 +86,12 @@ const PROVIDER_MODEL_ALIASES: ProviderModelAliasMap = {
     "gpt-oss-20b": "openai/gpt-oss-20b",
     "nvidia/gpt-oss-20b": "openai/gpt-oss-20b",
   },
-  antigravity: { ...ANTIGRAVITY_MODEL_ALIASES },
+  // Antigravity model aliases must be applied by the Antigravity executor, not by
+  // the global model resolver. Applying them here rewrites the client-visible model
+  // before credential/account routing and before UI/logging, causing clean IDs like
+  // gemini-3.5-flash-high to be exposed and retried as upstream-only legacy ids such
+  // as gemini-3-flash-agent. The executor owns provider-wire normalization.
+  antigravity: {},
   kiro: {
     "claude-opus-4-7": "claude-opus-4.7",
     "claude-opus-4-6": "claude-opus-4.6",
@@ -123,7 +132,16 @@ for (const [aliasOrId, models] of Object.entries(PROVIDER_MODELS)) {
   }
 }
 const KNOWN_MODEL_IDS = new Set(MODEL_TO_PROVIDERS.keys());
-const CODEX_PREFERRED_UNPREFIXED_MODELS = new Set(["gpt-5.5"]);
+// #2877(B): include the effort-suffixed variants so a bare `gpt-5.5-xhigh`
+// (and -high/-medium/-low) infers the codex provider instead of falling through
+// the `/^gpt-/` → openai fallback (which 500s for codex-only credentials).
+const CODEX_PREFERRED_UNPREFIXED_MODELS = new Set([
+  "gpt-5.5",
+  "gpt-5.5-xhigh",
+  "gpt-5.5-high",
+  "gpt-5.5-medium",
+  "gpt-5.5-low",
+]);
 const CODEX_PREFERRED_UNPREFIXED_MODEL_ALIASES = new Map([["gpt-5.5", "gpt-5.5-medium"]]);
 export const CODEX_NATIVE_UNPREFIXED_MODELS = new Set(["codex-auto-review"]);
 

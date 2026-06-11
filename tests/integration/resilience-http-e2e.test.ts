@@ -332,7 +332,7 @@ function buildResilienceConfig(overrides: Record<string, unknown> = {}) {
         maxBackoffSteps: 3,
       },
       apikey: {
-        baseCooldownMs: 300,
+        baseCooldownMs: 5_000,
         useUpstreamRetryHints: false,
         maxBackoffSteps: 0,
       },
@@ -340,10 +340,12 @@ function buildResilienceConfig(overrides: Record<string, unknown> = {}) {
     providerBreaker: {
       oauth: {
         failureThreshold: 3,
+        degradationThreshold: 2,
         resetTimeoutMs: 2_000,
       },
       apikey: {
         failureThreshold: 2,
+        degradationThreshold: 1,
         resetTimeoutMs: 1_500,
       },
     },
@@ -606,6 +608,10 @@ test("priority combo falls back on 503 and skips the cooled-down primary on the 
   assert.equal(relay.getState(TOKENS.p1).hits, 1);
   assert.equal(relay.getState(TOKENS.p2).hits, 1);
 
+  // Brief pause to ensure the P1 connection cooldown write has been committed
+  // and is visible to the second request's credential lookup.
+  await sleep(200);
+
   const second = await postChat(app.baseUrl, "res-priority-fallback", "priority fallback again");
   assert.equal(second.response.status, 200, JSON.stringify(second.json));
   assert.equal(second.json.choices[0].message.content, "secondary stable");
@@ -701,6 +707,7 @@ test.skip("provider circuit breaker opens after repeated final failures and Heal
       providerBreaker: {
         apikey: {
           failureThreshold: 2,
+          degradationThreshold: 1,
           resetTimeoutMs: 1_500,
         },
       },

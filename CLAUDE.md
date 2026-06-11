@@ -11,7 +11,7 @@ npm run build                  # Production build (Next.js 16 standalone)
 npm run lint                   # ESLint (0 errors expected; warnings are pre-existing)
 npm run typecheck:core         # TypeScript check (should be clean)
 npm run typecheck:noimplicit:core  # Strict check (no implicit any)
-npm run test:coverage          # Unit tests + coverage gate (40/40/40/40 — statements/lines/functions/branches)
+npm run test:coverage          # Unit tests + coverage gate (60/60/60/60 — statements/lines/functions/branches)
 npm run check                  # lint + test combined
 npm run check:cycles           # Detect circular dependencies
 ```
@@ -37,20 +37,20 @@ For full test matrix, see `CONTRIBUTING.md` → "Running Tests". For deep archit
 
 **OmniRoute** — unified AI proxy/router. One endpoint, 160+ LLM providers, auto-fallback.
 
-| Layer         | Location                | Purpose                                                            |
-| ------------- | ----------------------- | ------------------------------------------------------------------ |
-| API Routes    | `src/app/api/v1/`       | Next.js App Router — entry points                                  |
-| Handlers      | `open-sse/handlers/`    | Request processing (chat, embeddings, etc)                         |
-| Executors     | `open-sse/executors/`   | Provider-specific HTTP dispatch                                    |
-| Translators   | `open-sse/translator/`  | Format conversion (OpenAI↔Claude↔Gemini)                           |
-| Transformer   | `open-sse/transformer/` | Responses API ↔ Chat Completions                                   |
-| Services      | `open-sse/services/`    | Combo routing, rate limits, caching, etc                           |
-| Database      | `src/lib/db/`           | SQLite domain modules (45+ files, 55 migrations)                   |
-| Domain/Policy | `src/domain/`           | Policy engine, cost rules, fallback logic                          |
-| MCP Server    | `open-sse/mcp-server/`  | 37 tools (30 base + 3 memory + 4 skills), 3 transports, ~13 scopes |
-| A2A Server    | `src/lib/a2a/`          | JSON-RPC 2.0 agent protocol                                        |
-| Skills        | `src/lib/skills/`       | Extensible skill framework                                         |
-| Memory        | `src/lib/memory/`       | Persistent conversational memory                                   |
+| Layer         | Location                | Purpose                                                                       |
+| ------------- | ----------------------- | ----------------------------------------------------------------------------- |
+| API Routes    | `src/app/api/v1/`       | Next.js App Router — entry points                                             |
+| Handlers      | `open-sse/handlers/`    | Request processing (chat, embeddings, etc)                                    |
+| Executors     | `open-sse/executors/`   | Provider-specific HTTP dispatch                                               |
+| Translators   | `open-sse/translator/`  | Format conversion (OpenAI↔Claude↔Gemini)                                      |
+| Transformer   | `open-sse/transformer/` | Responses API ↔ Chat Completions                                              |
+| Services      | `open-sse/services/`    | Combo routing, rate limits, caching, etc                                      |
+| Database      | `src/lib/db/`           | SQLite domain modules (45+ files, 55 migrations)                              |
+| Domain/Policy | `src/domain/`           | Policy engine, cost rules, fallback logic                                     |
+| MCP Server    | `open-sse/mcp-server/`  | 43 tools (30 base + 3 memory + 4 skills + 6 notion), 3 transports, ~13 scopes |
+| A2A Server    | `src/lib/a2a/`          | JSON-RPC 2.0 agent protocol                                                   |
+| Skills        | `src/lib/skills/`       | Extensible skill framework                                                    |
+| Memory        | `src/lib/memory/`       | Persistent conversational memory                                              |
 
 Monorepo: `src/` (Next.js 16 app), `open-sse/` (streaming engine workspace), `electron/` (desktop app), `tests/`, `bin/` (CLI entry point).
 
@@ -366,14 +366,24 @@ For any non-trivial change, read the matching deep-dive first:
 | E2E (Playwright)        | `npm run test:e2e`                                                          |
 | Protocol E2E (MCP+A2A)  | `npm run test:protocols:e2e`                                                |
 | Ecosystem               | `npm run test:ecosystem`                                                    |
-| Coverage gate           | `npm run test:coverage` (40/40/40/40 — statements/lines/functions/branches) |
+| Coverage gate           | `npm run test:coverage` (60/60/60/60 — statements/lines/functions/branches) |
 | Coverage report         | `npm run coverage:report`                                                   |
 
 **PR rule**: If you change production code in `src/`, `open-sse/`, `electron/`, or `bin/`, you must include or update tests in the same PR.
 
 **Test layer preference**: unit first → integration (multi-module or DB state) → e2e (UI/workflow only). Encode bug reproductions as automated tests before or alongside the fix.
 
-**Copilot coverage policy**: When a PR changes production code and coverage is below 40% (statements/lines/functions/branches), do not just report — add or update tests, rerun the coverage gate, then ask for confirmation. Include commands run, changed test files, and final coverage result in the PR report.
+**Both test runners must pass**: `npm run test:unit` (Node native — most tests) AND `npm run test:vitest` (MCP server, autoCombo, cache) cover **non-overlapping files**. Both must be green before merging. A PR where only one suite passes may silently ship broken MCP tools or routing regressions.
+
+**Bug fix / issue triage protocol (Hard Rule #18)**: Every fix for a reported issue must be validated by one of the following — no exceptions:
+
+1. **TDD (preferred)** — write a failing test reproducing the bug → fix it → confirm the test passes. The test becomes the permanent regression guard. Touch only the files the test proves need changing; nothing more.
+2. **Real-environment test (when TDD is not possible)** — deploy to the production VPS (`root@192.168.0.15`) and run a documented live test. Record the exact command + result in the PR description. Applies to: OAuth upstream flows, Cloudflare/WS upstream behavior, UI-only regressions, hardware-dependent behavior.
+3. "It worked locally without a test" does not count. A fix without a test or a VPS validation record is not a fix — it is a guess.
+
+Why this matters: fixing bug A while opening bug B is worse than not fixing at all. The TDD/VPS gate enforces surgical scope — you touch only what the failing test proves is broken. Examples where this paid off: #3090 (claude-web 403), #3113 (WS HTTP fallback), #3052 (heap-guard auto-calibration).
+
+**Copilot coverage policy**: When a PR changes production code and coverage is below 60% (statements/lines/functions/branches), do not just report — add or update tests, rerun the coverage gate, then ask for confirmation. Include commands run, changed test files, and final coverage result in the PR report.
 
 ---
 
@@ -419,7 +429,7 @@ git push -u origin feat/your-feature
 6. Never silently swallow errors in SSE streams
 7. Always validate inputs with Zod schemas
 8. Always include tests when changing production code
-9. Coverage must stay ≥40% (statements, lines, functions, branches).
+9. Coverage must stay ≥60% (statements, lines, functions, branches).
 10. Never bypass Husky hooks (`--no-verify`, `--no-gpg-sign`) without explicit operator approval.
 11. Never embed public upstream OAuth client_id/secret or Firebase Web keys as string literals — always go through `resolvePublicCred()` (`open-sse/utils/publicCreds.ts`). See `docs/security/PUBLIC_CREDS.md`.
 12. Never return raw `err.stack` / `err.message` in HTTP / SSE / executor responses — always route through `buildErrorBody()` or `sanitizeErrorMessage()` (`open-sse/utils/error.ts`). See `docs/security/ERROR_SANITIZATION.md`.
@@ -428,3 +438,20 @@ git push -u origin feat/your-feature
 15. Never expose routes that spawn child processes (`/api/mcp/`, `/api/cli-tools/runtime/`) without `isLocalOnlyPath()` classification in `src/server/authz/routeGuard.ts`. Loopback enforcement happens unconditionally before any auth check — leaked JWT via tunnel cannot trigger process spawning. See `docs/security/ROUTE_GUARD_TIERS.md`.
 16. Never include `Co-Authored-By` trailers that credit an AI assistant, LLM, or automation account (e.g. names containing "Claude", "GPT", "Copilot", "Bot"; emails at `anthropic.com` / `openai.com` / bot-owned `noreply.github.com` addresses). Such trailers route attribution to the bot account on GitHub, hiding the real author (`diegosouzapw`) in PR history. Human collaborators — including upstream PR authors and issue reporters being ported into OmniRoute — MAY and SHOULD be credited with standard `Co-authored-by: Name <email>` trailers; the upstream-port workflows (`/port-upstream-features`, `/port-upstream-issues`) depend on this.
 17. Never expose routes under `/api/services/` or `/dashboard/providers/services/*/embed/` without `isLocalOnlyPath()` classification in `src/server/authz/routeGuard.ts`. These routes can spawn child processes (`npm install`, `node`). Loopback enforcement happens unconditionally before any auth check — a leaked JWT via tunnel cannot trigger process spawning. See `docs/security/ROUTE_GUARD_TIERS.md`.
+18. Every bug fix must be validated before shipping: a failing-then-passing unit/integration test (TDD) OR a documented live test on the production VPS (192.168.0.15). A fix without either is not merged. See Testing → "Bug fix / issue triage protocol" for the full decision tree.
+
+---
+
+## PII & Stream Sanitization Learnings
+
+### 1. Regex Security (ReDoS)
+
+All regex patterns matching variable-length strings (e.g. IPv6 address, credit cards) must use strictly bounded, non-overlapping sequences (e.g., limit occurrences with bounded ranges `{1,7}`) to prevent catastrophic backtracking when processing untrusted inputs.
+
+### 2. SSE Snapshot Handling
+
+When parsing streaming LLM responses (e.g. Responses API), check if a chunk represents a final snapshot (`done` or `completed` events). Snapshot text must be sanitized directly as a standalone string (bypassing rolling delta buffers) to prevent text duplication at the end of the stream.
+
+### 3. Database Handles in Tests
+
+Ensure that any unit tests that trigger database migrations or establish SQLite connections call `resetDbInstance()` and properly clean up/close all DB handles in a `test.after(...)` hook. Failure to release database connection handles will cause Node's native test runner to hang indefinitely.

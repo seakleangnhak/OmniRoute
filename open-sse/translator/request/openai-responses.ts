@@ -13,11 +13,14 @@ type JsonRecord = Record<string, unknown>;
 const RESPONSES_STORE_MARKER = "_omnirouteResponsesStore";
 const COPILOT_REASONING_SUMMARY_MARKER = "_omnirouteCopilotReasoningSummary";
 
-// Forward-compatible regex: matches web_search, web_search_20250305, and any future versioned names.
+// Forward-compatible regex: matches web_search, web_search_20250305, and future versioned names.
 const WEB_SEARCH_TOOL_TYPES = /^web_search/;
 // tool_search is a Responses API built-in sent by newer Codex clients; it has no Chat Completions
 // equivalent and must be silently dropped (not rejected with 400).
 const TOOL_SEARCH_TOOL_TYPES = /^tool_search/;
+// image_generation is a Responses API hosted tool that Codex Desktop injects into every request
+// (even text-only ones); it has no Chat Completions equivalent and must be silently dropped (#2950).
+const IMAGE_GENERATION_TOOL_TYPES = /^image_generation/;
 
 function toRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
@@ -55,6 +58,12 @@ function toInputItemsForChat(value: unknown): unknown[] {
 
 function toString(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
+}
+
+function imageUrlToText(value: unknown): string {
+  if (typeof value === "string") return value;
+  const record = toRecord(value);
+  return toString(record.url);
 }
 
 function normalizeResponsesReasoningEffort(value: unknown): string {
@@ -109,8 +118,10 @@ export function openaiResponsesToOpenAIRequest(
         toolType !== "custom" &&
         toolType !== "command" &&
         toolType !== "namespace" &&
+        toolType !== "local_shell" &&
         !WEB_SEARCH_TOOL_TYPES.test(toolType) &&
         !TOOL_SEARCH_TOOL_TYPES.test(toolType) &&
+        !IMAGE_GENERATION_TOOL_TYPES.test(toolType) &&
         !tool.function
       ) {
         throw unsupportedFeature(
@@ -219,6 +230,13 @@ export function openaiResponsesToOpenAIRequest(
       if (!fnName) {
         continue;
       }
+      // #2893: Skip tool calls with an empty call_id — they can never be matched
+      // to their function_call_output, so the upstream rejects the orphaned tool
+      // result with "Messages with role 'tool' must be a response to a preceding
+      // message with 'tool_calls'". Dropping the unmatched pair avoids the 400.
+      if (!toString(item.call_id).trim()) {
+        continue;
+      }
 
       // Start or append assistant message with tool_calls
       if (!currentAssistantMsg) {
@@ -293,8 +311,11 @@ export function openaiResponsesToOpenAIRequest(
       .filter((toolValue) => {
         const tool = toRecord(toolValue);
         const toolType = toString(tool.type);
-        // tool_search has no Chat Completions equivalent; drop it silently (issue #2766).
-        return !TOOL_SEARCH_TOOL_TYPES.test(toolType);
+        // tool_search (#2766) and image_generation (#2950) are Responses API built-ins
+        // with no Chat Completions equivalent; drop them silently.
+        return (
+          !TOOL_SEARCH_TOOL_TYPES.test(toolType) && !IMAGE_GENERATION_TOOL_TYPES.test(toolType)
+        );
       })
       .map((toolValue) => {
         const tool = toRecord(toolValue);
@@ -305,6 +326,32 @@ export function openaiResponsesToOpenAIRequest(
         // Anthropic-style web_search_YYYYMMDD naming receive the exact name they expect.
         if (WEB_SEARCH_TOOL_TYPES.test(toolType)) {
           return toolValue;
+        }
+        // local_shell is a Responses API built-in (Codex CLI injects it for shell
+        // execution). Non-OpenAI upstreams (Kiro/Claude) have no local_shell type,
+        // so map it to a regular "shell" function tool. The response translator
+        // already emits these as function_call, which Codex maps back to a shell call.
+        if (toolType === "local_shell") {
+          return {
+            type: "function",
+            function: {
+              name: "shell",
+              description: "Run a shell command and return its output.",
+              parameters: {
+                type: "object",
+                properties: {
+                  command: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "Command and arguments to execute.",
+                  },
+                  workdir: { type: "string", description: "Working directory." },
+                  timeout_ms: { type: "number", description: "Timeout in milliseconds." },
+                },
+                required: ["command"],
+              },
+            },
+          };
         }
         return {
           type: "function",
@@ -330,8 +377,11 @@ export function openaiResponsesToOpenAIRequest(
   }
   result.messages = messages.filter((m) => {
     const rec = toRecord(m);
-    if (rec.role === "tool" && rec.tool_call_id) {
-      return allToolCallIds.has(String(rec.tool_call_id));
+    // #2893: drop ANY tool result whose tool_call_id has no matching tool_call —
+    // including empty/missing ids (the previous `&& rec.tool_call_id` guard let
+    // empty-id orphans slip through and triggered an upstream 400).
+    if (rec.role === "tool") {
+      return allToolCallIds.has(String(rec.tool_call_id ?? ""));
     }
     return true;
   });
@@ -346,6 +396,8 @@ export function openaiResponsesToOpenAIRequest(
     const tcType = toString(tc.type);
     if (tcType === "function" && tc.name !== undefined && !tc.function) {
       result.tool_choice = { type: "function", function: { name: tc.name } };
+    } else if (tcType === "local_shell") {
+      result.tool_choice = { type: "function", function: { name: "shell" } };
     } else if (tcType && tcType !== "function" && tcType !== "allowed_tools") {
       // Built-in tool types (web_search_preview, file_search, etc.) have no Chat equivalent
       throw unsupportedFeature(
@@ -387,6 +439,9 @@ export function openaiResponsesToOpenAIRequest(
   // Strip Responses-API-only fields that Chat Completions rejects with 400.
   // safety_identifier is sent by LobeHub and has no Chat Completions equivalent (#2770).
   delete result.safety_identifier;
+  // client_metadata is sent by Codex CLI and has no Chat Completions equivalent.
+  // Strict upstreams (e.g. Mistral) reject it with HTTP 422 extra_forbidden.
+  delete result.client_metadata;
 
   return result;
 }
@@ -501,6 +556,9 @@ export function openaiToOpenAIResponsesRequest(
           const contentItem = toRecord(contentValue);
           if (contentItem.type === "text") {
             outputContent.push({ type: "output_text", text: toString(contentItem.text) });
+          } else if (contentItem.type === "image_url") {
+            const url = imageUrlToText(contentItem.image_url);
+            outputContent.push({ type: "output_text", text: url ? `[Image: ${url}]` : "[Image]" });
           } else if (contentItem.type === "thinking" || contentItem.type === "redacted_thinking") {
             // Reasoning already moved above
             continue;
@@ -609,9 +667,13 @@ export function openaiToOpenAIResponsesRequest(
       const tool = toRecord(toolValue);
       if (tool.type === "function") {
         const fn = toRecord(tool.function);
+        const name = toString(fn.name);
+        if (name === "shell") {
+          return { type: "local_shell" };
+        }
         return {
           type: "function",
-          name: toString(fn.name),
+          name,
           description: toString(fn.description),
           parameters: fn.parameters,
           strict: fn.strict,
@@ -629,7 +691,11 @@ export function openaiToOpenAIResponsesRequest(
       const tc = toRecord(root.tool_choice);
       if (tc.type === "function" && tc.function) {
         const fn = toRecord(tc.function);
-        result.tool_choice = { type: "function", name: fn.name };
+        if (toString(fn.name) === "shell") {
+          result.tool_choice = { type: "local_shell" };
+        } else {
+          result.tool_choice = { type: "function", name: fn.name };
+        }
       } else {
         result.tool_choice = root.tool_choice;
       }

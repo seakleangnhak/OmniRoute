@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "omniroute-reasoning-"));
+process.env.API_KEY_SECRET = process.env.API_KEY_SECRET || "reasoning-cache-test-secret";
 
 // ──────────── Direct service import ────────────
 
@@ -37,6 +38,7 @@ import { ensureToolCallIds } from "../../open-sse/translator/helpers/toolCallHel
 import { getDbInstance } from "../../src/lib/db/core.ts";
 import { getReasoningCache, setReasoningCache } from "../../src/lib/db/reasoningCache.ts";
 import { DELETE, GET } from "../../src/app/api/cache/reasoning/route.ts";
+import { createApiKey } from "../../src/lib/db/apiKeys.ts";
 import { updateSettings } from "../../src/lib/db/settings";
 import {
   clearModelsDevCapabilities,
@@ -752,23 +754,93 @@ describe("Reasoning Replay Cache — Translator Replay", () => {
 
     assert.equal(translated.messages[1].reasoning_content, undefined);
   });
+
+  it("should replace empty-string reasoning_content with NON_ANTHROPIC_THINKING_PLACEHOLDER on cache miss", async () => {
+    // Regression: injectEmptyReasoningContentForToolCalls (schemaCoercion.ts) pre-sets
+    // reasoning_content="" before the cache lookup. The old condition
+    // `msg.reasoning_content === undefined` never fired on cache miss, leaving the
+    // empty string in place. DeepSeek V4+ rejects "" with a 400.
+    clearReasoningCacheAll();
+    clearModelsDevCapabilities();
+    saveModelsDevCapabilities({
+      deepseek: {
+        "deepseek-v4-flash": buildCapability({
+          interleaved_field: "reasoning_content",
+          reasoning: true,
+          tool_call: true,
+        }),
+      },
+    });
+
+    const { NON_ANTHROPIC_THINKING_PLACEHOLDER } =
+      await import("../../open-sse/translator/helpers/claudeHelper.ts");
+
+    // No cache entry → cache miss
+    const translated = translateRequest(
+      FORMATS.OPENAI,
+      FORMATS.OPENAI,
+      "deepseek-v4-flash",
+      {
+        messages: [
+          { role: "user", content: "use a tool" },
+          {
+            role: "assistant",
+            content: null,
+            reasoning_content: "",
+            tool_calls: [
+              {
+                id: "call_empty_rc",
+                type: "function",
+                function: { name: "read_file", arguments: "{}" },
+              },
+            ],
+          },
+          { role: "tool", tool_call_id: "call_empty_rc", content: "file contents" },
+        ],
+      },
+      false,
+      null,
+      "deepseek"
+    );
+
+    assert.equal(
+      translated.messages[1].reasoning_content,
+      NON_ANTHROPIC_THINKING_PLACEHOLDER,
+      "empty reasoning_content should be replaced with placeholder on cache miss"
+    );
+  });
 });
 
 describe("Reasoning Replay Cache — API Route", () => {
+  let managementApiKey: string;
+
   before(() => {
     clearReasoningCacheAll();
+  });
+
+  before(async () => {
+    const created = await createApiKey("reasoning-cache-route-test", "machine-reasoning", [
+      "manage",
+    ]);
+    managementApiKey = created.key;
   });
 
   after(() => {
     clearReasoningCacheAll();
   });
 
+  function authedRequest(url: string): Request {
+    return new Request(url, {
+      headers: { authorization: `Bearer ${managementApiKey}` },
+    });
+  }
+
   it("should return stats and entries from GET", async () => {
     clearReasoningCacheAll();
     cacheReasoning("call_api_get", "deepseek", "deepseek-reasoner", "API visible reasoning");
 
     const response = await GET(
-      new Request("http://localhost/api/cache/reasoning?provider=deepseek") as never
+      authedRequest("http://localhost/api/cache/reasoning?provider=deepseek") as never
     );
     const body = await response.json();
 
@@ -784,7 +856,7 @@ describe("Reasoning Replay Cache — API Route", () => {
     cacheReasoning("call_api_delete_2", "deepseek", "deepseek-reasoner", "Keep API");
 
     const response = await DELETE(
-      new Request("http://localhost/api/cache/reasoning?toolCallId=call_api_delete_1") as never
+      authedRequest("http://localhost/api/cache/reasoning?toolCallId=call_api_delete_1") as never
     );
     const body = await response.json();
 
@@ -801,7 +873,7 @@ describe("Reasoning Replay Cache — API Route", () => {
     cacheReasoning("call_api_provider_kimi", "kimi", "kimi-k2.5", "Keep provider");
 
     const response = await DELETE(
-      new Request("http://localhost/api/cache/reasoning?provider=deepseek") as never
+      authedRequest("http://localhost/api/cache/reasoning?provider=deepseek") as never
     );
     const body = await response.json();
 

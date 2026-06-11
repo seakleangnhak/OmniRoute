@@ -19,7 +19,14 @@ import {
   type ExecuteInput,
 } from "./base.ts";
 import { FETCH_TIMEOUT_MS } from "../config/constants.ts";
-import { extractCookieValue } from "@/lib/providers/webCookieAuth";
+import { buildGrokCookieHeader } from "@/lib/providers/webCookieAuth";
+import {
+  tlsFetchGrok,
+  TlsClientUnavailableError,
+  isCloudflareChallenge,
+  type TlsFetchResult,
+} from "../services/grokTlsClient.ts";
+import { sanitizeErrorMessage } from "../utils/error.ts";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -1494,7 +1501,9 @@ function buildStreamingResponse(
                   {
                     index: 0,
                     delta: {
-                      content: `[Stream error: ${err instanceof Error ? err.message : String(err)}]`,
+                      content: sanitizeErrorMessage(
+                        `[Stream error: ${err instanceof Error ? err.message : String(err)}]`
+                      ),
                     },
                     finish_reason: "stop",
                     logprobs: null,
@@ -1741,11 +1750,12 @@ export class GrokWebExecutor extends BaseExecutor {
       traceparent: `00-${traceId}-${spanId}-00`,
     };
 
-    // Cookie auth — accepts a bare value, "sso=<value>", or a full
-    // DevTools cookie blob; we extract the sso pair and ignore the rest.
+    // Cookie auth — accepts a bare value, "sso=<value>", or a full DevTools
+    // cookie blob. Forwards both `sso` and (when present) the paired `sso-rw`
+    // write cookie, which Grok's anti-bot now requires (#3063).
     if (credentials.apiKey) {
-      const token = extractCookieValue(credentials.apiKey, "sso");
-      if (token) headers["Cookie"] = `sso=${token}`;
+      const cookieHeader = buildGrokCookieHeader(credentials.apiKey);
+      if (cookieHeader) headers["Cookie"] = cookieHeader;
     }
 
     // Apply upstream extra headers
@@ -1757,23 +1767,43 @@ export class GrokWebExecutor extends BaseExecutor {
     const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
     const combinedSignal = signal ? mergeAbortSignals(signal, timeoutSignal) : timeoutSignal;
 
-    // Fetch from Grok
-    const fetchOptions: RequestInit = {
-      method: "POST",
-      headers,
-      body: JSON.stringify(grokPayload),
-      signal: combinedSignal,
-    };
-
-    let response: Response;
+    // Fetch from Grok via TLS-impersonating client (#3180).
+    // Grok sits behind Cloudflare Enterprise which rejects Node's native TLS
+    // fingerprint even with valid sso+sso-rw cookies. We use tls-client-node
+    // to send a Chrome-like handshake instead.
+    let tlsResult: TlsFetchResult;
     try {
-      response = await fetch(GROK_CHAT_API, fetchOptions);
+      tlsResult = await tlsFetchGrok(GROK_CHAT_API, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(grokPayload),
+        timeoutMs: FETCH_TIMEOUT_MS,
+        signal: combinedSignal,
+        stream: true,
+        streamEofSymbol: "[DONE]",
+      });
     } catch (err) {
+      if (err instanceof TlsClientUnavailableError) {
+        log?.error?.("GROK-WEB", `TLS client unavailable: ${err.message}`);
+        const errResp = new Response(
+          JSON.stringify({
+            error: {
+              message: sanitizeErrorMessage(`Grok TLS client unavailable: ${err.message}`),
+              type: "upstream_error",
+              code: "TLS_CLIENT_UNAVAILABLE",
+            },
+          }),
+          { status: 502, headers: { "Content-Type": "application/json" } }
+        );
+        return { response: errResp, url: GROK_CHAT_API, headers, transformedBody: grokPayload };
+      }
       log?.error?.("GROK-WEB", `Fetch failed: ${err instanceof Error ? err.message : String(err)}`);
       const errResp = new Response(
         JSON.stringify({
           error: {
-            message: `Grok connection failed: ${err instanceof Error ? err.message : String(err)}`,
+            message: sanitizeErrorMessage(
+              `Grok connection failed: ${err instanceof Error ? err.message : String(err)}`
+            ),
             type: "upstream_error",
           },
         }),
@@ -1782,8 +1812,9 @@ export class GrokWebExecutor extends BaseExecutor {
       return { response: errResp, url: GROK_CHAT_API, headers, transformedBody: grokPayload };
     }
 
-    if (!response.ok) {
-      const status = response.status;
+    if (!tlsResult.body) {
+      // Non-streaming fallback (shouldn't happen for chat, but handle gracefully)
+      const status = tlsResult.status;
       let errMsg = `Grok returned HTTP ${status}`;
       if (status === 401 || status === 403) {
         errMsg =
@@ -1801,16 +1832,6 @@ export class GrokWebExecutor extends BaseExecutor {
       return { response: errResp, url: GROK_CHAT_API, headers, transformedBody: grokPayload };
     }
 
-    if (!response.body) {
-      const errResp = new Response(
-        JSON.stringify({
-          error: { message: "Grok returned empty response body", type: "upstream_error" },
-        }),
-        { status: 502, headers: { "Content-Type": "application/json" } }
-      );
-      return { response: errResp, url: GROK_CHAT_API, headers, transformedBody: grokPayload };
-    }
-
     // Build OpenAI-compatible response
     const cid = `chatcmpl-grok-${crypto.randomUUID().slice(0, 12)}`;
     const created = Math.floor(Date.now() / 1000);
@@ -1818,7 +1839,7 @@ export class GrokWebExecutor extends BaseExecutor {
     let finalResponse: Response;
     if (stream) {
       const sseStream = buildStreamingResponse(
-        response.body,
+        tlsResult.body,
         model,
         cid,
         created,
@@ -1836,7 +1857,7 @@ export class GrokWebExecutor extends BaseExecutor {
       });
     } else {
       finalResponse = await buildNonStreamingResponse(
-        response.body,
+        tlsResult.body,
         model,
         cid,
         created,

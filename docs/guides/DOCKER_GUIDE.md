@@ -154,6 +154,13 @@ docker build --target runner-cli  -t omniroute:cli  .
 
 Defaults exported by `runner-base`: `PORT=20128`, `HOSTNAME=0.0.0.0`, `OMNIROUTE_MEMORY_MB=2048`, `NODE_OPTIONS=--max-old-space-size=2048`, `DATA_DIR=/app/data`, `SQLITE_MAX_SIZE_MB=2048`, `OMNIROUTE_MIGRATIONS_DIR=/app/migrations`.
 
+Memory behavior in Docker:
+
+- `NODE_OPTIONS=--max-old-space-size=2048` is baked into the image as a fallback.
+- The actual server process is started by the standalone launcher, which reads `OMNIROUTE_MEMORY_MB` and appends `--max-old-space-size=<OMNIROUTE_MEMORY_MB>`.
+- Node uses the last repeated `--max-old-space-size` value, so setting `OMNIROUTE_MEMORY_MB` controls the effective Docker heap limit.
+- If `OMNIROUTE_MEMORY_MB` is unset in a non-Docker standalone launch, the launcher uses `512`.
+
 ## Critical Environment Variables
 
 Beyond the defaults documented in [ENVIRONMENT.md](../reference/ENVIRONMENT.md), the following variables matter most when running under Docker:

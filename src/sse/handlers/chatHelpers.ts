@@ -130,9 +130,14 @@ export async function resolveModelOrError(
     !isCodexNativeResponsesRequest(body, endpointPath, requestHeaders) &&
     (await hasOnlyActiveCodexAccount())
   ) {
-    log.info("ROUTING", `${modelStr} → codex/gpt-5.5-medium (Codex-only active account)`);
+    // #2877: keep the bare model id (do NOT bake a `-medium` suffix). The Codex
+    // executor reads a model-name suffix as an explicit `modelEffort` that (per
+    // #2331) overrides the client's `reasoning.effort`, so injecting `-medium`
+    // here silently demoted a genuine `reasoning.effort=xhigh`. The default
+    // effort still comes from the connection fallback when the client sends none.
+    log.info("ROUTING", `${modelStr} → codex/gpt-5.5 (Codex-only active account)`);
     modelInfo.provider = "codex";
-    modelInfo.model = "gpt-5.5-medium";
+    modelInfo.model = "gpt-5.5";
   }
 
   // Forced-rewrite: codex provider doesn't serve DeepSeek/Qwen/Kimi/etc. Reroute
@@ -193,7 +198,9 @@ export async function resolveModelOrError(
       const { getCombos } = await import("@/lib/localDb");
       const all = await getCombos();
       for (const c of all) {
-        if (c.name?.startsWith("auto/")) available.push(c.name);
+        const name =
+          typeof c === "object" && c !== null ? (c as Record<string, unknown>).name : undefined;
+        if (typeof name === "string" && name.startsWith("auto/")) available.push(name);
       }
     } catch {
       /* DB unavailable */
@@ -288,6 +295,7 @@ export async function checkPipelineGates(
       circuitBreakerThreshold?: number;
       circuitBreakerReset?: number;
       failureThreshold?: number;
+      degradationThreshold?: number;
       resetTimeoutMs?: number;
     } | null;
   } = {}
@@ -301,6 +309,7 @@ export async function checkPipelineGates(
   );
   const breaker = getCircuitBreaker(provider, {
     failureThreshold: providerProfile.failureThreshold ?? providerProfile.circuitBreakerThreshold,
+    degradationThreshold: providerProfile.degradationThreshold,
     resetTimeout: providerProfile.resetTimeoutMs ?? providerProfile.circuitBreakerReset,
     onStateChange: (name: string, from: string, to: string) =>
       log.info("CIRCUIT", `${name}: ${from} → ${to}`),
@@ -573,9 +582,9 @@ export function handleNoCredentials(
   );
 }
 
-export async function safeResolveProxy(connectionId: string) {
+export async function safeResolveProxy(connectionId: string, apiKeyId?: string) {
   try {
-    return await resolveProxyForConnection(connectionId);
+    return await resolveProxyForConnection(connectionId, apiKeyId);
   } catch (proxyErr: any) {
     log.debug("PROXY", `Failed to resolve proxy: ${proxyErr.message}`);
     return null;

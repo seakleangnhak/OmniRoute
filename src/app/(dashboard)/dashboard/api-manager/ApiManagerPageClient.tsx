@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback, useId, useRef, memo } from "react";
+import { useState, useEffect, useMemo, useCallback, memo, useRef, useId } from "react";
 import { Card, Button, Input, Modal, CardSkeleton } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { useTranslations } from "next-intl";
 import { getProviderDisplayName } from "@/lib/display/names";
+import { compareTr, matchesSearch } from "@/shared/utils/turkishText";
 import { ENDPOINT_CATEGORIES } from "@/shared/constants/endpointCategories";
 import ApiKeyFilterBar from "./components/ApiKeyFilterBar";
 import {
@@ -16,18 +17,22 @@ import {
 } from "./apiManagerPageUtils";
 import type { KeyStatus, KeyType } from "./apiManagerPageUtils";
 import { readActiveOnlyPreference, writeActiveOnlyPreference } from "./apiManagerPageStorage";
-import {
-  buildApiKeyCreateScopes,
-  mergeApiKeyPermissionScopes,
-} from "./apiManagerScopes";
-import {
-  SELF_ACCOUNT_QUOTA_SCOPE,
-  SELF_USAGE_SCOPE,
-} from "@/shared/constants/selfServiceScopes";
+import { buildApiKeyCreateScopes, mergeApiKeyPermissionScopes } from "./apiManagerScopes";
+import { SELF_ACCOUNT_QUOTA_SCOPE, SELF_USAGE_SCOPE } from "@/shared/constants/selfServiceScopes";
 
 // Constants for validation
 const MAX_KEY_NAME_LENGTH = 200;
 const MAX_SELECTED_MODELS = 500;
+
+function toLocalDateTimeInputValue(value: string | null | undefined): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
+    date.getHours()
+  )}:${pad(date.getMinutes())}`;
+}
 
 // Debounce hook for search optimization
 function useDebouncedValue<T>(value: T, delay: number): T {
@@ -80,6 +85,8 @@ interface AccessSchedule {
   tz: string;
 }
 
+type StreamDefaultMode = "legacy" | "json";
+
 interface ApiKey {
   id: string;
   name: string;
@@ -98,6 +105,9 @@ interface ApiKey {
   rateLimits?: Array<{ limit: number; window: number }> | null;
   scopes?: string[];
   allowedEndpoints?: string[];
+  streamDefaultMode?: StreamDefaultMode;
+  disableNonPublicModels?: boolean;
+  allowedQuotas?: string[] | null;
   createdAt: string;
 }
 
@@ -153,11 +163,13 @@ export default function ApiManagerPageClient() {
   const [usageStats, setUsageStats] = useState<Record<string, KeyUsageStats>>({});
   const [sessionCounts, setSessionCounts] = useState<Record<string, number>>({});
   const [allowKeyReveal, setAllowKeyReveal] = useState(false);
+  const createKeyNameFieldRef = useRef<HTMLDivElement | null>(null);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [activeOnly, setActiveOnly] = useState(false);
   const [statusFilter, setStatusFilter] = useState<KeyStatus | null>(null);
   const [typeFilter, setTypeFilter] = useState<KeyType | null>(null);
+  const [quotaPoolGroup, setQuotaPoolGroup] = useState<Record<string, string>>({});
 
   const { copied, copy } = useCopyToClipboard();
 
@@ -180,12 +192,57 @@ export default function ApiManagerPageClient() {
   }, []);
 
   useEffect(() => {
+    if (!showAddModal || !nameError) return;
+    requestAnimationFrame(() => {
+      createKeyNameFieldRef.current?.scrollIntoView({ block: "center", behavior: "instant" });
+    });
+  }, [nameError, showAddModal]);
+
+  useEffect(() => {
     setActiveOnly(readActiveOnlyPreference());
   }, []);
 
   useEffect(() => {
     writeActiveOnlyPreference(activeOnly);
   }, [activeOnly]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadQuotaGroups = async () => {
+      try {
+        const [poolsRes, groupsRes] = await Promise.all([
+          fetch("/api/quota/pools"),
+          fetch("/api/quota/groups"),
+        ]);
+        if (!poolsRes.ok || !groupsRes.ok) return;
+        const poolsData = await poolsRes.json();
+        const groupsData = await groupsRes.json();
+        const pools: Array<{ id: string; groupId: string }> = Array.isArray(poolsData.pools)
+          ? poolsData.pools
+          : [];
+        const groups: Array<{ id: string; name: string }> = Array.isArray(groupsData.groups)
+          ? groupsData.groups
+          : [];
+        const groupNameById: Record<string, string> = {};
+        for (const g of groups) {
+          groupNameById[g.id] = g.name;
+        }
+        const map: Record<string, string> = {};
+        for (const p of pools) {
+          if (groupNameById[p.groupId]) {
+            map[p.id] = groupNameById[p.groupId];
+          }
+        }
+        if (!cancelled) setQuotaPoolGroup(map);
+      } catch {
+        // fail open — quota group chips simply won't render
+      }
+    };
+    loadQuotaGroups();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!showAddModal || !nameError) return;
@@ -278,11 +335,12 @@ export default function ApiManagerPageClient() {
         );
 
         // Match call logs by unique ID as well for the lastUsed timestamp
+        // Prefer an exact apiKeyId match; fall back to name match for legacy
+        // logs that predate per-key IDs (apiKeyId absent).
         const lastUsed =
-          (logs || []).find((log: any) => log.apiKeyId === key.id)?.timestamp || null;
-        (logs || []).find(
-          (log: any) => log.apiKeyId === key.id || (!log.apiKeyId && log.apiKeyName === key.name)
-        )?.timestamp || null;
+          (logs || []).find(
+            (log: any) => log.apiKeyId === key.id || (!log.apiKeyId && log.apiKeyName === key.name)
+          )?.timestamp || null;
 
         stats[key.id] = {
           totalRequests,
@@ -357,6 +415,25 @@ export default function ApiManagerPageClient() {
 
   const isFiltered =
     activeOnly || statusFilter !== null || typeFilter !== null || searchQuery.trim() !== "";
+
+  const isQuotaKey = (k: ApiKey) => Array.isArray(k.allowedQuotas) && k.allowedQuotas.length > 0;
+
+  const quotaKeys = filteredKeys.filter(isQuotaKey);
+  const normalKeys = filteredKeys.filter((k) => !isQuotaKey(k));
+
+  const quotaGroupsForKey = (k: ApiKey): string[] => {
+    if (!Array.isArray(k.allowedQuotas)) return [];
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const poolId of k.allowedQuotas) {
+      const groupName = quotaPoolGroup[poolId];
+      if (groupName && !seen.has(groupName)) {
+        seen.add(groupName);
+        result.push(groupName);
+      }
+    }
+    return result;
+  };
 
   const handleClearFilters = () => {
     setSearchQuery("");
@@ -504,7 +581,9 @@ export default function ApiManagerPageClient() {
     accessSchedule: AccessSchedule | null,
     rateLimits: Array<{ limit: number; window: number }> | null,
     scopes: string[],
-    allowedEndpoints: string[]
+    allowedEndpoints: string[],
+    streamDefaultMode: StreamDefaultMode,
+    disableNonPublicModels: boolean
   ) => {
     if (!editingKey || !editingKey.id) return;
 
@@ -565,6 +644,8 @@ export default function ApiManagerPageClient() {
           rateLimits,
           scopes,
           allowedEndpoints,
+          streamDefaultMode,
+          disableNonPublicModels,
         }),
       });
 
@@ -598,20 +679,21 @@ export default function ApiManagerPageClient() {
       if (!grouped[provider]) grouped[provider] = [];
       grouped[provider].push(model);
     }
-    return Object.entries(grouped).sort((a, b) => a[0].localeCompare(b[0]));
+    return Object.entries(grouped).sort((a, b) => compareTr(a[0], b[0]));
   }, [allModels, t]);
 
   // Filter models based on debounced search
   const filteredModelsByProvider = useMemo((): ProviderGroup[] => {
     if (!debouncedSearchModel.trim()) return modelsByProvider;
 
-    const search = debouncedSearchModel.toLowerCase();
     return modelsByProvider
       .map(
         ([provider, models]): ProviderGroup => [
           provider,
           models.filter(
-            (m) => m.id.toLowerCase().includes(search) || provider.toLowerCase().includes(search)
+            (m) =>
+              matchesSearch(m.id, debouncedSearchModel) ||
+              matchesSearch(provider, debouncedSearchModel)
           ),
         ]
       )
@@ -788,19 +870,8 @@ export default function ApiManagerPageClient() {
             <Button onClick={handleClearFilters}>{t("emptyFilterClear")}</Button>
           </div>
         ) : (
-          <div className="flex flex-col border border-border rounded-lg overflow-hidden">
-            {/* Table Header */}
-            <div className="grid grid-cols-12 gap-4 px-4 py-3 bg-surface/50 border-b border-border text-xs font-semibold text-text-muted uppercase tracking-wider">
-              <div className="col-span-2">{t("name")}</div>
-              <div className="col-span-3">{t("key")}</div>
-              <div className="col-span-2">{t("permissions")}</div>
-              <div className="col-span-2">{t("usage")}</div>
-              <div className="col-span-1">{t("created")}</div>
-              <div className="col-span-2 text-right">{t("actions")}</div>
-            </div>
-
-            {/* Table Rows */}
-            {filteredKeys.map((key) => {
+          (() => {
+            const renderKeyRow = (key: ApiKey) => {
               const stats = usageStats[key.id];
               const isRestricted = Array.isArray(key.allowedModels) && key.allowedModels.length > 0;
               const hasComboRestrictions =
@@ -815,10 +886,15 @@ export default function ApiManagerPageClient() {
                   : 0;
               const hasThrottle = throttleDelayMs > 0;
               const hasManageScope = Array.isArray(key.scopes) && key.scopes.includes("manage");
+              const hasJsonStreamDefault = key.streamDefaultMode === "json";
               const maxSessions = typeof key.maxSessions === "number" ? key.maxSessions : 0;
               const hasSessionLimit = maxSessions > 0;
               const activeSessions = sessionCounts[key.id] || 0;
               const hasSchedule = key.accessSchedule?.enabled === true;
+              const keyIsQuota = isQuotaKey(key);
+              const groups = quotaGroupsForKey(key);
+              const visibleGroups = groups.slice(0, 3);
+              const extraGroupCount = groups.length - visibleGroups.length;
               return (
                 <div
                   key={key.id}
@@ -858,13 +934,34 @@ export default function ApiManagerPageClient() {
                   </div>
                   <div className="col-span-2 flex items-center">
                     <div className="flex flex-col items-start gap-1">
+                      {/* QUOTA differentiation chips — prepended before existing badges */}
+                      {keyIsQuota && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-400 text-[11px] font-medium">
+                          {t("quotaModeOnly")}
+                        </span>
+                      )}
+                      {keyIsQuota &&
+                        visibleGroups.map((groupName) => (
+                          <span
+                            key={groupName}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-500/10 text-sky-600 dark:text-sky-400 text-[11px] font-medium truncate max-w-full"
+                          >
+                            {groupName}
+                          </span>
+                        ))}
+                      {keyIsQuota && extraGroupCount > 0 && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-sky-500/10 text-sky-600 dark:text-sky-400 text-[11px] font-medium">
+                          +{extraGroupCount}
+                        </span>
+                      )}
+                      {/* Existing badges */}
                       {isRestricted ? (
                         <button
                           onClick={() => handleOpenPermissions(key)}
                           className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-medium hover:bg-amber-500/20 transition-colors"
                         >
                           <span className="material-symbols-outlined text-[14px]">lock</span>
-                          {t("modelsCount", { count: key.allowedModels.length })}
+                          {t("modelsCount", { count: key.allowedModels!.length })}
                         </button>
                       ) : (
                         <button
@@ -881,7 +978,7 @@ export default function ApiManagerPageClient() {
                           className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs font-medium hover:bg-blue-500/20 transition-colors"
                         >
                           <span className="material-symbols-outlined text-[14px]">cable</span>
-                          {key.allowedConnections.length} conn
+                          {key.allowedConnections!.length} conn
                         </button>
                       )}
                       {hasComboRestrictions && (
@@ -890,7 +987,7 @@ export default function ApiManagerPageClient() {
                           className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-teal-500/10 text-teal-600 dark:text-teal-400 text-xs font-medium hover:bg-teal-500/20 transition-colors"
                         >
                           <span className="material-symbols-outlined text-[14px]">hub</span>
-                          {key.allowedCombos.length} combos
+                          {key.allowedCombos!.length} combos
                         </button>
                       )}
                       {noLogEnabled && (
@@ -907,6 +1004,12 @@ export default function ApiManagerPageClient() {
                             auto_fix_high
                           </span>
                           Auto-Resolve
+                        </span>
+                      )}
+                      {hasJsonStreamDefault && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-500/10 text-sky-600 dark:text-sky-400 text-[11px] font-medium">
+                          <span className="material-symbols-outlined text-[12px]">data_object</span>
+                          {t("streamDefaultBadge")}
                         </span>
                       )}
                       {hasSessionLimit && (
@@ -996,8 +1099,67 @@ export default function ApiManagerPageClient() {
                   </div>
                 </div>
               );
-            })}
-          </div>
+            };
+
+            const tableHeader = (
+              <div className="grid grid-cols-12 gap-4 px-4 py-3 bg-surface/50 border-b border-border text-xs font-semibold text-text-muted uppercase tracking-wider">
+                <div className="col-span-2">{t("name")}</div>
+                <div className="col-span-3">{t("key")}</div>
+                <div className="col-span-2">{t("permissions")}</div>
+                <div className="col-span-2">{t("usage")}</div>
+                <div className="col-span-1">{t("created")}</div>
+                <div className="col-span-2 text-right">{t("actions")}</div>
+              </div>
+            );
+
+            return (
+              <div className="flex flex-col gap-4">
+                {normalKeys.length > 0 && (
+                  <div>
+                    {/* Normal keys section heading */}
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="material-symbols-outlined text-base text-text-muted">
+                        vpn_key
+                      </span>
+                      <span className="text-sm font-medium text-text-main">
+                        {t("normalKeysSection")}
+                      </span>
+                      <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-surface/80 border border-border text-[11px] font-semibold text-text-muted">
+                        {normalKeys.length}
+                      </span>
+                    </div>
+                    <div className="flex flex-col border border-border rounded-lg overflow-hidden">
+                      {tableHeader}
+                      {normalKeys.map(renderKeyRow)}
+                    </div>
+                  </div>
+                )}
+                {quotaKeys.length > 0 && (
+                  <div>
+                    {/* Quota keys section heading */}
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="material-symbols-outlined text-base text-violet-500">
+                        toll
+                      </span>
+                      <span className="text-sm font-medium text-text-main">
+                        {t("quotaKeysSection")}
+                      </span>
+                      <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-surface/80 border border-border text-[11px] font-semibold text-text-muted">
+                        {quotaKeys.length}
+                      </span>
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-400 text-[11px] font-semibold">
+                        {t("quotaPill")}
+                      </span>
+                    </div>
+                    <div className="flex flex-col border border-border rounded-lg overflow-hidden">
+                      {tableHeader}
+                      {quotaKeys.map(renderKeyRow)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()
         )}
       </Card>
 
@@ -1047,7 +1209,7 @@ export default function ApiManagerPageClient() {
         }}
       >
         <div ref={createKeyFormRef} className="flex flex-col gap-4">
-          <div>
+          <div ref={createKeyNameFieldRef}>
             <label className="text-sm font-medium text-text-main mb-1.5 block">
               {t("keyName")}
             </label>
@@ -1264,7 +1426,9 @@ const PermissionsModal = memo(function PermissionsModal({
     accessSchedule: AccessSchedule | null,
     rateLimits: Array<{ limit: number; window: number }> | null,
     scopes: string[],
-    allowedEndpoints: string[]
+    allowedEndpoints: string[],
+    streamDefaultMode: StreamDefaultMode,
+    disableNonPublicModels: boolean
   ) => void;
 }) {
   const t = useTranslations("apiManager");
@@ -1315,6 +1479,9 @@ const PermissionsModal = memo(function PermissionsModal({
   const [rateLimits, setRateLimits] = useState<Array<{ limit: number; window: number }>>(
     Array.isArray(apiKey?.rateLimits) ? apiKey.rateLimits : []
   );
+  const [streamDefaultMode, setStreamDefaultMode] = useState<StreamDefaultMode>(
+    apiKey?.streamDefaultMode === "json" ? "json" : "legacy"
+  );
   const [nameError, setNameError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [selectedConnections, setSelectedConnections] = useState<string[]>(initialConnections);
@@ -1330,6 +1497,9 @@ const PermissionsModal = memo(function PermissionsModal({
   const initialEndpoints = Array.isArray(apiKey?.allowedEndpoints) ? apiKey.allowedEndpoints : [];
   const [selectedEndpoints, setSelectedEndpoints] = useState<string[]>(initialEndpoints);
   const [allowAllEndpoints, setAllowAllEndpoints] = useState(initialEndpoints.length === 0);
+  const [disableNonPublicModels, setDisableNonPublicModels] = useState(
+    apiKey?.disableNonPublicModels === true
+  );
 
   // Memoize callbacks to prevent child re-renders
   const handleToggleModel = useCallback(
@@ -1479,7 +1649,9 @@ const PermissionsModal = memo(function PermissionsModal({
         selfUsageEnabled,
         selfAccountQuotaEnabled,
       }),
-      allowAllEndpoints ? [] : selectedEndpoints
+      allowAllEndpoints ? [] : selectedEndpoints,
+      streamDefaultMode,
+      disableNonPublicModels
     );
   }, [
     onSave,
@@ -1508,6 +1680,8 @@ const PermissionsModal = memo(function PermissionsModal({
     rateLimits,
     allowAllEndpoints,
     selectedEndpoints,
+    streamDefaultMode,
+    disableNonPublicModels,
     apiKey?.scopes,
     t,
   ]);
@@ -1889,6 +2063,40 @@ const PermissionsModal = memo(function PermissionsModal({
           </button>
         </div>
 
+        {/* Stream Default Compatibility */}
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 p-3 rounded-lg border border-border bg-surface/40">
+          <div className="flex flex-col gap-1 min-w-0">
+            <p className="text-sm font-medium text-text-main">{t("streamDefaultMode")}</p>
+            <p className="text-xs text-text-muted">{t("streamDefaultModeDesc")}</p>
+          </div>
+          <div className="flex gap-1 p-0.5 bg-surface rounded-md shrink-0 w-full sm:w-auto">
+            <button
+              type="button"
+              onClick={() => setStreamDefaultMode("legacy")}
+              className={`inline-flex flex-1 sm:flex-none items-center justify-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold transition-all ${
+                streamDefaultMode === "legacy"
+                  ? "bg-primary text-white"
+                  : "text-text-muted hover:bg-black/5 dark:hover:bg-white/5"
+              }`}
+            >
+              <span className="material-symbols-outlined text-[14px]">settings_backup_restore</span>
+              {t("streamDefaultLegacy")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setStreamDefaultMode("json")}
+              className={`inline-flex flex-1 sm:flex-none items-center justify-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-semibold transition-all ${
+                streamDefaultMode === "json"
+                  ? "bg-primary text-white"
+                  : "text-text-muted hover:bg-black/5 dark:hover:bg-white/5"
+              }`}
+            >
+              <span className="material-symbols-outlined text-[14px]">data_object</span>
+              {t("streamDefaultJson")}
+            </button>
+          </div>
+        </div>
+
         {/* Ban Toggle (SECURITY) */}
         <div className="flex items-start justify-between gap-3 p-3 rounded-lg border border-red-500/20 bg-red-500/5">
           <div className="flex flex-col gap-1">
@@ -1921,15 +2129,32 @@ const PermissionsModal = memo(function PermissionsModal({
               Key will automatically stop working after this date.
             </p>
           </div>
-          <input
-            type="datetime-local"
-            value={expiresAt ? expiresAt.slice(0, 16) : ""}
-            onChange={(e) => {
-              const val = e.target.value;
-              setExpiresAt(val ? new Date(val).toISOString() : "");
-            }}
-            className="w-full px-2 py-1.5 text-sm border border-border rounded-md bg-background text-text-main"
-          />
+          <div className="flex gap-2">
+            <input
+              type="datetime-local"
+              value={toLocalDateTimeInputValue(expiresAt)}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (!val) {
+                  setExpiresAt("");
+                  return;
+                }
+                const date = new Date(val);
+                if (!Number.isNaN(date.getTime())) {
+                  setExpiresAt(date.toISOString());
+                }
+              }}
+              className="min-w-0 flex-1 px-2 py-1.5 text-sm border border-border rounded-md bg-background text-text-main"
+            />
+            <button
+              type="button"
+              onClick={() => setExpiresAt("")}
+              disabled={!expiresAt}
+              className="shrink-0 px-3 py-1.5 text-sm font-medium border border-border rounded-md text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+            >
+              {tc("clear")}
+            </button>
+          </div>
         </div>
         {/* Management Access */}
         <div className="flex flex-col gap-2 p-3 rounded-lg border border-border bg-surface/40">
@@ -1995,6 +2220,30 @@ const PermissionsModal = memo(function PermissionsModal({
             {selfAccountQuotaEnabled ? tc("enabled") : tc("disabled")}
           </button>
           <p className="text-xs text-text-muted">{t("sharedAccountQuotaVisibilityDesc")}</p>
+        </div>
+
+        {/* Disable Non-Public Models Toggle */}
+        <div className="flex items-start justify-between gap-3 p-3 rounded-lg border border-border bg-surface/40">
+          <div className="flex flex-col gap-1">
+            <p className="text-sm font-medium text-text-main">{t("disableNonPublicModels")}</p>
+            <p className="text-xs text-text-muted">{t("disableNonPublicModelsDesc")}</p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={disableNonPublicModels}
+            onClick={() => setDisableNonPublicModels((prev) => !prev)}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+              disableNonPublicModels
+                ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
+                : "bg-black/5 dark:bg-white/5 text-text-muted border border-border"
+            }`}
+          >
+            <span className="material-symbols-outlined text-[14px]">
+              {disableNonPublicModels ? "shield_lock" : "shield"}
+            </span>
+            {disableNonPublicModels ? tc("yes") : tc("no")}
+          </button>
         </div>
 
         {/* Selected Models Summary (only in restrict mode) */}
@@ -2208,7 +2457,7 @@ const PermissionsModal = memo(function PermissionsModal({
                     return acc;
                   }, {})
                 )
-                  .sort(([a], [b]) => a.localeCompare(b))
+                  .sort(([a], [b]) => compareTr(a, b))
                   .map(([provider, conns]) => (
                     <div key={provider}>
                       <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wider px-1 py-0.5">

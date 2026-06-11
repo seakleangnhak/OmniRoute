@@ -260,6 +260,7 @@ export function parseQuotaData(provider, data) {
         break;
 
       case "antigravity":
+      case "agy":
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([modelKey, quota]: [string, any]) => {
             if (modelKey === "credits") {
@@ -289,6 +290,10 @@ export function parseQuotaData(provider, data) {
             normalizedQuotas.push(
               normalizeQuotaEntry(modelKey, quota, {
                 modelKey: modelKey,
+                ...(quota?.quotaSource ? { quotaSource: quota.quotaSource } : {}),
+                ...(quota?.fractionReported !== undefined
+                  ? { fractionReported: quota.fractionReported }
+                  : {}),
               })
             );
           });

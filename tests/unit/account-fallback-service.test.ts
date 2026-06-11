@@ -29,6 +29,7 @@ const {
   clearProviderFailure,
   isProviderFailureCode,
   getProvidersInCooldown,
+  getProviderBreakerState,
 } = accountFallback;
 
 const { selectAccount } = accountSelector;
@@ -40,6 +41,7 @@ function makeProfile(overrides: Record<string, unknown> = {}): any {
     useUpstreamRetryHints: false,
     maxBackoffSteps: 3,
     failureThreshold: 60,
+    degradationThreshold: 40,
     resetTimeoutMs: 5000,
     transientCooldown: 125,
     rateLimitCooldown: 125,
@@ -78,12 +80,83 @@ test("parseRetryFromErrorText parses both compact reset formats", () => {
   assert.equal(parseRetryFromErrorText("No reset metadata"), null);
 });
 
+test("parseRetryFromErrorText parses Antigravity 'Resets in XhYmZs' phrasing", () => {
+  assert.equal(
+    parseRetryFromErrorText(
+      "Individual quota reached. Contact your administrator to enable overages. " +
+        "Resets in 164h27m24s."
+    ),
+    (164 * 3600 + 27 * 60 + 24) * 1000
+  );
+  assert.equal(parseRetryFromErrorText("Resets in 2h7m23s"), 7_643_000);
+  assert.equal(parseRetryFromErrorText("Reset in 45m"), 2_700_000);
+});
+
+test("parseRetryFromErrorText caps extreme reset windows at 30 days", () => {
+  const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+  // 100 days → capped to 30
+  assert.equal(parseRetryFromErrorText("Resets in 2400h"), thirtyDaysMs);
+  // Absurd value → capped
+  assert.equal(parseRetryFromErrorText("Resets in 999999h"), thirtyDaysMs);
+});
+
+test("checkFallbackError locks Antigravity quota-reached 429 for the full reset window", () => {
+  const message =
+    "Individual quota reached. Contact your administrator to enable overages. " +
+    "Resets in 164h27m24s.";
+  const result = checkFallbackError(
+    429,
+    message,
+    0,
+    "gemini-3.5-flash-high",
+    "antigravity",
+    null,
+    makeProfile()
+  );
+
+  assert.equal(result.shouldFallback, true);
+  assert.equal(result.reason, RateLimitReason.QUOTA_EXHAUSTED);
+  assert.equal(result.usedUpstreamRetryHint, true);
+  // Full parsed window (≈164.46h), under the 30-day cap — not the generic ~5s rate-limit backoff.
+  assert.equal(result.cooldownMs, (164 * 3600 + 27 * 60 + 24) * 1000);
+});
+
+test("recordModelLockoutFailure honors a multi-day exactCooldownMs (under 30-day cap)", () => {
+  const provider = "antigravity";
+  const connectionId = "conn-quota-window";
+  const model = "gemini-3.5-flash-high";
+  const exactCooldownMs = (164 * 3600 + 27 * 60 + 24) * 1000;
+
+  clearModelLock(provider, connectionId, model);
+  const lockout = recordModelLockoutFailure(
+    provider,
+    connectionId,
+    model,
+    "quota_exhausted",
+    429,
+    0,
+    makeProfile(),
+    { exactCooldownMs }
+  );
+
+  assert.equal(lockout.cooldownMs, exactCooldownMs);
+  assert.equal(isModelLocked(provider, connectionId, model), true);
+  clearModelLock(provider, connectionId, model);
+});
+
 test("checkFallbackError marks deactivated accounts as permanent auth failures", () => {
   const result = checkFallbackError(401, "This account has been deactivated");
   assert.equal(result.shouldFallback, true);
   assert.equal(result.reason, RateLimitReason.AUTH_ERROR);
   assert.equal(result.permanent, true);
   assert.ok(result.cooldownMs >= 300 * 24 * 60 * 60 * 1000);
+});
+
+test("checkFallbackError classifies 'free tier of the model has been exhausted' as quota exhausted", () => {
+  const result = checkFallbackError(429, "free tier of the model has been exhausted");
+  assert.equal(result.shouldFallback, true);
+  assert.equal(result.reason, RateLimitReason.QUOTA_EXHAUSTED);
+  assert.equal(result.creditsExhausted, true);
 });
 
 test("checkFallbackError treats non-429 exhausted credits as long quota cooldowns", () => {
@@ -311,6 +384,7 @@ test("getProviderProfile differentiates oauth and api-key providers", () => {
   assert.equal(oauthProfile.circuitBreakerReset, PROVIDER_PROFILES.oauth.circuitBreakerReset);
   assert.equal(oauthProfile.baseCooldownMs, PROVIDER_PROFILES.oauth.transientCooldown);
   assert.equal(oauthProfile.failureThreshold, PROVIDER_PROFILES.oauth.circuitBreakerThreshold);
+  assert.equal(oauthProfile.degradationThreshold, PROVIDER_PROFILES.oauth.degradationThreshold);
   assert.equal(oauthProfile.resetTimeoutMs, PROVIDER_PROFILES.oauth.circuitBreakerReset);
 
   const apiKeyProfile = getProviderProfile("openai");
@@ -327,6 +401,7 @@ test("getProviderProfile differentiates oauth and api-key providers", () => {
   assert.equal(apiKeyProfile.circuitBreakerReset, PROVIDER_PROFILES.apikey.circuitBreakerReset);
   assert.equal(apiKeyProfile.baseCooldownMs, PROVIDER_PROFILES.apikey.transientCooldown);
   assert.equal(apiKeyProfile.failureThreshold, PROVIDER_PROFILES.apikey.circuitBreakerThreshold);
+  assert.equal(apiKeyProfile.degradationThreshold, PROVIDER_PROFILES.apikey.degradationThreshold);
   assert.equal(apiKeyProfile.resetTimeoutMs, PROVIDER_PROFILES.apikey.circuitBreakerReset);
 });
 
@@ -465,7 +540,7 @@ test("recordModelLockoutFailure uses provider profile cooldowns, backoff, and re
 
 // Provider-level failure circuit breaker tests
 test("isProviderFailureCode correctly identifies provider-wide transient error codes", () => {
-  assert.equal(isProviderFailureCode(429), false);
+  assert.equal(isProviderFailureCode(429), true);
   assert.equal(isProviderFailureCode(408), true);
   assert.equal(isProviderFailureCode(500), true);
   assert.equal(isProviderFailureCode(502), true);
@@ -535,6 +610,7 @@ test("recordProviderFailure honors runtime provider breaker profile", () => {
   try {
     const runtimeProfile = {
       failureThreshold: PROVIDER_PROFILES.apikey.circuitBreakerThreshold + 7,
+      degradationThreshold: PROVIDER_PROFILES.apikey.degradationThreshold + 3,
       resetTimeoutMs: PROVIDER_PROFILES.apikey.circuitBreakerReset + 45_000,
     };
 
@@ -542,14 +618,101 @@ test("recordProviderFailure honors runtime provider breaker profile", () => {
 
     const breaker = getCircuitBreaker(provider);
     assert.equal(breaker.failureThreshold, runtimeProfile.failureThreshold);
+    assert.equal(breaker.degradationThreshold, runtimeProfile.degradationThreshold);
     assert.equal(breaker.resetTimeout, runtimeProfile.resetTimeoutMs);
     assert.equal(isProviderInCooldown(provider), false);
 
     const breakerAfterStatusCheck = getCircuitBreaker(provider);
     assert.equal(breakerAfterStatusCheck.failureThreshold, runtimeProfile.failureThreshold);
+    assert.equal(breakerAfterStatusCheck.degradationThreshold, runtimeProfile.degradationThreshold);
     assert.equal(breakerAfterStatusCheck.resetTimeout, runtimeProfile.resetTimeoutMs);
   } finally {
     clearProviderFailure(provider);
+  }
+});
+
+test("recordProviderFailure preserves provider breaker cooldown while open", () => {
+  const originalNow = Date.now;
+  let now = 1_700_000_000_000;
+  Date.now = () => now;
+
+  try {
+    const provider = "test-provider-open-cooldown-stability";
+    const profile = { failureThreshold: 1, resetTimeoutMs: 60_000 };
+    clearProviderFailure(provider);
+
+    recordProviderFailure(provider, undefined, "conn-open-cooldown", profile);
+    assert.equal(isProviderInCooldown(provider), true);
+
+    const openedAt = getProviderBreakerState(provider)?.lastFailureTime;
+    const initialRemaining = getProviderCooldownRemainingMs(provider);
+    assert.equal(openedAt, now);
+    assert.equal(initialRemaining, 60_000);
+
+    now += 10_000;
+    recordProviderFailure(provider, undefined, "conn-open-cooldown-later", profile);
+
+    assert.equal(getProviderBreakerState(provider)?.lastFailureTime, openedAt);
+    assert.equal(getProviderCooldownRemainingMs(provider), 50_000);
+  } finally {
+    Date.now = originalNow;
+    clearProviderFailure("test-provider-open-cooldown-stability");
+  }
+});
+
+test("recordProviderFailure keeps recent connection dedupe entries when pruning", () => {
+  const originalNow = Date.now;
+  const now = 1_700_000_000_000;
+  Date.now = () => now;
+
+  try {
+    const provider = "test-provider-dedupe-prune";
+    const profile = { failureThreshold: 20_000, resetTimeoutMs: 60_000 };
+    clearProviderFailure(provider);
+
+    for (let i = 0; i <= 10_000; i++) {
+      recordProviderFailure(provider, undefined, `conn-${i}`, profile);
+    }
+
+    const beforeDuplicate = getProviderBreakerState(provider)?.failureCount;
+    recordProviderFailure(provider, undefined, "conn-10000", profile);
+    const afterDuplicate = getProviderBreakerState(provider)?.failureCount;
+
+    assert.equal(afterDuplicate, beforeDuplicate);
+    assert.equal(isProviderInCooldown(provider), false);
+  } finally {
+    Date.now = originalNow;
+    clearProviderFailure("test-provider-dedupe-prune");
+  }
+});
+
+test("recordProviderFailure refreshes insertion order for existing dedupe keys", () => {
+  const originalNow = Date.now;
+  let now = 1_700_000_000_000;
+  Date.now = () => now;
+
+  try {
+    const provider = "test-provider-dedupe-lru";
+    const profile = { failureThreshold: 20_000, resetTimeoutMs: 60_000 };
+    clearProviderFailure(provider);
+
+    for (let i = 0; i < 9_999; i++) {
+      recordProviderFailure(provider, undefined, `conn-${i}`, profile);
+    }
+
+    now += 10_000;
+    recordProviderFailure(provider, undefined, "conn-0", profile);
+
+    for (let i = 10_000; i < 10_050; i++) {
+      recordProviderFailure(provider, undefined, `conn-${i}`, profile);
+    }
+
+    const breakerState = getProviderBreakerState(provider);
+    assert.equal(breakerState?.failureCount !== undefined, true);
+    assert.equal(isProviderInCooldown(provider), false);
+  } finally {
+    Date.now = originalNow;
+    clearProviderFailure("test-provider-dedupe-lru");
   }
 });
 
@@ -1028,4 +1191,65 @@ test("G-02: five consecutive 503 service_not_running do NOT trip provider circui
     "9router circuit breaker must remain closed"
   );
   clearProviderFailure("9router"); // cleanup
+});
+
+// ── Custom banned signals (PR #3454) ──────────────────────────────────────────
+// Operators can extend ACCOUNT_DEACTIVATED_SIGNALS with provider-specific
+// permanent-ban phrasing via Settings → Security. These persist in the
+// key_value settings store and are applied at boot + on hot-reload through
+// setCustomBannedSignals(). Regression guard for the merge/detection behavior.
+
+const {
+  setCustomBannedSignals,
+  getMergedBannedSignals,
+  isAccountDeactivated,
+  ACCOUNT_DEACTIVATED_SIGNALS,
+} = accountFallback;
+
+test("getMergedBannedSignals returns built-in list unchanged when no custom signals", () => {
+  setCustomBannedSignals([]);
+  const merged = getMergedBannedSignals();
+  assert.deepEqual(merged, ACCOUNT_DEACTIVATED_SIGNALS);
+});
+
+test("getMergedBannedSignals appends custom signals to the built-in list", () => {
+  setCustomBannedSignals(["api key revoked", "tenant suspended"]);
+  const merged = getMergedBannedSignals();
+  // Built-ins still present
+  for (const sig of ACCOUNT_DEACTIVATED_SIGNALS) {
+    assert.ok(merged.includes(sig), `built-in signal "${sig}" must survive merge`);
+  }
+  // Custom appended
+  assert.ok(merged.includes("api key revoked"));
+  assert.ok(merged.includes("tenant suspended"));
+  setCustomBannedSignals([]); // cleanup
+});
+
+test("isAccountDeactivated still matches built-in signals when custom list is empty", () => {
+  setCustomBannedSignals([]);
+  assert.equal(isAccountDeactivated("Your account has been suspended"), true);
+  assert.equal(isAccountDeactivated("rate limit exceeded, retry later"), false);
+});
+
+test("isAccountDeactivated matches a custom signal after setCustomBannedSignals", () => {
+  setCustomBannedSignals([]);
+  // Before registration the custom phrase is not a ban signal
+  assert.equal(
+    isAccountDeactivated("Error: API key revoked by administrator"),
+    false,
+    "custom phrase must not match before it is registered"
+  );
+
+  setCustomBannedSignals(["api key revoked"]);
+  // Case-insensitive substring match against the merged list
+  assert.equal(
+    isAccountDeactivated("Error: API key revoked by administrator"),
+    true,
+    "custom phrase must match once registered (case-insensitive substring)"
+  );
+
+  // Built-ins remain matchable alongside custom signals
+  assert.equal(isAccountDeactivated("account_deactivated"), true);
+
+  setCustomBannedSignals([]); // cleanup — restore module state for other tests
 });

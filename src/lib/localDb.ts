@@ -59,6 +59,7 @@ export {
   getModelPreserveOpenAIDeveloperRole,
   getModelUpstreamExtraHeaders,
   getModelIsHidden,
+  setModelIsHidden,
 
   // Synced Available Models
   getSyncedAvailableModels,
@@ -66,6 +67,7 @@ export {
   replaceSyncedAvailableModelsForConnection,
   deleteSyncedAvailableModelsForConnection,
   deleteSyncedAvailableModelsForProvider,
+  removeSyncedAvailableModel,
 } from "./db/models";
 
 export type { ModelCompatPerProtocol, ModelCompatPatch, SyncedAvailableModel } from "./db/models";
@@ -173,6 +175,7 @@ export {
   assignProxyToScope,
   resolveProxyForConnectionFromRegistry,
   resolveProxyForProvider,
+  resolveProxyForScopeFromRegistry,
   migrateLegacyProxyConfigToRegistry,
   getProxyHealthStats,
   bulkAssignProxyToScope,
@@ -208,6 +211,7 @@ export {
   getCachedLKGP,
   setCachedLKGP,
   invalidateDbCache,
+  getCombosCacheVersion,
 } from "./db/readCache";
 
 export {
@@ -403,6 +407,7 @@ export {
   getXp,
   updateLevel,
   unlockBadge,
+  hasBadge,
   getBadges,
   getBadgeDefinitions,
   transferTokens,
@@ -511,6 +516,69 @@ export {
 export type { FreeProxyRecord, FreeProxyStats } from "./db/freeProxies";
 
 export {
+  listPlaygroundPresets,
+  getPlaygroundPreset,
+  createPlaygroundPreset,
+  updatePlaygroundPreset,
+  deletePlaygroundPreset,
+} from "./db/playgroundPresets";
+
+export type { PlaygroundPresetListItem } from "./db/playgroundPresets";
+// Plan 21 — Memory Engine Redesign
+export {
+  getMemoryVecMeta,
+  setMemoryVecMeta,
+  markMemoryNeedsReindex,
+  markAllMemoriesNeedReindex,
+  getMemoryReindexQueue,
+  countMemoryReindexPending,
+} from "./db/memoryVec";
+
+export type { MemoryVecMeta } from "./db/memoryVec";
+// T-A-F2: AgentBridge state/mappings/bypass + Inspector custom hosts/sessions
+export * from "./db/agentBridgeState";
+export * from "./db/agentBridgeMappings";
+export * from "./db/agentBridgeBypass";
+export * from "./db/inspectorCustomHosts";
+export * from "./db/inspectorSessions";
+// Quota Sharing — Group B (planos 16+22)
+export {
+  listPools,
+  getPool,
+  getPoolsByGroup,
+  createPool,
+  updatePool,
+  deletePool,
+  upsertAllocations,
+  listAllocationsForApiKey,
+} from "./db/quotaPools";
+
+export {
+  // Quota Groups (B2)
+  createGroup,
+  getGroup,
+  getGroupName,
+  listGroups,
+  renameGroup,
+  deleteGroup,
+} from "./db/quotaGroups";
+
+export type { QuotaGroup } from "./db/quotaGroups";
+export {
+  getBucket,
+  incrementBucket,
+  getPair,
+  sumPoolDimension,
+  gcOlderThan as gcQuotaConsumption,
+} from "./db/quotaConsumption";
+export {
+  getPlan as getProviderPlan,
+  listPlans as listProviderPlans,
+  upsertPlan as upsertProviderPlan,
+  deletePlan as deleteProviderPlan,
+} from "./db/providerPlans";
+
+export {
   // Per-API-Key Token Limits (migration 073)
   upsertTokenLimit,
   listTokenLimits,
@@ -541,3 +609,13 @@ export {
 } from "./db/plugins";
 
 export type { PluginRow, PluginCreateInput } from "./db/plugins";
+
+export {
+  getApiKeyContextSource,
+  setApiKeyContextSource,
+  deleteApiKeyContextSource,
+  listApiKeyContextSources,
+} from "./db/apiKeyContextSources";
+export type { ApiKeyContextSource } from "./db/apiKeyContextSources";
+
+export { sumUsageTokensThisMonth } from "./db/usageSummary";

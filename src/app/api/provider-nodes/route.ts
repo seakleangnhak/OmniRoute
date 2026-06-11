@@ -68,8 +68,17 @@ export async function POST(request) {
     if (isValidationFailure(validation)) {
       return NextResponse.json({ error: validation.error }, { status: 400 });
     }
-    const { name, prefix, apiType, baseUrl, type, compatMode, chatPath, modelsPath } =
-      validation.data;
+    const {
+      name,
+      prefix,
+      apiType,
+      baseUrl,
+      type,
+      compatMode,
+      chatPath,
+      modelsPath,
+      customHeaders,
+    } = validation.data;
 
     // Determine type
     const nodeType = type || "openai-compatible";
@@ -84,6 +93,7 @@ export async function POST(request) {
         name: name.trim(),
         chatPath: chatPath || null,
         modelsPath: modelsPath || null,
+        customHeaders: customHeaders || null,
       });
       return NextResponse.json({ node }, { status: 201 });
     }
@@ -110,6 +120,7 @@ export async function POST(request) {
         name: name.trim(),
         chatPath: chatPath || null,
         modelsPath: compatMode === "cc" ? null : modelsPath || null,
+        customHeaders: customHeaders || null,
       });
       return NextResponse.json({ node }, { status: 201 });
     }

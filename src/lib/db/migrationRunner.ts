@@ -186,13 +186,25 @@ const RENAMED_MIGRATION_COMPATIBILITY = [
   {
     fromVersion: "073",
     fromName: "per_model_token_limits",
-    toVersion: "077",
+    toVersion: "097",
+    toName: "per_model_token_limits",
+  },
+  {
+    fromVersion: "077",
+    fromName: "per_model_token_limits",
+    toVersion: "097",
     toName: "per_model_token_limits",
   },
   {
     fromVersion: "074",
     fromName: "discovery_results",
-    toVersion: "078",
+    toVersion: "098",
+    toName: "discovery_results",
+  },
+  {
+    fromVersion: "078",
+    fromName: "discovery_results",
+    toVersion: "098",
     toName: "discovery_results",
   },
 ] as const;
@@ -251,6 +263,8 @@ const PHYSICAL_SCHEMA_SENTINELS = [
 ] as const;
 
 const INITIAL_SCHEMA_SENTINELS = ["provider_connections", "combos", "call_logs"] as const;
+const OPTIONAL_FTS5_MIGRATION_VERSIONS = new Set(["022", "023"]);
+const fts5SupportCache = new WeakMap<SqliteAdapter, boolean>();
 
 /**
  * Ensure the schema_migrations tracking table exists.
@@ -263,6 +277,41 @@ function ensureMigrationsTable(db: SqliteAdapter): void {
       applied_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+}
+
+function isOptionalFts5Migration(migration: { version: string; name: string }): boolean {
+  return OPTIONAL_FTS5_MIGRATION_VERSIONS.has(migration.version);
+}
+
+function supportsFts5(db: SqliteAdapter): boolean {
+  const cached = fts5SupportCache.get(db);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  try {
+    const probeTable = `__omniroute_fts5_probe_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    db.transaction(() => {
+      db.exec(`CREATE VIRTUAL TABLE "${probeTable}" USING fts5(content);`);
+      db.exec(`DROP TABLE "${probeTable}";`);
+    })();
+    fts5SupportCache.set(db, true);
+    return true;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/no such module:\s*fts5/i.test(message)) {
+      fts5SupportCache.set(db, false);
+      return false;
+    }
+    throw error;
+  }
+}
+
+function isDeferredUnsupportedMigration(
+  db: SqliteAdapter,
+  migration: { version: string; name: string }
+): boolean {
+  return isOptionalFts5Migration(migration) && !supportsFts5(db);
 }
 
 /**
@@ -396,6 +445,8 @@ function isSchemaAlreadyApplied(
   switch (migration.version) {
     case "003":
       return hasColumn(db, "provider_nodes", "chat_path");
+    case "095":
+      return hasColumn(db, "provider_nodes", "custom_headers_json");
     case "005":
       return hasColumn(db, "combos", "system_message");
     case "007":
@@ -497,12 +548,43 @@ function isSchemaAlreadyApplied(
     case "074":
       return hasColumn(db, "call_logs", "images_count");
     case "077":
+      return hasColumn(db, "api_keys", "stream_default_mode");
+    case "078":
+      return hasTable(db, "quota_consumption");
+    case "083":
+      // Plan 21 D27 fix: guard memory_vec migration. Without this case, an
+      // unmarked re-run of 083_memory_vec.sql would have its ALTER TABLE fail
+      // mid-file and skip the CREATE INDEX that follows, leaving the index
+      // missing on DBs that re-execute the script after a partial first run.
+      return hasColumn(db, "memories", "needs_reindex");
+    case "085":
+      // Retroactive guard for quota_pools migration renumbered from 077 → 085.
+      return hasTable(db, "quota_pools") && hasTable(db, "quota_allocations");
+    case "088":
+      // Quota groups migration (renumbered 087 → 088 on merge into v3.8.8).
+      // The table + column are already present when group_id exists on
+      // quota_pools (ensures the backfill UPDATE also ran).
+      return hasTable(db, "quota_groups") && hasColumn(db, "quota_pools", "group_id");
+    case "089":
+      // disable_non_public_models column (PR #3017, renumbered 077 → 089 to avoid
+      // collision with 077_api_key_stream_default_mode on merge into v3.8.8).
+      return hasColumn(db, "api_keys", "disable_non_public_models");
+    case "090":
+      // plugin_metrics table (PR #2913, renumbered 077 → 090 to avoid
+      // collision with 077_api_key_stream_default_mode on merge into v3.8.8).
+      return hasTable(db, "plugin_metrics");
+    case "091":
+      // plugin_analytics table (PR #2913). The PR's stray db/migrations version
+      // was dropped on integration; this canonical migration creates the table
+      // that recordPluginExecution()/getPluginAnalytics() rely on.
+      return hasTable(db, "plugin_analytics");
+    case "097":
       return (
         hasTable(db, "api_key_token_limits") &&
         hasTable(db, "api_key_token_counters") &&
         hasTable(db, "api_key_token_limit_reset_logs")
       );
-    case "078":
+    case "098":
       return hasTable(db, "discovery_results");
     default:
       return false;
@@ -910,9 +992,25 @@ export function runMigrations(db: SqliteAdapter, options?: { isNewDb?: boolean }
     }
     return isMissing;
   });
+  const deferredUnsupported = pending.filter((migration) =>
+    isDeferredUnsupportedMigration(db, migration)
+  );
+  const actionablePending = pending.filter(
+    (migration) => !deferredUnsupported.some((deferred) => deferred.version === migration.version)
+  );
 
   if (pending.length === 0) {
     return 0; // Nothing to do
+  }
+
+  if (deferredUnsupported.length > 0) {
+    const summary = deferredUnsupported
+      .map((migration) => `${migration.version}_${migration.name}`)
+      .join(", ");
+    console.warn(
+      `[Migration] Deferring optional FTS5 migrations on driver ${db.driver}: ${summary}. ` +
+        `Memory search will fall back until a SQLite driver with FTS5 support is available.`
+    );
   }
 
   // ── Safety Check 2: Mass-migration detection (abort if existing DB + many migrations) ──
@@ -928,16 +1026,16 @@ export function runMigrations(db: SqliteAdapter, options?: { isNewDb?: boolean }
     process.env.DISABLE_SQLITE_AUTO_BACKUP !== "true" &&
     MAX_PENDING_MIGRATIONS_ON_EXISTING_DB > 0 &&
     applied.size > 0 &&
-    pending.length > MAX_PENDING_MIGRATIONS_ON_EXISTING_DB
+    actionablePending.length > MAX_PENDING_MIGRATIONS_ON_EXISTING_DB
   ) {
     const physicalBaseline = inferPhysicalSchemaBaseline(db);
     const plausiblePendingCount = physicalBaseline
       ? getPlausiblePendingCount(files, physicalBaseline.version)
       : null;
 
-    if (plausiblePendingCount !== null && pending.length <= plausiblePendingCount) {
+    if (plausiblePendingCount !== null && actionablePending.length <= plausiblePendingCount) {
       console.warn(
-        `[Migration] Allowing ${pending.length} pending migrations on an existing database ` +
+        `[Migration] Allowing ${actionablePending.length} pending migrations on an existing database ` +
           `because the physical schema only proves ${physicalBaseline?.version} ` +
           `(${physicalBaseline?.description}).`
       );
@@ -949,7 +1047,7 @@ export function runMigrations(db: SqliteAdapter, options?: { isNewDb?: boolean }
             `migration(s) are expected from a legitimate upgrade.`
           : "";
       const msg =
-        `[Migration] 🛑 ABORT: Detected ${pending.length} pending migrations on an existing database ` +
+        `[Migration] 🛑 ABORT: Detected ${actionablePending.length} pending migrations on an existing database ` +
         `(threshold is ${MAX_PENDING_MIGRATIONS_ON_EXISTING_DB}). ` +
         `This usually means the migration tracking table was accidentally wiped. ` +
         `Running all migrations from scratch will cause data loss or schema errors.` +
@@ -969,6 +1067,10 @@ export function runMigrations(db: SqliteAdapter, options?: { isNewDb?: boolean }
   let count = 0;
 
   for (const migration of pending) {
+    if (isDeferredUnsupportedMigration(db, migration)) {
+      continue;
+    }
+
     const applyMigration = db.transaction(() => {
       if (isSchemaAlreadyApplied(db, migration)) {
         console.warn(

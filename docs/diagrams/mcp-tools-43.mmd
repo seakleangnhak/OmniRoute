@@ -1,5 +1,5 @@
 %% MCP Server tool inventory by category
-%% Reflects: open-sse/mcp-server/schemas/tools.ts + memoryTools + skillTools + notionTools
+%% Reflects: open-sse/mcp-server/tools/* and docs/MCP-SERVER.md
 %% v3.8.8
 flowchart LR
   MCP["MCP Server<br/>43 tools total"] --> Core["Core (30)"]
@@ -14,14 +14,14 @@ flowchart LR
   Core --> Compression["Compression (5)"]
   Core --> Tunnels["1Proxy / Tunnels (3)"]
 
-  Mem --> M1["memory_search"]
-  Mem --> M2["memory_add"]
-  Mem --> M3["memory_clear"]
+  Mem --> M1["omniroute_memory_search"]
+  Mem --> M2["omniroute_memory_add"]
+  Mem --> M3["omniroute_memory_clear"]
 
-  Skl --> S1["skills_list"]
-  Skl --> S2["skills_enable"]
-  Skl --> S3["skills_execute"]
-  Skl --> S4["skills_executions"]
+  Skl --> S1["omniroute_skills_list"]
+  Skl --> S2["omniroute_skills_enable"]
+  Skl --> S3["omniroute_skills_execute"]
+  Skl --> S4["omniroute_skills_executions"]
 
   Notion --> N1["notion_search"]
   Notion --> N2["notion_get_page"]

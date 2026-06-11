@@ -56,6 +56,13 @@ export interface RegistryModel {
   unsupportedParams?: readonly string[];
   /** Maximum context window in tokens */
   contextLength?: number;
+  /**
+   * Interleaved-reasoning signal, mirroring models.dev's `interleaved_field`.
+   * Set to "reasoning_content" for models whose upstream runs DeepSeek thinking
+   * mode (e.g. OpenCode `big-pickle`) so follow-up/tool-use turns replay
+   * reasoning_content instead of failing with a DeepSeek 400 (#2900).
+   */
+  interleavedField?: string;
 }
 
 // Reasoning models reject temperature, top_p, penalties, logprobs, n.
@@ -105,12 +112,20 @@ export interface RegistryEntry {
   modelsUrl?: string;
   /** Prefix to prepend to model IDs before upstream API calls (e.g. "accounts/fireworks/models/") */
   modelIdPrefix?: string;
+  /**
+   * Additional already-qualified model ID prefixes that must NOT receive `modelIdPrefix`
+   * (e.g. Fireworks router IDs "accounts/fireworks/routers/"). Prevents double-prefixing
+   * fully-qualified IDs that legitimately differ from `modelIdPrefix`. See issue #3133.
+   */
+  acceptedModelIdPrefixes?: string[];
   chatPath?: string;
   clientVersion?: string;
   timeoutMs?: number;
   passthroughModels?: boolean;
   /** Default context window for all models in this provider (can be overridden per-model) */
   defaultContextLength?: number;
+  /** Optional session pool config for rate limit management */
+  poolConfig?: Record<string, unknown>;
 }
 
 interface LegacyProvider {
@@ -190,6 +205,16 @@ const GPT_5_5_CODEX_CAPABILITIES = {
   supportsVision: true,
   supportsXHighEffort: true,
   contextLength: GPT_5_5_CONTEXT_LENGTH,
+} as const;
+
+const GPT_5_4_CODEX_CAPABILITIES = {
+  targetFormat: "openai-responses",
+  toolCalling: true,
+  supportsReasoning: true,
+  supportsVision: true,
+  supportsXHighEffort: true,
+  contextLength: 200000,
+  maxOutputTokens: 128000,
 } as const;
 
 const CHAT_OPENAI_COMPAT_MODELS: Record<string, RegistryModel[]> = {
@@ -631,10 +656,16 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     },
     oauth: {
       clientIdEnv: "CLAUDE_OAUTH_CLIENT_ID",
-      clientIdDefault: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
-      tokenUrl: "https://console.anthropic.com/v1/oauth/token",
+      clientIdDefault: resolvePublicCred("claude_id"),
+      tokenUrl: "https://api.anthropic.com/v1/oauth/token",
     },
     models: [
+      {
+        id: "claude-fable-5",
+        name: "Claude Fable 5",
+        contextLength: 1000000,
+        maxOutputTokens: 128000,
+      },
       {
         id: "claude-opus-4-8",
         name: "Claude Opus 4.8",
@@ -707,6 +738,43 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     models: [
       { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash", toolCalling: true, supportsVision: true },
       {
+        id: "gemini-3.1-pro-preview",
+        name: "Gemini 3.1 Pro Preview",
+        toolCalling: true,
+        supportsVision: true,
+      },
+      {
+        id: "gemini-3-flash-preview",
+        name: "Gemini 3 Flash Preview",
+        toolCalling: true,
+        supportsVision: true,
+      },
+      {
+        id: "gemini-3.1-flash-lite-preview",
+        name: "Gemini 3.1 Flash Lite Preview",
+        toolCalling: true,
+        supportsVision: true,
+      },
+      {
+        id: "gemini-3.5-flash",
+        name: "Gemini 3.5 Flash",
+        toolCalling: true,
+        supportsVision: true,
+      },
+      { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", toolCalling: true, supportsVision: true },
+      {
+        id: "gemini-2.5-flash",
+        name: "Gemini 2.5 Flash",
+        toolCalling: true,
+        supportsVision: true,
+      },
+      {
+        id: "gemini-2.5-flash-lite",
+        name: "Gemini 2.5 Flash Lite",
+        toolCalling: true,
+        supportsVision: true,
+      },
+      {
         id: "gemini-2.0-flash-thinking-exp-01-21",
         name: "Gemini 2.0 Flash Thinking",
         supportsReasoning: true,
@@ -766,7 +834,7 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     headers: getCodexDefaultHeaders(),
     oauth: {
       clientIdEnv: "CODEX_OAUTH_CLIENT_ID",
-      clientIdDefault: "app_EMoamEEZ73f0CkXaXp7hrann",
+      clientIdDefault: resolvePublicCred("codex_id"),
       clientSecretEnv: "CODEX_OAUTH_CLIENT_SECRET",
       clientSecretDefault: "",
       tokenUrl: "https://auth.openai.com/oauth/token",
@@ -814,9 +882,27 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
       {
         id: "gpt-5.4",
         name: "GPT 5.4",
-        targetFormat: "openai-responses",
-        supportsReasoning: true,
-        supportsXHighEffort: true,
+        ...GPT_5_4_CODEX_CAPABILITIES,
+      },
+      {
+        id: "gpt-5.4-xhigh",
+        name: "GPT 5.4 (xHigh)",
+        ...GPT_5_4_CODEX_CAPABILITIES,
+      },
+      {
+        id: "gpt-5.4-high",
+        name: "GPT 5.4 (High)",
+        ...GPT_5_4_CODEX_CAPABILITIES,
+      },
+      {
+        id: "gpt-5.4-medium",
+        name: "GPT 5.4 (Medium)",
+        ...GPT_5_4_CODEX_CAPABILITIES,
+      },
+      {
+        id: "gpt-5.4-low",
+        name: "GPT 5.4 (Low)",
+        ...GPT_5_4_CODEX_CAPABILITIES,
       },
       { id: "gpt-5.4-mini", name: "GPT 5.4 Mini", targetFormat: "openai-responses" },
       { id: "gpt-5.3-codex-spark", name: "GPT 5.3 Codex Spark" },
@@ -842,7 +928,7 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     headers: getQwenOauthHeaders(),
     oauth: {
       clientIdEnv: "QWEN_OAUTH_CLIENT_ID",
-      clientIdDefault: "f0304373b74a44d2b584a3fb70ca9e56",
+      clientIdDefault: resolvePublicCred("qwen_id"),
       tokenUrl: "https://chat.qwen.ai/api/v1/oauth2/token",
       authUrl: "https://chat.qwen.ai/api/v1/oauth2/device/code",
     },
@@ -955,7 +1041,12 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
       { id: "gpt-5-mini", name: "GPT-5 Mini", targetFormat: "openai-responses" },
       { id: "gpt-5.3-codex", name: "GPT-5.3 Codex", targetFormat: "openai-responses" },
       { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", targetFormat: "openai-responses" },
-      { id: "gpt-5.4", name: "GPT-5.4", targetFormat: "openai-responses" },
+      {
+        id: "gpt-5.4",
+        name: "GPT-5.4",
+        targetFormat: "openai-responses",
+        supportsXHighEffort: true,
+      },
       { id: "gpt-5.5", name: "GPT-5.5", ...GPT_5_5_CODEX_CAPABILITIES },
       {
         id: "claude-haiku-4.5",
@@ -976,9 +1067,10 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
         maxOutputTokens: 64000,
       },
       {
+        // #2911: GitHub Copilot's Responses API does not serve Claude/Gemini —
+        // route them via chat/completions (provider default) like claude-opus-4.6.
         id: "claude-opus-4-5-20251101",
         name: "Claude Opus 4.5 (Full ID)",
-        targetFormat: "openai-responses",
         contextLength: 200000,
         maxOutputTokens: 64000,
       },
@@ -989,14 +1081,15 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
         maxOutputTokens: 128000,
       },
       {
+        // #2911: Claude on Copilot must use chat/completions, not the Responses API.
         id: "claude-opus-4.7",
         name: "Claude Opus 4.7",
-        targetFormat: "openai-responses",
         contextLength: 1000000,
         maxOutputTokens: 128000,
       },
-      { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro", targetFormat: "openai-responses" },
-      { id: "gemini-3-flash-preview", name: "Gemini 3 Flash", targetFormat: "openai-responses" },
+      // #2911: Gemini on Copilot must use chat/completions, not the Responses API.
+      { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro" },
+      { id: "gemini-3-flash-preview", name: "Gemini 3 Flash" },
       { id: "oswe-vscode-prime", name: "Raptor Mini", targetFormat: "openai-responses" },
       //{ id: "?", name: "Goldeneye" },
     ],
@@ -1055,6 +1148,18 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     },
     models: [
       { id: "auto-kiro", name: "Auto (Kiro picks best model)" },
+      {
+        id: "claude-fable-5",
+        name: "Claude Fable 5",
+        contextLength: 1000000,
+        maxOutputTokens: 128000,
+      },
+      {
+        id: "claude-opus-4.8",
+        name: "Claude Opus 4.8",
+        contextLength: 1000000,
+        maxOutputTokens: 128000,
+      },
       {
         id: "claude-opus-4.7",
         name: "Claude Opus 4.7",
@@ -1135,6 +1240,8 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
       { id: "work", name: "Work (Auto · fast)" },
       { id: "gemini-3.1-pro", name: "Gemini 3.1 Pro" },
       { id: "gemini-3-flash-solo", name: "Gemini 3 Flash" },
+      // #3110: MiniMax M3 via Trae
+      { id: "minimax-m3", name: "MiniMax M3", contextLength: 1048576, supportsVision: true },
       { id: "minimax-m2.7", name: "MiniMax M2.7" },
       { id: "kimi-k2.5", name: "Kimi K2.5" },
       { id: "gpt-5.4", name: "GPT 5.4" },
@@ -1311,7 +1418,25 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     passthroughModels: true,
     defaultContextLength: 200000,
     models: [
-      { id: "big-pickle", name: "Big Pickle" },
+      // #2900: big-pickle's upstream runs DeepSeek thinking mode — declare the
+      // interleaved reasoning_content contract so follow-up/tool-use turns replay
+      // it (otherwise DeepSeek returns 400 "reasoning_content ... must be passed back").
+      {
+        id: "big-pickle",
+        name: "Big Pickle",
+        supportsReasoning: true,
+        interleavedField: "reasoning_content",
+      },
+      { id: "deepseek-v4-flash-free", name: "DeepSeek V4 Flash Free", supportsReasoning: true },
+      // #3110: MiniMax M3 free tier via OpenCode
+      // #3328: MiniMax M3 is multimodal (verified: describes base64 images via the
+      // opencode upstream) — flag it so vision requests aren't gated/stripped.
+      {
+        id: "minimax-m3-free",
+        name: "MiniMax M3 Free",
+        contextLength: 1048576,
+        supportsVision: true,
+      },
       { id: "minimax-m2.5-free", name: "MiniMax M2.5 Free", contextLength: 204800 },
       { id: "ling-2.6-1t-free", name: "Ling 2.6 Free", contextLength: 262000 },
       {
@@ -1320,6 +1445,13 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
         contextLength: 131000,
       },
       { id: "nemotron-3-super-free", name: "Nemotron 3 Super Free", contextLength: 1000000 },
+      {
+        id: "qwen3.6-plus-free",
+        name: "Qwen3.6 Plus Free",
+        targetFormat: "claude",
+        supportsVision: false,
+        contextLength: 200000,
+      },
     ],
   },
 
@@ -1344,6 +1476,14 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
       { id: "mimo-v2.5", name: "MiMo-V2.5" },
       { id: "mimo-v2-pro", name: "MiMo-V2-Pro" },
       { id: "mimo-v2-omni", name: "MiMo-V2-Omni" },
+      // #3110: MiniMax M3 via OpenCode Go tier
+      {
+        id: "minimax-m3",
+        name: "MiniMax M3",
+        targetFormat: "claude",
+        contextLength: 1048576,
+        supportsVision: true,
+      },
       { id: "minimax-m2.7", name: "MiniMax M2.7", targetFormat: "claude" },
       { id: "minimax-m2.5", name: "MiniMax M2.5", targetFormat: "claude" },
       // Issue #2292: Qwen models on opencode-go reject oa-compat format
@@ -1378,7 +1518,15 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     passthroughModels: true,
     models: [
       // ── Chat / Coding ──────────────────────────────────────────
-      { id: "big-pickle", name: "Big Pickle" },
+      // #2900: big-pickle's upstream runs DeepSeek thinking mode — declare the
+      // interleaved reasoning_content contract so follow-up/tool-use turns replay
+      // it (otherwise DeepSeek returns 400 "reasoning_content ... must be passed back").
+      {
+        id: "big-pickle",
+        name: "Big Pickle",
+        supportsReasoning: true,
+        interleavedField: "reasoning_content",
+      },
       { id: "gpt-5-nano", name: "GPT 5 Nano", contextLength: 400000 },
       { id: "gpt-5", name: "GPT 5" },
       { id: "gpt-5-codex", name: "GPT 5 Codex" },
@@ -1420,6 +1568,8 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
       { id: "glm-5.1", name: "GLM-5.1" },
 
       // ── MiniMax ────────────────────────────────────────────────
+      // #3110: MiniMax M3 — frontier coding model with 1M context
+      { id: "minimax-m3", name: "MiniMax M3", contextLength: 1048576, supportsVision: true },
       { id: "minimax-m2.5", name: "MiniMax M2.5" },
       { id: "minimax-m2.7", name: "MiniMax M2.7" },
 
@@ -1490,6 +1640,7 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     executor: "command-code",
     baseUrl: "https://api.commandcode.ai",
     chatPath: "/alpha/generate",
+    modelsUrl: "https://api.commandcode.ai/provider/v1/models",
     authType: "apikey",
     authHeader: "Authorization",
     authPrefix: "Bearer ",
@@ -1819,7 +1970,7 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     authType: "oauth",
     oauth: {
       clientIdEnv: "KIMI_CODING_OAUTH_CLIENT_ID",
-      clientIdDefault: "17e5f671-d194-4dfb-9706-5516cb48c098",
+      clientIdDefault: resolvePublicCred("kimi_id"),
       tokenUrl: "https://auth.kimi.com/api/oauth/token",
       refreshUrl: "https://auth.kimi.com/api/oauth/token",
       authUrl: "https://auth.kimi.com/api/oauth/device_authorization",
@@ -1836,8 +1987,8 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
   kilocode: {
     id: "kilocode",
     alias: "kc",
-    format: "openrouter",
-    executor: "openrouter",
+    format: "openai",
+    executor: "default",
     baseUrl: "https://api.kilo.ai/api/openrouter/chat/completions",
     modelsUrl: "https://api.kilo.ai/api/openrouter/models",
     authType: "oauth",
@@ -2101,6 +2252,8 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     },
     models: [
       // T12/T28: MiniMax default upgraded from M2.5 to M2.7
+      // #3110: MiniMax M3 — frontier coding model with 1M context
+      { id: "MiniMax-M3", name: "MiniMax M3", contextLength: 1048576, supportsVision: true },
       { id: "MiniMax-M2.7", name: "MiniMax M2.7" },
       { id: "MiniMax-M2.7-highspeed", name: "MiniMax M2.7 Highspeed" },
       { id: "MiniMax-M2.5", name: "MiniMax M2.5" },
@@ -2122,6 +2275,8 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     },
     models: [
       // Keep parity with minimax to ensure model discovery works for minimax-cn connections.
+      // #3110: MiniMax M3 — frontier coding model with 1M context
+      { id: "MiniMax-M3", name: "MiniMax M3", contextLength: 1048576, supportsVision: true },
       { id: "MiniMax-M2.7", name: "MiniMax M2.7" },
       { id: "MiniMax-M2.7-highspeed", name: "MiniMax M2.7 Highspeed" },
       { id: "MiniMax-M2.5", name: "MiniMax M2.5" },
@@ -2251,8 +2406,13 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     authType: "apikey",
     authHeader: "bearer",
     models: [
-      { id: "meta-llama/llama-4-scout-17b-16e-instruct", name: "Llama 4 Scout" },
-      { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B" },
+      // Non-reasoning Llama models: Groq returns HTTP 400 if reasoning_effort is sent (#3258).
+      {
+        id: "meta-llama/llama-4-scout-17b-16e-instruct",
+        name: "Llama 4 Scout",
+        supportsReasoning: false,
+      },
+      { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B", supportsReasoning: false },
       { id: "openai/gpt-oss-120b", name: "GPT-OSS 120B" },
       { id: "openai/gpt-oss-20b", name: "GPT-OSS 20B" },
       { id: "qwen/qwen3-32b", name: "Qwen3 32B" },
@@ -2315,17 +2475,6 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     models: [{ id: "auto", name: "Auto" }],
   },
 
-  lepton: {
-    id: "lepton",
-    alias: "lepton",
-    format: "openai",
-    executor: "default",
-    baseUrl: "https://api.lepton.ai/v1/chat/completions",
-    authType: "apikey",
-    authHeader: "bearer",
-    models: [{ id: "llama-3.1-8b", name: "Llama 3.1 8B" }],
-  },
-
   kluster: {
     id: "kluster",
     alias: "kluster",
@@ -2337,17 +2486,6 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     models: [{ id: "auto", name: "Auto" }],
   },
 
-  krutrim: {
-    id: "krutrim",
-    alias: "krutrim",
-    format: "openai",
-    executor: "default",
-    baseUrl: "https://api.krutrim.com/v1/chat/completions",
-    authType: "apikey",
-    authHeader: "bearer",
-    models: [{ id: "krutrim-2-7b-instruct", name: "Krutrim 2 7B" }],
-  },
-
   liquid: {
     id: "liquid",
     alias: "liquid",
@@ -2357,17 +2495,6 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     authType: "apikey",
     authHeader: "bearer",
     models: [{ id: "liquid-lfm-40b", name: "Liquid LFM 40B" }],
-  },
-
-  nomic: {
-    id: "nomic",
-    alias: "nomic",
-    format: "openai",
-    executor: "default",
-    baseUrl: "https://api.nomic.ai/v1/chat/completions",
-    authType: "apikey",
-    authHeader: "bearer",
-    models: [{ id: "nomic-embed-text-v1.5", name: "Nomic Embed Text" }],
   },
 
   monsterapi: {
@@ -2407,17 +2534,6 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     ],
   },
 
-  poolside: {
-    id: "poolside",
-    alias: "poolside",
-    format: "openai",
-    executor: "default",
-    baseUrl: "https://api.poolside.ai/v1/chat/completions",
-    authType: "apikey",
-    authHeader: "bearer",
-    models: [{ id: "poolside-model", name: "Poolside Model" }],
-  },
-
   chutes: {
     id: "chutes",
     alias: "chutes",
@@ -2442,7 +2558,9 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
 
   huggingchat: {
     id: "huggingchat",
-    alias: "hc",
+    // Distinct alias: "hc" belongs to the hackclub provider; huggingchat is
+    // addressed by its own id to avoid the alias collision.
+    alias: "huggingchat",
     format: "openai",
     executor: "huggingchat",
     baseUrl: "https://huggingface.co/chat/conversation",
@@ -2605,6 +2723,8 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
       { id: "glm-5", name: "GLM 5" },
       { id: "mimo-v2.5-pro", name: "MiMo-V2.5-Pro" },
       { id: "mimo-v2.5", name: "MiMo-V2.5" },
+      // #3110: MiniMax M3 via OpenCode Zen
+      { id: "minimax-m3", name: "MiniMax M3", contextLength: 1048576, supportsVision: true },
       { id: "minimax-m2.7", name: "MiniMax M2.7" },
       { id: "minimax-m2.5", name: "MiniMax M2.5" },
       { id: "llama-4-maverick", name: "Llama 4 Maverick" },
@@ -2615,54 +2735,6 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
       { id: "mistral-medium-3.1", name: "Mistral Medium 3.1" },
       { id: "mistral-small-2603", name: "Mistral Small 4" },
       { id: "nemotron-3-super-120b-a12b", name: "Nemotron 3 Super" },
-    ],
-  },
-  completions: {
-    id: "completions",
-    alias: "cpl",
-    format: "openai",
-    executor: "default",
-    baseUrl: "https://completions.me/api/v1/chat/completions",
-    authType: "apikey",
-    authHeader: "bearer",
-    models: [
-      { id: "claude-opus-4.6", name: "Claude Opus 4.6" },
-      { id: "claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
-      { id: "claude-haiku-4.5", name: "Claude Haiku 4.5" },
-      { id: "gpt-5.2", name: "GPT-5.2" },
-      { id: "gpt-5-mini", name: "GPT-5 Mini" },
-      { id: "gpt-4.1", name: "GPT-4.1" },
-      { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro" },
-      { id: "gemini-3-flash-preview", name: "Gemini 3 Flash" },
-    ],
-  },
-  enally: {
-    id: "enally",
-    alias: "enly",
-    format: "openai",
-    executor: "default",
-    baseUrl: "https://ai.enally.in",
-    authType: "apikey",
-    authHeader: "X-API-Key",
-    models: [
-      { id: "default", name: "Default Model" },
-      { id: "chat", name: "Chat Model" },
-      { id: "reasoning", name: "Reasoning Model" },
-      { id: "multimodal", name: "Multimodal Model" },
-    ],
-  },
-  freetheai: {
-    id: "freetheai",
-    alias: "fta",
-    format: "openai",
-    executor: "default",
-    baseUrl: "https://api.freetheai.xyz/v1/chat/completions",
-    authType: "apikey",
-    authHeader: "bearer",
-    models: [
-      { id: "free-fast", name: "Free Fast (Low Latency)" },
-      { id: "free-smart", name: "Free Smart (Reasoning)" },
-      { id: "free", name: "Free (Max Uptime)" },
     ],
   },
   xai: {
@@ -2978,16 +3050,15 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
 
   "claude-web": {
     id: "claude-web",
-    alias: "claude-web",
+    alias: "cw",
     format: "openai",
     executor: "claude-web",
     baseUrl: "https://claude.ai/api/organizations",
     authType: "apikey",
     authHeader: "cookie",
     models: [
-      { id: "claude-3-opus-20250219", name: "Claude 3 Opus (web)" },
-      { id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet (web)" },
-      { id: "claude-3-5-haiku-20241022", name: "Claude 3.5 Haiku (web)" },
+      { id: "claude-sonnet-4-6", name: "Claude 4.6 Sonnet (web)" },
+      { id: "claude-haiku-4-5", name: "Claude 4.5 Haiku (web)" },
     ],
   },
 
@@ -3069,6 +3140,7 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     modelsUrl:
       "https://api.fireworks.ai/v1/accounts/fireworks/models?filter=supports_serverless=true",
     modelIdPrefix: "accounts/fireworks/models/",
+    acceptedModelIdPrefixes: ["accounts/fireworks/models/", "accounts/fireworks/routers/"],
     authType: "apikey",
     authHeader: "bearer",
     models: [
@@ -3123,6 +3195,8 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
       { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", supportsReasoning: true },
       { id: "kimi-k2.6", name: "Kimi K2.6" },
       { id: "glm-5.1", name: "GLM 5.1" },
+      // #3110: MiniMax M3 via Ollama
+      { id: "minimax-m3", name: "MiniMax M3", contextLength: 1048576, supportsVision: true },
       { id: "minimax-m2.7", name: "MiniMax M2.7" },
       { id: "gemma4:31b", name: "Gemma 4 31B" },
       { id: "nemotron-3-super", name: "NVIDIA Nemotron 3 Super" },
@@ -3168,6 +3242,9 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     authHeader: "bearer",
     models: [
       { id: "z-ai/glm-5.1", name: "GLM 5.1" },
+      // #3329: minimaxai/minimax-m3 removed — NVIDIA NIM does not host it yet
+      // (every request 404s), while minimax-m2.7 on the same provider works.
+      // Re-add only once NVIDIA actually serves it.
       { id: "minimaxai/minimax-m2.7", name: "MiniMax M2.7" },
       { id: "google/gemma-4-31b-it", name: "Gemma 4 31B" },
       { id: "mistralai/mistral-small-4-119b-2603", name: "Mistral Small 4 2603" },
@@ -3445,13 +3522,11 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     alias: "pol",
     format: "openai",
     executor: "pollinations",
-    // Primary endpoint is text.pollinations.ai. gen.pollinations.ai is the current
-    // OpenAI-compatible fallback used when the primary edge is rate-limited or unavailable.
-    baseUrl: "https://text.pollinations.ai/openai/chat/completions",
-    baseUrls: [
-      "https://text.pollinations.ai/openai/chat/completions",
-      "https://gen.pollinations.ai/v1/chat/completions",
-    ],
+    // #2987: Pollinations retired the legacy text.pollinations.ai host (it now
+    // returns 404 "This is our legacy API"). The current OpenAI-compatible gateway
+    // is gen.pollinations.ai/v1, so route there as the primary endpoint.
+    baseUrl: "https://gen.pollinations.ai/v1/chat/completions",
+    baseUrls: ["https://gen.pollinations.ai/v1/chat/completions"],
     authType: "apikey",
     authHeader: "bearer",
     models: [
@@ -3611,43 +3686,6 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
       },
       { id: "qwen3.6:27b", name: "Qwen3 Coder 27B (🆓 Free)" },
       { id: "gemma4:31b", name: "Gemma 4 31B (🆓 Free)" },
-    ],
-  },
-
-  replicate: {
-    id: "replicate",
-    alias: "rep",
-    format: "openai",
-    executor: "default",
-    baseUrl: "https://openai-proxy.replicate.com/v1/chat/completions",
-    modelsUrl: "https://openai-proxy.replicate.com/v1/models",
-    authType: "apikey",
-    authHeader: "Authorization",
-    authPrefix: "Bearer",
-    passthroughModels: true,
-    defaultContextLength: 128000,
-    models: [
-      {
-        id: "meta/meta-llama-3.1-405b-instruct",
-        name: "Llama 3.1 405B Instruct (Free)",
-        contextLength: 128000,
-      },
-      {
-        id: "meta/meta-llama-3.1-70b-instruct",
-        name: "Llama 3.1 70B Instruct (Free)",
-        contextLength: 128000,
-      },
-      {
-        id: "mistralai/mixtral-8x7b-instruct-v0.1",
-        name: "Mixtral 8x7B Instruct (Free)",
-        contextLength: 32768,
-      },
-      {
-        id: "deepseek-ai/deepseek-r1",
-        name: "DeepSeek R1 (Free)",
-        contextLength: 65536,
-        supportsReasoning: true,
-      },
     ],
   },
 
@@ -3935,7 +3973,9 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
 
   "kimi-web": {
     id: "kimi-web",
-    alias: "kimi",
+    // Distinct alias: the primary "kimi" provider (dedicated KimiExecutor) keeps
+    // the short "kimi" alias; this web/cookie variant is addressed by its own id.
+    alias: "kimi-web",
     format: "openai",
     executor: "kimi-web",
     baseUrl: "https://kimi.moonshot.cn/api/chat",
@@ -3958,6 +3998,28 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     models: [
       { id: "doubao-default", name: "Doubao Default" },
       { id: "doubao-pro", name: "Doubao Pro" },
+    ],
+  },
+
+  "qwen-web": {
+    id: "qwen-web",
+    // Distinct alias: the primary "qwen" provider keeps the short "qw" alias;
+    // this web/cookie variant is addressed by its own id.
+    alias: "qwen-web",
+    format: "openai",
+    executor: "qwen-web",
+    baseUrl: "https://chat.qwen.ai/api/chat/completions",
+    authType: "apikey",
+    authHeader: "bearer",
+    models: [
+      { id: "qwen-plus", name: "Qwen Plus" },
+      { id: "qwen-max", name: "Qwen Max" },
+      { id: "qwen-turbo", name: "Qwen Turbo" },
+      { id: "qwen3-plus", name: "Qwen3 Plus" },
+      { id: "qwen3-max", name: "Qwen3 Max" },
+      { id: "qwen3-flash", name: "Qwen3 Flash" },
+      { id: "qwen3-coder-plus", name: "Qwen3 Coder Plus" },
+      { id: "qwen3-coder-flash", name: "Qwen3 Coder Flash" },
     ],
   },
 
@@ -4098,6 +4160,15 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     modelsUrl: "https://api.llm7.io/v1/models",
     authType: "apikey",
     authHeader: "bearer",
+    poolConfig: {
+      minSessions: 1,
+      maxSessions: 3,
+      cooldownBase: 2000,
+      cooldownMax: 5000,
+      cooldownJitter: 100,
+      requestTimeout: 30000,
+      requestJitter: 50,
+    },
     models: [
       { id: "gpt-4o-mini-2024-07-18", name: "GPT-4o mini (LLM7)" },
       { id: "gpt-4.1-nano-2025-04-14", name: "GPT-4.1 nano (LLM7)" },
@@ -4245,6 +4316,128 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
         contextLength: 128000,
       },
     ],
+  },
+
+  zenmux: {
+    id: "zenmux",
+    alias: "zm",
+    format: "openai",
+    executor: "default",
+    baseUrl: "https://zenmux.ai/api/v1/chat/completions",
+    modelsUrl: "https://zenmux.ai/api/v1/models",
+    authType: "apikey",
+    authHeader: "bearer",
+    defaultContextLength: 128000,
+    models: [
+      {
+        id: "google/gemini-3.1-pro-preview",
+        name: "Gemini 3.1 Pro Preview (ZenMux)",
+        contextLength: 1048576,
+        supportsVision: true,
+        toolCalling: true,
+        supportsReasoning: true,
+      },
+      {
+        id: "google/gemini-3-flash-preview",
+        name: "Gemini 3 Flash Preview (ZenMux)",
+        contextLength: 1048576,
+        supportsVision: true,
+        toolCalling: true,
+        supportsReasoning: true,
+      },
+      {
+        id: "openai/gpt-5",
+        name: "GPT-5 (ZenMux)",
+        contextLength: 400000,
+        supportsVision: true,
+        toolCalling: true,
+        supportsReasoning: true,
+      },
+      {
+        id: "anthropic/claude-sonnet-4.5",
+        name: "Claude Sonnet 4.5 (ZenMux)",
+        contextLength: 200000,
+        supportsVision: true,
+        toolCalling: true,
+        supportsReasoning: true,
+      },
+      {
+        id: "anthropic/claude-opus-4.5",
+        name: "Claude Opus 4.5 (ZenMux)",
+        contextLength: 200000,
+        supportsVision: true,
+        toolCalling: true,
+        supportsReasoning: true,
+      },
+      {
+        id: "deepseek/deepseek-chat",
+        name: "DeepSeek V3.2 Chat (ZenMux)",
+        contextLength: 128000,
+        supportsVision: false,
+        toolCalling: true,
+        supportsReasoning: false,
+      },
+      {
+        id: "x-ai/grok-4.1-fast",
+        name: "Grok 4.1 Fast (ZenMux)",
+        contextLength: 131072,
+        supportsVision: false,
+        toolCalling: true,
+        supportsReasoning: true,
+      },
+      {
+        id: "mistralai/mistral-large-2512",
+        name: "Mistral Large 2512 (ZenMux)",
+        contextLength: 128000,
+        supportsVision: true,
+        toolCalling: true,
+        supportsReasoning: false,
+      },
+      {
+        id: "z-ai/glm-4.6v-flash",
+        name: "GLM 4.6V Flash (ZenMux)",
+        contextLength: 128000,
+        supportsVision: true,
+        toolCalling: true,
+        supportsReasoning: false,
+      },
+    ],
+  },
+
+  theoldllm: {
+    id: "theoldllm",
+    alias: "tllm",
+    format: "openai",
+    executor: "theoldllm",
+    // Playwright-backed executor — no standard auth; uses embedded browser for token generation
+    baseUrl: "https://theoldllm.vercel.app/api/chatgpt",
+    baseUrls: ["https://theoldllm.vercel.app/api/chatgpt"],
+    authType: "none",
+    authHeader: "none",
+    models: [
+      { id: "GPT_5_4", name: "GPT-5.4 (The Old LLM 🆓)" },
+      { id: "GPT_4o", name: "GPT-4o (The Old LLM 🆓)" },
+      { id: "claude_opus_4", name: "Claude Opus 4 (The Old LLM 🆓)" },
+      { id: "claude_sonnet_4", name: "Claude Sonnet 4 (The Old LLM 🆓)" },
+      { id: "claude_haiku_3_5", name: "Claude Haiku 3.5 (The Old LLM 🆓)" },
+      { id: "deepseek_v4", name: "DeepSeek V4 (The Old LLM 🆓)" },
+      { id: "gemini_3_flash", name: "Gemini 3 Flash (The Old LLM 🆓)" },
+      { id: "gemini_3_pro", name: "Gemini 3 Pro (The Old LLM 🆓)" },
+    ],
+    passthroughModels: true,
+  },
+
+  chipotle: {
+    id: "chipotle",
+    alias: "pepper",
+    format: "openai",
+    executor: "chipotle",
+    baseUrl: "https://amelia.chipotle.com",
+    baseUrls: ["https://amelia.chipotle.com"],
+    authType: "none",
+    authHeader: "none",
+    models: [{ id: "pepper-1", name: "Pepper (Chipotle AI 🌯)" }],
+    passthroughModels: true,
   },
 };
 

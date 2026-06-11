@@ -8,6 +8,7 @@ const { VeniceWebExecutor } = await import("../../open-sse/executors/venice-web.
 const { V0VercelWebExecutor } = await import("../../open-sse/executors/v0-vercel-web.ts");
 const { KimiWebExecutor } = await import("../../open-sse/executors/kimi-web.ts");
 const { DoubaoWebExecutor } = await import("../../open-sse/executors/doubao-web.ts");
+const { QwenWebExecutor } = await import("../../open-sse/executors/qwen-web.ts");
 const { getExecutor, hasSpecializedExecutor } = await import("../../open-sse/executors/index.ts");
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -173,6 +174,22 @@ test("Kimi Web sets correct provider", () => {
 test("Doubao Web sets correct provider", () => {
   const executor = new DoubaoWebExecutor();
   assert.equal(executor.getProvider(), "doubao-web");
+});
+
+// ── Registration Tests (Qwen Web) ────────────────────────────────────────────
+
+test("Qwen Web executor is registered", () => {
+  assert.ok(hasSpecializedExecutor("qwen-web"));
+  assert.ok(hasSpecializedExecutor("qw"));
+  const executor = getExecutor("qwen-web");
+  assert.ok(executor instanceof QwenWebExecutor);
+});
+
+// ── Constructor Tests (Qwen Web) ─────────────────────────────────────────────
+
+test("Qwen Web sets correct provider", () => {
+  const executor = new QwenWebExecutor();
+  assert.equal(executor.getProvider(), "qwen-web");
 });
 
 // ── HuggingChat Execution Tests ──────────────────────────────────────────────
@@ -373,9 +390,7 @@ test("Poe Web: sends p-b cookie in header", async () => {
 // ── Venice Web Execution Tests ───────────────────────────────────────────────
 
 test("Venice Web: streaming passes through SSE", async () => {
-  const sseData = [
-    'data: {"choices":[{"delta":{"content":"Hello"}}]}',
-  ];
+  const sseData = ['data: {"choices":[{"delta":{"content":"Hello"}}]}'];
   const restore = mockFetchCapture(200, mockSSEStream(sseData));
   try {
     const executor = new VeniceWebExecutor();
@@ -405,9 +420,7 @@ test("Venice Web: error response returns error result", async () => {
 // ── v0 Vercel Web Execution Tests ────────────────────────────────────────────
 
 test("v0 Vercel Web: streaming passes through SSE", async () => {
-  const sseData = [
-    'data: {"choices":[{"delta":{"content":"function hello() {}"}}]}',
-  ];
+  const sseData = ['data: {"choices":[{"delta":{"content":"function hello() {}"}}]}'];
   const restore = mockFetchCapture(200, mockSSEStream(sseData));
   try {
     const executor = new V0VercelWebExecutor();
@@ -437,9 +450,7 @@ test("v0 Vercel Web: error response returns error result", async () => {
 // ── Kimi Web Execution Tests ─────────────────────────────────────────────────
 
 test("Kimi Web: streaming passes through SSE", async () => {
-  const sseData = [
-    'data: {"choices":[{"delta":{"content":"你好"}}]}',
-  ];
+  const sseData = ['data: {"choices":[{"delta":{"content":"你好"}}]}'];
   const restore = mockFetchCapture(200, mockSSEStream(sseData));
   try {
     const executor = new KimiWebExecutor();
@@ -469,9 +480,7 @@ test("Kimi Web: error response returns error result", async () => {
 // ── Doubao Web Execution Tests ───────────────────────────────────────────────
 
 test("Doubao Web: streaming passes through SSE", async () => {
-  const sseData = [
-    'data: {"choices":[{"delta":{"content":"你好世界"}}]}',
-  ];
+  const sseData = ['data: {"choices":[{"delta":{"content":"你好世界"}}]}'];
   const restore = mockFetchCapture(200, mockSSEStream(sseData));
   try {
     const executor = new DoubaoWebExecutor();

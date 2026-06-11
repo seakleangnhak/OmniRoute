@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getEmbeddingProvider } from "@omniroute/open-sse/config/embeddingRegistry.ts";
 import { getRerankProvider } from "@omniroute/open-sse/config/rerankRegistry.ts";
 import { getRegistryEntry } from "@omniroute/open-sse/config/providerRegistry.ts";
+import { selectProxyForValidation } from "@omniroute/open-sse/services/proxyAutoSelector.ts";
 import {
   buildClaudeCodeCompatibleHeaders,
   buildClaudeCodeCompatibleValidationPayload,
@@ -26,9 +27,14 @@ import {
   getSafeOutboundFetchErrorStatus,
   safeOutboundFetch,
 } from "@/shared/network/safeOutboundFetch";
-import { getProviderOutboundGuard } from "@/shared/network/outboundUrlGuard";
-import { extractCookieValue, normalizeSessionCookieHeader } from "@/lib/providers/webCookieAuth";
+import { getProviderOutboundGuard, isPrivateHost } from "@/shared/network/outboundUrlGuard";
+import {
+  buildGrokCookieHeader,
+  extractCookieValue,
+  normalizeSessionCookieHeader,
+} from "@/lib/providers/webCookieAuth";
 import { buildJulesApiUrl } from "@/lib/cloudAgent/julesApi.ts";
+import { resolveNvidiaValidationModel } from "@/lib/providers/nvidiaValidationModel";
 import { getGigachatAccessToken } from "@omniroute/open-sse/services/gigachatAuth.ts";
 import { validateQoderCliPat } from "@omniroute/open-sse/services/qoderCli.ts";
 import {
@@ -69,7 +75,6 @@ import {
   buildRunwayHeaders,
   normalizeRunwayBaseUrl,
 } from "@omniroute/open-sse/config/runway.ts";
-import { PETALS_DEFAULT_MODEL, normalizePetalsBaseUrl } from "@omniroute/open-sse/config/petals.ts";
 import {
   buildMaritalkChatUrl,
   buildMaritalkModelsUrl,
@@ -108,6 +113,9 @@ function addModelsSuffix(baseUrl: string) {
   if (!normalized) return "";
 
   const suffixes = ["/chat/completions", "/responses", "/chat", "/messages"];
+  if (normalized.endsWith("/models")) {
+    return normalized;
+  }
   for (const suffix of suffixes) {
     if (normalized.endsWith(suffix)) {
       return `${normalized.slice(0, -suffix.length)}/models`;
@@ -206,6 +214,32 @@ function withCustomUserAgent(init: RequestInit, providerSpecificData: any = {}) 
   };
 }
 
+/**
+ * Direct HTTPS request utility that bypasses the global patched fetch.
+ * Used for provider validation where the patched fetch has compatibility issues.
+ * Uses safeOutboundFetch with bypassProxyPatch to use native Node.js fetch directly.
+ */
+function directHttpsRequest(
+  url: string,
+  options: { method?: string; headers?: Record<string, string>; body?: string },
+  timeoutMs: number
+): Promise<{ status: number; ok: boolean; text: () => Promise<string> }> {
+  return safeOutboundFetch(url, {
+    method: options.method || "GET",
+    headers: (options.headers || {}) as Record<string, string>,
+    body: options.body,
+    timeoutMs,
+    bypassProxyPatch: true,
+    allowRedirect: true,
+    guard: "none",
+    retry: false,
+  }).then(async (response) => ({
+    status: response.status,
+    ok: response.ok,
+    text: async () => await response.text(),
+  }));
+}
+
 function buildBearerHeaders(apiKey: string, providerSpecificData: any = {}) {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -265,20 +299,64 @@ function buildTokenHeaders(apiKey: string, providerSpecificData: any = {}) {
   return applyCustomUserAgent(headers, providerSpecificData);
 }
 
+/**
+ * Wrapped fetch call that auto-retries with a proxy when the direct connection
+ * fails.  This happens transparently so individual validators don't need to
+ * think about proxy fallback.
+ */
+async function fetchWithProxyFallback(
+  url: string,
+  init: RequestInit,
+  presets: typeof SAFE_OUTBOUND_FETCH_PRESETS.validationRead,
+  isLocal: boolean
+): Promise<Response> {
+  try {
+    return await safeOutboundFetch(url, {
+      ...presets,
+      guard: isLocal ? "none" : getProviderOutboundGuard(),
+      ...init,
+    });
+  } catch (err: unknown) {
+    // Only attempt proxy fallback for retryable errors (network / timeout)
+    // and only when the target is not a local / LAN address.
+    const fetchErr = err as SafeOutboundFetchError;
+    const isNetworkIssue = fetchErr?.code === "NETWORK_ERROR" || fetchErr?.code === "TIMEOUT";
+    const isRetryable = fetchErr?.isRetryable !== false;
+    const isValidTarget = !isLocal && isRetryableProxyTarget(url);
+
+    if (isLocal || !isNetworkIssue || !isRetryable) throw err;
+    if (!isValidTarget) throw err;
+
+    const proxyUrl = await selectProxyForValidation(url);
+    if (!proxyUrl) throw err;
+
+    return safeOutboundFetch(url, {
+      ...presets,
+      guard: isLocal ? "none" : getProviderOutboundGuard(),
+      ...init,
+      proxyConfig: proxyUrl,
+    });
+  }
+}
+
+export function isRetryableProxyTarget(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    // Never proxy-fallback to a private/link-local/metadata host. Delegates to
+    // the canonical SSRF guard (covers 169.254, 0.0.0.0, 172.16/12, CGNAT,
+    // IPv6 fc/fd/fe80, .internal — gaps the previous inline check missed).
+    return !isPrivateHost(hostname);
+  } catch {
+    return false;
+  }
+}
+
 async function validationRead(url: string, init: RequestInit, isLocal: boolean = false) {
-  return safeOutboundFetch(url, {
-    ...SAFE_OUTBOUND_FETCH_PRESETS.validationRead,
-    guard: isLocal ? "none" : getProviderOutboundGuard(),
-    ...init,
-  });
+  return fetchWithProxyFallback(url, init, SAFE_OUTBOUND_FETCH_PRESETS.validationRead, isLocal);
 }
 
 async function validationWrite(url: string, init: RequestInit, isLocal: boolean = false) {
-  return safeOutboundFetch(url, {
-    ...SAFE_OUTBOUND_FETCH_PRESETS.validationWrite,
-    guard: isLocal ? "none" : getProviderOutboundGuard(),
-    ...init,
-  });
+  return fetchWithProxyFallback(url, init, SAFE_OUTBOUND_FETCH_PRESETS.validationWrite, isLocal);
 }
 
 function toValidationErrorResult(error: unknown) {
@@ -382,8 +460,19 @@ async function validateOpenAILikeProvider({
       return { valid: true, error: null };
     }
 
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401) {
       return { valid: false, error: "Invalid API key" };
+    }
+
+    // #2929: A 403 on the models endpoint is not always a bad key. Some providers
+    // (e.g. Fireworks Fire Pass `fpk_*` keys) return "...not authorized for this
+    // route." on /models while still serving chat. Fall through to the chat probe
+    // for such route-restriction 403s instead of declaring the key invalid.
+    if (response.status === 403) {
+      const forbiddenBody = await response.text().catch(() => "");
+      if (!/not authorized for this route/i.test(forbiddenBody)) {
+        return { valid: false, error: "Invalid API key" };
+      }
     }
 
     const chatUrl = resolveChatUrl(provider, baseUrl, providerSpecificData);
@@ -484,6 +573,7 @@ export async function validateCommandCodeProvider({ apiKey, providerSpecificData
     providerSpecificData?.validationModelId ||
     entry?.models?.find((model) => model.id === "deepseek/deepseek-v4-flash")?.id ||
     "deepseek/deepseek-v4-flash";
+  const { COMMAND_CODE_VERSION } = await import("@omniroute/open-sse/executors/commandCode.ts");
 
   return validateDirectChatProvider({
     url,
@@ -491,7 +581,7 @@ export async function validateCommandCodeProvider({ apiKey, providerSpecificData
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
-      "x-command-code-version": "0.24.1",
+      "x-command-code-version": COMMAND_CODE_VERSION,
       "x-cli-environment": "external",
       "x-project-slug": "pi-cc",
       "x-taste-learning": "false",
@@ -948,10 +1038,6 @@ async function validateAssemblyAIProvider({ apiKey, providerSpecificData = {} }:
   } catch (error: any) {
     return toValidationErrorResult(error);
   }
-}
-
-async function validateNanoBananaProvider({ apiKey, providerSpecificData = {} }: any) {
-  return validateImageProviderApiKey({ provider: "nanobanana", apiKey, providerSpecificData });
 }
 
 async function validateElevenLabsProvider({ apiKey, providerSpecificData = {} }: any) {
@@ -2002,67 +2088,6 @@ async function validateRunwayProvider({ apiKey, providerSpecificData = {} }: any
   return { valid: false, error: "Connection failed while testing Runway" };
 }
 
-async function validatePetalsProvider({ apiKey, providerSpecificData = {} }: any) {
-  const url = normalizePetalsBaseUrl(providerSpecificData.baseUrl);
-  const modelId =
-    typeof providerSpecificData.validationModelId === "string" &&
-    providerSpecificData.validationModelId.trim()
-      ? providerSpecificData.validationModelId.trim()
-      : PETALS_DEFAULT_MODEL;
-  const headers: Record<string, string> = {
-    "Content-Type": "application/x-www-form-urlencoded",
-  };
-  if (apiKey) {
-    headers.Authorization = `Bearer ${apiKey}`;
-  }
-
-  const body = new URLSearchParams({
-    model: modelId,
-    inputs: "test",
-    max_new_tokens: "1",
-  });
-
-  try {
-    const response = await validationWrite(url, {
-      method: "POST",
-      headers,
-      body: body.toString(),
-    });
-
-    if (response.ok) {
-      const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-      if (payload.ok === false) {
-        return {
-          valid: false,
-          error: "Petals API rejected validation request",
-        };
-      }
-      return { valid: true, error: null, method: "petals_generate" };
-    }
-
-    if (response.status === 401 || response.status === 403) {
-      return { valid: false, error: "Invalid API key" };
-    }
-
-    if (response.status === 429) {
-      return {
-        valid: true,
-        error: null,
-        method: "petals_generate",
-        warning: "Rate limited, but endpoint is reachable",
-      };
-    }
-
-    if (response.status >= 500) {
-      return { valid: false, error: `Provider unavailable (${response.status})` };
-    }
-  } catch (error: any) {
-    return toValidationErrorResult(error);
-  }
-
-  return { valid: false, error: "Connection failed while testing Petals" };
-}
-
 async function validateNousResearchProvider({ apiKey, providerSpecificData = {} }: any) {
   const baseUrl =
     normalizeBaseUrl(providerSpecificData.baseUrl) || "https://inference-api.nousresearch.com/v1";
@@ -2798,6 +2823,12 @@ async function validateGrokWebProvider({ apiKey, providerSpecificData = {} }: an
       };
     }
 
+    // Use the TLS-impersonating client — Cloudflare on grok.com pins
+    // cf_clearance to JA3/JA4 + HTTP/2 SETTINGS, so plain Node fetch always
+    // gets "Request rejected by anti-bot rules." regardless of cookies (#3180).
+    const { tlsFetchGrok, TlsClientUnavailableError, isCloudflareChallenge } =
+      await import("@omniroute/open-sse/services/grokTlsClient.ts");
+
     // Generate the same Cloudflare-bypass headers the GrokWebExecutor uses.
     const randomHex = (n: number) => {
       const a = new Uint8Array(n);
@@ -2808,68 +2839,88 @@ async function validateGrokWebProvider({ apiKey, providerSpecificData = {} }: an
     const traceId = randomHex(16);
     const spanId = randomHex(8);
 
-    const response = await validationWrite("https://grok.com/rest/app-chat/conversations/new", {
-      method: "POST",
-      headers: applyCustomUserAgent(
-        {
-          Accept: "*/*",
-          "Accept-Encoding": "gzip, deflate, br, zstd",
-          "Accept-Language": "en-US,en;q=0.9",
-          Baggage:
-            "sentry-environment=production,sentry-release=d6add6fb0460641fd482d767a335ef72b9b6abb8,sentry-public_key=b311e0f2690c81f25e2c4cf6d4f7ce1c",
-          "Cache-Control": "no-cache",
-          "Content-Type": "application/json",
-          Cookie: `sso=${token}`,
-          Origin: "https://grok.com",
-          Pragma: "no-cache",
-          Referer: "https://grok.com/",
-          "Sec-Ch-Ua": '"Google Chrome";v="147", "Chromium";v="147", "Not(A:Brand";v="24"',
-          "Sec-Ch-Ua-Mobile": "?0",
-          "Sec-Ch-Ua-Platform": '"macOS"',
-          "Sec-Fetch-Dest": "empty",
-          "Sec-Fetch-Mode": "cors",
-          "Sec-Fetch-Site": "same-origin",
-          "User-Agent":
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
-          "x-statsig-id": btoa(statsigMsg),
-          "x-xai-request-id": crypto.randomUUID(),
-          traceparent: `00-${traceId}-${spanId}-00`,
-        },
-        providerSpecificData
-      ),
-      body: JSON.stringify({
-        temporary: true,
-        modeId: "fast",
-        message: "test",
-        fileAttachments: [],
-        imageAttachments: [],
-        disableSearch: true,
-        enableImageGeneration: false,
-        returnImageBytes: false,
-        returnRawGrokInXaiRequest: false,
-        enableImageStreaming: false,
-        imageGenerationCount: 0,
-        forceConcise: true,
-        toolOverrides: {},
-        enableSideBySide: false,
-        sendFinalMetadata: false,
-        isReasoning: false,
-        disableTextFollowUps: true,
-        disableMemory: true,
-        forceSideBySide: false,
-        isAsyncChat: false,
-        disableSelfHarmShortCircuit: false,
-      }),
-    });
-
-    if (response.ok) {
-      return { valid: true, error: null };
+    let response;
+    try {
+      response = await tlsFetchGrok("https://grok.com/rest/app-chat/conversations/new", {
+        method: "POST",
+        headers: applyCustomUserAgent(
+          {
+            Accept: "*/*",
+            "Accept-Encoding": "gzip, deflate, br, zstd",
+            "Accept-Language": "en-US,en;q=0.9",
+            Baggage:
+              "sentry-environment=production,sentry-release=d6add6fb0460641fd482d767a335ef72b9b6abb8,sentry-public_key=b311e0f2690c81f25e2c4cf6d4f7ce1c",
+            "Cache-Control": "no-cache",
+            "Content-Type": "application/json",
+            Cookie: buildGrokCookieHeader(apiKey),
+            Origin: "https://grok.com",
+            Pragma: "no-cache",
+            Referer: "https://grok.com/",
+            "Sec-Ch-Ua": '"Google Chrome";v="147", "Chromium";v="147", "Not(A:Brand";v="24"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"macOS"',
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "User-Agent":
+              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+            "x-statsig-id": btoa(statsigMsg),
+            "x-xai-request-id": crypto.randomUUID(),
+            traceparent: `00-${traceId}-${spanId}-00`,
+          },
+          providerSpecificData
+        ),
+        body: JSON.stringify({
+          temporary: true,
+          modeId: "fast",
+          message: "test",
+          fileAttachments: [],
+          imageAttachments: [],
+          disableSearch: true,
+          enableImageGeneration: false,
+          returnImageBytes: false,
+          returnRawGrokInXaiRequest: false,
+          enableImageStreaming: false,
+          imageGenerationCount: 0,
+          forceConcise: true,
+          toolOverrides: {},
+          enableSideBySide: false,
+          sendFinalMetadata: false,
+          isReasoning: false,
+          disableTextFollowUps: true,
+          disableMemory: true,
+          forceSideBySide: false,
+          isAsyncChat: false,
+          disableSelfHarmShortCircuit: false,
+        }),
+        timeoutMs: 15_000,
+      });
+    } catch (err: any) {
+      if (err instanceof TlsClientUnavailableError) {
+        return {
+          valid: false,
+          error: `TLS impersonation client unavailable: ${err.message}`,
+        };
+      }
+      throw err;
     }
 
     let errorDetail = "";
     try {
-      errorDetail = (await response.text()).slice(0, 240);
+      errorDetail = (response.text || "").slice(0, 240);
     } catch {}
+
+    // Detect Cloudflare challenge pages even with a 200 status from tls-client-node
+    if (isCloudflareChallenge(errorDetail)) {
+      return {
+        valid: false,
+        error: "Grok validation blocked by Cloudflare anti-bot. Try a residential IP or proxy.",
+      };
+    }
+
+    if (response.status >= 200 && response.status < 300) {
+      return { valid: true, error: null };
+    }
 
     if (response.status === 401) {
       return {
@@ -3358,9 +3409,8 @@ async function validateClaudeWebProvider({ apiKey, providerSpecificData = {} }: 
       return { valid: false, error: "Paste your sessionKey cookie from claude.ai" };
     }
 
-    const { tlsFetchClaude, TlsClientUnavailableError } = await import(
-      "@omniroute/open-sse/services/claudeTlsClient.ts"
-    );
+    const { tlsFetchClaude, TlsClientUnavailableError } =
+      await import("@omniroute/open-sse/services/claudeTlsClient.ts");
 
     let response: { status: number; text: string | null };
     try {
@@ -3403,7 +3453,8 @@ async function validateClaudeWebProvider({ apiKey, providerSpecificData = {} }: 
     if (response.status === 401 || response.status === 403) {
       return {
         valid: false,
-        error: "Invalid or expired session cookie — re-paste sessionKey from claude.ai DevTools → Cookies",
+        error:
+          "Invalid or expired session cookie — re-paste sessionKey from claude.ai DevTools → Cookies",
       };
     }
 
@@ -3450,7 +3501,8 @@ async function validateGeminiWebProvider({ apiKey, providerSpecificData = {} }: 
     if (response.status === 401 || response.status === 403) {
       return {
         valid: false,
-        error: "Invalid or expired __Secure-1PSID cookie — re-paste from gemini.google.com DevTools → Cookies",
+        error:
+          "Invalid or expired __Secure-1PSID cookie — re-paste from gemini.google.com DevTools → Cookies",
       };
     }
 
@@ -3503,7 +3555,8 @@ async function validateCopilotWebProvider({ apiKey, providerSpecificData = {} }:
     if (response.status === 401 || response.status === 403) {
       return {
         valid: false,
-        error: "Invalid or expired access_token — re-paste from copilot.microsoft.com DevTools → Cookies",
+        error:
+          "Invalid or expired access_token — re-paste from copilot.microsoft.com DevTools → Cookies",
       };
     }
 
@@ -3722,15 +3775,10 @@ export async function validateProviderApiKey({ provider, apiKey, providerSpecifi
    * These providers share a POST /chat/completions auth check pattern and differ
    * only in default baseUrl and test model name.
    */
-  function buildOpengatewayValidator(
-    defaultBaseUrl: string,
-    model: string
-  ) {
+  function buildOpengatewayValidator(defaultBaseUrl: string, model: string) {
     return async ({ apiKey, providerSpecificData }: any) => {
       try {
-        const baseUrl = normalizeBaseUrl(
-          providerSpecificData?.baseUrl || defaultBaseUrl
-        );
+        const baseUrl = normalizeBaseUrl(providerSpecificData?.baseUrl || defaultBaseUrl);
         const chatUrl = `${baseUrl.replace(/\/chat\/completions$/, "")}/chat/completions`;
         const res = await validationWrite(
           chatUrl,
@@ -3769,12 +3817,45 @@ export async function validateProviderApiKey({ provider, apiKey, providerSpecifi
   // ── Specialty provider validation ──
   const SPECIALTY_VALIDATORS = {
     jules: validateJulesProvider,
-    qoder: ({ apiKey, providerSpecificData }: any) =>
-      validateQoderCliPat({ apiKey, providerSpecificData }),
+    qoder: async ({ apiKey, providerSpecificData }: any) => {
+      // Bifurcate validation: PAT tokens use Cosy auth against api1.qoder.sh;
+      // regular API keys validate against dashscope (OpenAI-compatible endpoint).
+      const key = (apiKey || "").trim();
+      if (key.startsWith("pt-")) {
+        return validateQoderCliPat({ apiKey: key, providerSpecificData });
+      }
+      // Non-PAT token → validate against dashscope (Alibaba Cloud).
+      // The executor routes these tokens to dashscope.aliyuncs.com, so the
+      // validation must test against dashscope, NOT the Cosy PAT endpoint.
+      try {
+        const dashscopeUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1/models";
+        const res = await validationRead(
+          dashscopeUrl,
+          {
+            headers: {
+              Authorization: `Bearer ${key}`,
+            },
+          },
+          false
+        );
+        if (res.ok) return { valid: true, error: null };
+        if (res.status === 401 || res.status === 403) {
+          return {
+            valid: false,
+            error:
+              "Invalid Qoder API key. Make sure you're using a valid API key from Qoder / Alibaba Cloud Dashscope.",
+          };
+        }
+        // 4xx/5xx other than auth — treat as valid bypass to prevent false
+        // negatives from transient dashscope issues (consistent with PAT path).
+        return { valid: true, error: null };
+      } catch (err: unknown) {
+        return toValidationErrorResult(err);
+      }
+    },
     "command-code": validateCommandCodeProvider,
     deepgram: validateDeepgramProvider,
     assemblyai: validateAssemblyAIProvider,
-    nanobanana: validateNanoBananaProvider,
     "fal-ai": ({ apiKey, providerSpecificData }: any) =>
       validateImageProviderApiKey({ provider: "fal-ai", apiKey, providerSpecificData }),
     "stability-ai": ({ apiKey, providerSpecificData }: any) =>
@@ -3807,7 +3888,6 @@ export async function validateProviderApiKey({ provider, apiKey, providerSpecifi
         isLocal,
       }),
     "nous-research": validateNousResearchProvider,
-    petals: validatePetalsProvider,
     poe: validatePoeProvider,
     clarifai: validateClarifaiProvider,
     reka: validateRekaProvider,
@@ -3930,14 +4010,17 @@ export async function validateProviderApiKey({ provider, apiKey, providerSpecifi
         const baseUrlRaw =
           providerSpecificData?.baseUrl || "https://integrate.api.nvidia.com/v1/chat/completions";
         const normalized = normalizeBaseUrl(baseUrlRaw);
+        const chatBase = normalized.replace(/\/models$/, "");
         const chatUrl = normalized.endsWith("/chat/completions")
           ? normalized
-          : `${normalized}/chat/completions`;
-        const modelId =
-          providerSpecificData?.validationModelId ||
-          getRegistryEntry("nvidia")?.models?.[0]?.id ||
-          "meta/llama-3.1-8b-instruct";
-        const res = await validationWrite(
+          : `${chatBase}/chat/completions`;
+        // #3116: probe a universally-available model rather than models[0]
+        // (z-ai/glm-5.1), which requires the "Public API Endpoints" account permission
+        // and can hang/be DEGRADED — making a *valid* key fail with "Upstream Error".
+        const modelId = resolveNvidiaValidationModel(providerSpecificData);
+        // #3226: use raw https (bypass the proxy/TLS-patched fetch) — the undici
+        // dispatcher stalls against NVIDIA's endpoint, causing a 504 timeout.
+        const res = await directHttpsRequest(
           chatUrl,
           {
             method: "POST",
@@ -3948,38 +4031,7 @@ export async function validateProviderApiKey({ provider, apiKey, providerSpecifi
               max_tokens: 1,
             }),
           },
-          isLocal
-        );
-        if (res.status === 401 || res.status === 403) {
-          return { valid: false, error: "Invalid API key" };
-        }
-        // Any non-auth response (200, 400, 422, 429) means auth passed
-        return { valid: true, error: null };
-      } catch (error: any) {
-        return toValidationErrorResult(error);
-      }
-    },
-    // Poolside (#2723) — API has no /v1/models endpoint and returns 401 from
-    // unknown routes, which the generic /models probe misreads as "invalid API key".
-    // Validate via direct chat/completions probe with a minimal body.
-    poolside: async ({ apiKey, providerSpecificData }: any) => {
-      try {
-        const baseUrl = normalizeBaseUrl(
-          providerSpecificData?.baseUrl || "https://api.poolside.ai/v1"
-        );
-        const chatUrl = `${baseUrl.replace(/\/chat\/completions$/, "")}/chat/completions`;
-        const res = await validationWrite(
-          chatUrl,
-          {
-            method: "POST",
-            headers: buildBearerHeaders(apiKey, providerSpecificData),
-            body: JSON.stringify({
-              model: "poolside-model",
-              messages: [{ role: "user", content: "test" }],
-              max_tokens: 1,
-            }),
-          },
-          isLocal
+          20000
         );
         if (res.status === 401 || res.status === 403) {
           return { valid: false, error: "Invalid API key" };
@@ -4115,6 +4167,30 @@ export async function validateProviderApiKey({ provider, apiKey, providerSpecifi
         authType: entry.authType,
         isLocal,
       });
+    }
+
+    if (entry.format === "antigravity") {
+      const expiresAt =
+        providerSpecificData?.tokenExpiresAt ||
+        providerSpecificData?.expiresAt ||
+        providerSpecificData?.expiry_date ||
+        providerSpecificData?.expiryDate;
+      const expiryMs =
+        typeof expiresAt === "number"
+          ? expiresAt
+          : typeof expiresAt === "string" && expiresAt.trim()
+            ? Date.parse(expiresAt)
+            : Number.NaN;
+
+      if (Number.isFinite(expiryMs) && expiryMs > 0 && expiryMs < Date.now()) {
+        return {
+          valid: false,
+          error: "Antigravity OAuth token has expired. Re-import or refresh the CLI login.",
+          unsupported: false,
+        };
+      }
+
+      return { valid: true, error: null, unsupported: false };
     }
 
     return { valid: false, error: "Provider validation not supported", unsupported: true };

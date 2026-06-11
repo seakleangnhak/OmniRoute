@@ -11,6 +11,7 @@ import { jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { getSettings } from "@/lib/localDb";
 import { isPublicApiRoute } from "@/shared/constants/publicApiRoutes";
+import { extractApiKey } from "@/sse/services/auth";
 
 type RequestLike = {
   cookies?: {
@@ -152,13 +153,23 @@ export function hasBearerToken(request: RequestLike | Request | null | undefined
   return typeof authHeader === "string" && authHeader.trim().toLowerCase().startsWith("bearer ");
 }
 
-function getBearerToken(request: RequestLike | Request | null | undefined): string | null {
-  const authHeader = getAuthorizationHeader(request);
-  if (typeof authHeader !== "string") return null;
+function getRequestApiKey(
+  request: RequestLike | Request | null | undefined,
+  opts?: { allowUrl?: boolean }
+): string | null {
+  if (!request || typeof request !== "object") return null;
 
-  const trimmedHeader = authHeader.trim();
-  if (!trimmedHeader.toLowerCase().startsWith("bearer ")) return null;
-  return trimmedHeader.slice(7).trim() || null;
+  const headers = "headers" in request ? request.headers : undefined;
+  const rawUrl = "url" in request && typeof request.url === "string" ? request.url : null;
+  const pathname = getRequestPathname(request);
+  const syntheticUrl = rawUrl || (pathname ? `http://localhost${pathname}` : null);
+
+  // Management auth never honours a URL-borne credential (defence-in-depth: the
+  // path-scoped token is a client-API affordance only — a credential in the URL
+  // must not authenticate a management route). See the #3300 security follow-up.
+  const allowUrl = opts?.allowUrl !== false;
+
+  return extractApiKey({ headers, url: allowUrl ? syntheticUrl : null }, { allowUrl });
 }
 
 function getExactBearerToken(request: RequestLike | Request | null | undefined): string | null {
@@ -295,18 +306,21 @@ export async function verifyAuth(request: any): Promise<string | null> {
     return null;
   }
 
-  const bearerToken = getBearerToken(request);
-  if (isManagementApiRequest(request)) {
+  const isManagement = isManagementApiRequest(request);
+  const apiKey = getRequestApiKey(request, { allowUrl: !isManagement });
+  if (isManagement) {
     if (
       isManagementBearerTokenAuthenticated(request) ||
-      (await validateBearerApiKeyForManagement(bearerToken))
+      (await validateBearerApiKeyForManagement(apiKey))
     ) {
       return null;
     }
-    return hasBearerToken(request) ? "Invalid management token" : "Authentication required";
+    return apiKey || hasBearerToken(request)
+      ? "Invalid management token"
+      : "Authentication required";
   }
 
-  if (await validateBearerApiKey(bearerToken)) {
+  if (await validateBearerApiKey(apiKey)) {
     return null;
   }
 
@@ -332,15 +346,16 @@ export async function isAuthenticated(request: Request): Promise<boolean> {
     return true;
   }
 
-  const bearerToken = getBearerToken(request);
-  if (isManagementApiRequest(request)) {
+  const isManagement = isManagementApiRequest(request);
+  const apiKey = getRequestApiKey(request, { allowUrl: !isManagement });
+  if (isManagement) {
     return (
       isManagementBearerTokenAuthenticated(request) ||
-      (await validateBearerApiKeyForManagement(bearerToken))
+      (await validateBearerApiKeyForManagement(apiKey))
     );
   }
 
-  return validateBearerApiKey(bearerToken);
+  return validateBearerApiKey(apiKey);
 }
 
 /**

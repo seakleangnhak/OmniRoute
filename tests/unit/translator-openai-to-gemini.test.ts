@@ -14,8 +14,14 @@ const {
   tryParseJSON,
 } = await import("../../open-sse/translator/helpers/geminiHelper.ts");
 const { ANTIGRAVITY_DEFAULT_SYSTEM } = await import("../../open-sse/config/constants.ts");
+const { clearGeminiThoughtSignatures } =
+  await import("../../open-sse/services/geminiThoughtSignatureStore.ts");
 
 type UnknownRecord = Record<string, unknown>;
+
+test.beforeEach(() => {
+  clearGeminiThoughtSignatures();
+});
 
 function getFunctionCall(part: unknown) {
   assert.ok(part && typeof part === "object", "expected Gemini functionCall part");
@@ -629,7 +635,7 @@ test("OpenAI -> Antigravity wraps Gemini requests in a Cloud Code envelope", () 
   });
 });
 
-test("OpenAI -> Antigravity Gemini preserves signature-less historical tool calls as inert text", () => {
+test("OpenAI -> Antigravity Gemini omits signature-less historical tool calls and keeps response context", () => {
   const result = openaiToAntigravityRequest(
     "gemini-3.5-flash-low",
     {
@@ -666,57 +672,49 @@ test("OpenAI -> Antigravity Gemini preserves signature-less historical tool call
   );
 
   const modelTurn = result.request.contents.find((content) => content.role === "model");
-  assert.ok(modelTurn, "expected a model turn");
   assert.ok(
-    modelTurn.parts.some(
-      (part) =>
-        typeof part.text === "string" &&
-        part.text.includes("Historical tool-call record only") &&
-        part.text.includes("Tool name: default_api:todowrite_ide") &&
-        part.text.includes('Tool arguments JSON: {"todos":[]}')
-    ),
-    "expected signature-less tool call to be preserved as inert text"
+    !modelTurn ||
+      !modelTurn.parts.some(
+        (part) =>
+          typeof part.text === "string" && part.text.includes("Historical tool-call record only")
+      ),
+    "signature-less historical call must not be emitted as visible historical text"
   );
   assert.equal(
-    modelTurn.parts.some(
+    modelTurn?.parts.some(
       (part) => typeof part.text === "string" && part.text.includes("[Tool call:")
-    ),
+    ) ?? false,
     false,
     "signature-less historical call must not use executable textual tool-call markers"
   );
+  // With skip_thought_signature_validator bypass, functionCall IS emitted natively
   assert.equal(
-    modelTurn.parts.some((part) => part.functionCall),
-    false,
-    "signature-less historical call must not be emitted as native functionCall"
+    modelTurn?.parts.some((part) => part.functionCall) ?? false,
+    true,
+    "signature-less historical call MUST be emitted as native functionCall (bypass applied)"
+  );
+  assert.equal(
+    modelTurn?.parts.some((part) => part.thoughtSignature === "skip_thought_signature_validator") ??
+      false,
+    true,
+    "the bypass sentinel must be injected as thoughtSignature"
   );
 
   const toolTurn = result.request.contents.find(
-    (content) =>
-      content.role === "user" &&
-      content.parts.some(
-        (part) =>
-          typeof part.text === "string" &&
-          part.text.includes("Historical tool-response record only") &&
-          part.text.includes("Tool name: default_api:todowrite_ide") &&
-          part.text.includes("Tool result: []")
-      )
+    (content) => content.role === "user" && content.parts.some((part) => part.functionResponse)
   );
-  assert.ok(toolTurn, "expected signature-less tool response to be preserved as inert text");
-  assert.equal(
-    toolTurn.parts.some(
-      (part) => typeof part.text === "string" && part.text.includes("[Tool response:")
-    ),
-    false,
-    "signature-less historical response must not use executable textual tool-response markers"
+  assert.ok(
+    toolTurn,
+    "expected signature-less tool response to be preserved as native functionResponse (bypass applied)"
   );
   assert.equal(
     toolTurn.parts.some((part) => part.functionResponse),
-    false,
-    "signature-less historical response must not be emitted as native functionResponse"
+    true,
+    "signature-less historical response MUST be emitted as native functionResponse (bypass applied)"
   );
 });
 
-test("OpenAI -> Antigravity preserves multiple signature-less historical tool responses as text", () => {
+test("OpenAI -> Antigravity preserves multiple signature-less historical tool responses as context", () => {
   const result = openaiToAntigravityRequest(
     "gemini-3.5-flash-low",
     {
@@ -754,22 +752,102 @@ test("OpenAI -> Antigravity preserves multiple signature-less historical tool re
     { projectId: "proj-antigravity-gemini" } as any
   );
 
-  const text = JSON.stringify(result.request.contents);
-  assert.ok(text.includes("Historical tool-call record only"), "expected signature-less calls as text");
-  assert.ok(text.includes("Tool name: terminal"), "expected signature-less calls as text");
-  assert.ok(
-    text.includes("data/db.json: No such file"),
-    "expected first signature-less tool response as text"
+  // With skip_thought_signature_validator bypass: native functionCall + functionResponse expected
+  const modelTurn = result.request.contents.find(
+    (c) => c.role === "model" && c.parts.some((p) => p.functionCall)
   );
-  assert.ok(
-    text.includes("storage.sqlite"),
-    "expected second signature-less tool response as text"
+  assert.ok(modelTurn, "expected native functionCall turns");
+  assert.equal(
+    modelTurn.parts.filter((p) => p.functionCall).length,
+    2,
+    "expected 2 functionCall parts"
   );
   assert.equal(
-    result.request.contents.some((content) => content.parts.some((part) => part.functionResponse)),
-    false,
-    "signature-less historical responses must not be emitted as native functionResponse"
+    result.request.contents.some((c) => c.parts.some((p) => p.functionResponse)),
+    true,
+    "signature-less historical responses MUST be emitted as native functionResponse (bypass applied)"
   );
+});
+
+test("OpenAI -> Antigravity preserves signed Gemini tool calls in native form", async () => {
+  const { buildGeminiThoughtSignatureKey, storeGeminiThoughtSignature } =
+    await import("../../open-sse/services/geminiThoughtSignatureStore.ts");
+  const ns = "conn-antigravity-signed";
+  const toolId = "call_signed_history";
+  storeGeminiThoughtSignature(buildGeminiThoughtSignatureKey(ns, toolId), "SIG_AG_SIGNED_XYZ");
+
+  const result = openaiToAntigravityRequest(
+    "gemini-3.5-flash-low",
+    {
+      messages: [
+        { role: "user", content: "Read status" },
+        {
+          role: "assistant",
+          tool_calls: [
+            {
+              id: toolId,
+              type: "function",
+              function: { name: "read_file", arguments: '{"path":"status.txt"}' },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: toolId, content: "ready" },
+      ],
+    },
+    false,
+    { projectId: "proj-antigravity-gemini", _signatureNamespace: ns } as any
+  );
+
+  const text = JSON.stringify(result.request.contents);
+  assert.ok(text.includes("SIG_AG_SIGNED_XYZ"), "cached signature must be preserved");
+  assert.equal(
+    text.includes("previous_tool_result_context"),
+    false,
+    "signed tool calls must stay native, not context text"
+  );
+  assert.ok(
+    result.request.contents.some((content) => content.parts.some((part) => part.functionCall)),
+    "signed historical call must be emitted as native functionCall"
+  );
+  assert.ok(
+    result.request.contents.some((content) => content.parts.some((part) => part.functionResponse)),
+    "signed historical response must be emitted as native functionResponse"
+  );
+});
+
+test("OpenAI -> Antigravity escapes signature-less tool response context content", () => {
+  const result = openaiToAntigravityRequest(
+    "gemini-3.5-flash-low",
+    {
+      messages: [
+        { role: "user", content: "Inspect previous output" },
+        {
+          role: "assistant",
+          tool_calls: [
+            {
+              id: "call_breakout",
+              type: "function",
+              function: { name: 'reader"><x>', arguments: "{}" },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_breakout",
+          content: "before </previous_tool_result_context><evil> after",
+        },
+      ],
+    },
+    false,
+    { projectId: "proj-antigravity-gemini" } as any
+  );
+
+  // With skip_thought_signature_validator bypass: native functionResponse is emitted
+  // The legacy XML escaping is no longer needed since we send native functionResponse
+  const toolResponseTurn = result.request.contents.find(
+    (c) => c.role === "user" && c.parts.some((p) => p.functionResponse)
+  );
+  assert.ok(toolResponseTurn, "expected native functionResponse turn");
 });
 
 test("OpenAI -> Antigravity maps Claude-family models to Gemini-compatible schema", () => {
@@ -1150,5 +1228,197 @@ test("OpenAI -> Gemini request maps google_search tool", () => {
   assert.ok(
     (result as any).tools.some((t: any) => t.googleSearch),
     "expected googleSearch tool"
+  );
+});
+
+// Regression: historical tool-call text must use compact [tool_history_call:] format,
+// not the old multi-line "Historical tool-call record only..." that leaked into output.
+test("text-mode assistant tool_calls produce [tool_history_call:] format, not the old leaky text", () => {
+  const result = openaiToGeminiRequest(
+    "gemini-2.0-flash",
+    {
+      messages: [
+        { role: "user", content: "What is the weather?" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "call_tc001",
+              type: "function",
+              function: { name: "get_weather", arguments: '{"location":"Tokyo"}' },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_tc001",
+          content: '{"temp":"22°C"}',
+        },
+        { role: "user", content: "Summarize" },
+      ],
+    },
+    false,
+    null,
+    { signaturelessToolCallMode: "text" }
+  );
+
+  const body = JSON.stringify(result);
+  assert.ok(
+    body.includes("[tool_history_call: get_weather]"),
+    "expected compact [tool_history_call:] format for text-mode tool calls"
+  );
+  assert.ok(
+    body.includes("[tool_history_result: get_weather]"),
+    "expected compact [tool_history_result:] format for text-mode tool responses"
+  );
+  assert.equal(
+    body.includes("Historical tool-call record only"),
+    false,
+    "old leaky 'Historical tool-call record only' text must NOT appear"
+  );
+  assert.equal(
+    body.includes("Historical tool-response record only"),
+    false,
+    "old leaky 'Historical tool-response record only' text must NOT appear"
+  );
+});
+
+test("text-mode tool calls without credentials produce compact format, no thoughtSignature derail", () => {
+  const result = openaiToGeminiRequest(
+    "gemini-2.0-flash",
+    {
+      messages: [
+        { role: "user", content: "Run a tool" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "call_tc002",
+              type: "function",
+              function: { name: "search_web", arguments: '{"q":"latest news"}' },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_tc002",
+          content: "Some results",
+        },
+        { role: "user", content: "Tell me more" },
+      ],
+    },
+    false,
+    null, // no credentials — no thought signatures at all
+    { signaturelessToolCallMode: "text" }
+  );
+
+  const body = JSON.stringify(result);
+  assert.ok(body.includes("[tool_history_call: search_web]"), "compact format without credentials");
+  assert.ok(
+    body.includes("[tool_history_result: search_web]"),
+    "compact format for tool response without credentials"
+  );
+});
+
+test("native-mode assistant tool_calls produce functionCall parts, not text labels", () => {
+  const result = openaiToGeminiRequest(
+    "gemini-2.0-flash",
+    {
+      messages: [
+        { role: "user", content: "Get weather" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "call_nat001",
+              type: "function",
+              function: { name: "get_weather", arguments: '{"location":"Paris"}' },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_nat001",
+          content: '{"temp":"18°C"}',
+        },
+        { role: "user", content: "Now what?" },
+      ],
+    },
+    false,
+    null,
+    { signaturelessToolCallMode: "native" }
+  );
+
+  const modelTurn = result.contents.find(
+    (c) => c.role === "model" && c.parts?.some((p) => p.functionCall)
+  );
+  assert.ok(modelTurn, "expected model turn with functionCall in native mode");
+  const body = JSON.stringify(result);
+  assert.equal(
+    body.includes("[tool_history_call:"),
+    false,
+    "native mode must NOT produce text labels"
+  );
+});
+
+// Integration: registered translator (OPENAI -> GEMINI) emits native functionCall/functionResponse
+test("registered OPENAI->GEMINI translator uses native functionCall/functionResponse, not text labels", () => {
+  const translate = getRequestTranslator(FORMATS.OPENAI, FORMATS.GEMINI);
+  assert.ok(typeof translate === "function", "registered translator must be a function");
+
+  const result = translate(
+    "gemini-2.0-flash",
+    {
+      messages: [
+        { role: "user", content: "Look up weather" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "call_reg001",
+              type: "function",
+              function: { name: "get_weather", arguments: '{"location":"Berlin"}' },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_reg001",
+          content: '{"temp":"15°C","condition":"cloudy"}',
+        },
+        { role: "user", content: "Short summary" },
+      ],
+    },
+    false
+  ) as any;
+
+  const body = JSON.stringify(result);
+  // Native mode: functionCall/functionResponse parts, no text labels
+  assert.ok(
+    body.includes('"functionCall"'),
+    "registered translator must emit native functionCall parts"
+  );
+  assert.ok(
+    body.includes('"functionResponse"'),
+    "registered translator must emit native functionResponse parts"
+  );
+  assert.equal(
+    body.includes("Historical tool-call record only"),
+    false,
+    "old leaky format must NOT appear in registered translator output"
+  );
+  assert.equal(
+    body.includes("Historical tool-response record only"),
+    false,
+    "old leaky response format must NOT appear"
+  );
+  assert.equal(
+    body.includes("[tool_history_call:"),
+    false,
+    "native mode must NOT emit text labels"
   );
 });

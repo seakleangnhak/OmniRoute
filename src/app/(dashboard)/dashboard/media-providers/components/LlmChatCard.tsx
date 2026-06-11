@@ -15,6 +15,44 @@ import { useProviderModels } from "../../providers/hooks/useProviderModels";
 
 const ENDPOINT = "/api/v1/chat/completions";
 
+/** Header used to test a specific API key's policy from the dashboard playground
+ *  without exposing the key secret to the browser — the gateway resolves the key
+ *  by id server-side (see enforceApiKeyPolicy). */
+const PLAYGROUND_KEY_ID_HEADER = "x-omniroute-playground-key-id";
+
+/**
+ * Map the playground's masked key selection (sk-xxxx****yyyy, as returned by
+ * `/api/keys`) back to its key id. The id — never the secret — is sent to the
+ * gateway so it can apply that key's policy (allowed_models, etc.) server-side.
+ * Returns null for "(default)", which falls through to the dashboard session.
+ */
+function resolvePlaygroundKeyId(
+  selectedMaskedKey: string,
+  keys: { id: string; key: string }[]
+): string | null {
+  if (!selectedMaskedKey) return null;
+  return keys.find((k) => k.key === selectedMaskedKey)?.id ?? null;
+}
+
+/**
+ * Qualify a provider-scoped playground model with its `providerId/` prefix so
+ * OmniRoute can resolve it unambiguously. The previous heuristic only prefixed
+ * models without a `/`, which skipped vendor-namespaced ids like
+ * `moonshotai/kimi-k2.6` or `nvidia/zyphra/zamba2-7b-instruct` — those already
+ * contain a slash, so they were sent bare and rejected with
+ * "Ambiguous model ... Use provider/model prefix" when the same id exists under
+ * several providers (#3050). Always prefix unless the id is already qualified
+ * with this provider.
+ */
+export function qualifyPlaygroundModel(
+  model: string | null | undefined,
+  providerId: string | null | undefined
+): string {
+  const m = (model ?? "").trim();
+  if (!m || !providerId) return m;
+  return m === providerId || m.startsWith(`${providerId}/`) ? m : `${providerId}/${m}`;
+}
+
 interface Message {
   role: "user" | "assistant";
   content: string;
@@ -81,11 +119,6 @@ function extractUsage(line: string): { prompt_tokens?: number; completion_tokens
   }
 }
 
-function isUsableApiKeyValue(value: string): boolean {
-  const trimmed = value.trim();
-  return trimmed.length > 0 && !trimmed.includes("****");
-}
-
 export function LlmChatCard({
   providerId,
   initialModel,
@@ -100,7 +133,7 @@ export function LlmChatCard({
   onControlsChange,
 }: Props) {
   const t = useTranslations("miniPlayground");
-  const { apiKey, keys } = useApiKey();
+  const { keys } = useApiKey();
   const { models } = useProviderModels(providerId, connectionId);
 
   const [internalSelectedKey, setInternalSelectedKey] = useState<string>("");
@@ -131,16 +164,12 @@ export function LlmChatCard({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const firstModel = models[0]?.id ?? "";
-  const effectiveModel = (model || firstModel || initialModel || "").trim();
-  // Auto-prefix model with providerId when no provider/model prefix present, to avoid
-  // OmniRoute "Ambiguous model" rejection when same alias is registered under multiple providers.
-  const qualifiedModel = effectiveModel
-    ? effectiveModel.includes("/")
-      ? effectiveModel
-      : providerId
-        ? `${providerId}/${effectiveModel}`
-        : effectiveModel
-    : "";
+  const effectiveModel = model || firstModel || initialModel || "";
+  // Auto-prefix model with providerId to avoid OmniRoute "Ambiguous model"
+  // rejection when the same id is registered under multiple providers. This
+  // also covers vendor-namespaced ids (e.g. `moonshotai/kimi-k2.6`) that already
+  // contain a slash but still need the provider prefix (#3050).
+  const qualifiedModel = qualifyPlaygroundModel(effectiveModel, providerId);
 
   // Autofocus textarea in embedded mode
   useEffect(() => {
@@ -177,20 +206,25 @@ export function LlmChatCard({
     const t0 = performance.now();
 
     try {
-      const authKey = selectedKey || apiKey;
+      // The playground authenticates via the dashboard session cookie — we never
+      // put an API key secret on the wire. `/api/keys` only exposes MASKED values
+      // (sk-xxxx****yyyy), which are invalid as bearer tokens and would 401 under
+      // REQUIRE_API_KEY. When a specific key is selected we send only its id so the
+      // gateway can apply that key's policy (allowed_models, etc.) server-side.
+      // "(default)" sends no key id → full session access (any model).
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
+        "x-connection-id": providerId,
       };
-      if (isUsableApiKeyValue(authKey)) {
-        headers.Authorization = `Bearer ${authKey}`;
-      }
       if (connectionId) {
         headers["x-omniroute-connection"] = connectionId;
       }
-
+      const playgroundKeyId = resolvePlaygroundKeyId(selectedKey, keys);
+      if (playgroundKeyId) headers[PLAYGROUND_KEY_ID_HEADER] = playgroundKeyId;
       const res = await fetch(ENDPOINT, {
         method: "POST",
         signal: controller.signal,
+        credentials: "same-origin",
         headers,
         body: JSON.stringify({
           model: qualifiedModel,
@@ -296,7 +330,7 @@ export function LlmChatCard({
       // Refocus textarea so user can keep typing
       requestAnimationFrame(() => textareaRef.current?.focus());
     }
-  }, [input, streaming, qualifiedModel, selectedKey, apiKey, connectionId, messages]);
+  }, [input, streaming, selectedKey, keys, providerId, qualifiedModel, connectionId, messages]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {

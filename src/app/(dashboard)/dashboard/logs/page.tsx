@@ -1,12 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
-import { ConfirmModal, RequestLoggerV2, ProxyLogger, SegmentedControl } from "@/shared/components";
-import ConsoleLogViewer from "@/shared/components/ConsoleLogViewer";
+import { ConfirmModal, RequestLoggerV2 } from "@/shared/components";
 import EmailPrivacyToggle from "@/shared/components/EmailPrivacyToggle";
-import ActiveRequestsPanel from "@/shared/components/ActiveRequestsPanel";
-import AuditLogTab from "./AuditLogTab";
 import { useTranslations } from "next-intl";
 
 const TIME_RANGES = [
@@ -16,19 +12,7 @@ const TIME_RANGES = [
   { label: "24h", hours: 24 },
 ];
 
-const TAB_TO_LOG_TYPE: Record<string, string> = {
-  "request-logs": "request-logs",
-  "proxy-logs": "proxy-logs",
-  "audit-logs": "call-logs",
-  console: "call-logs",
-};
-
 export default function LogsPage() {
-  const searchParams = useSearchParams();
-  const requestedTab = searchParams.get("tab");
-  const [activeTab, setActiveTab] = useState(
-    requestedTab && TAB_TO_LOG_TYPE[requestedTab] ? requestedTab : "request-logs"
-  );
   const [showExport, setShowExport] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [showCleanHistory, setShowCleanHistory] = useState(false);
@@ -36,13 +20,8 @@ export default function LogsPage() {
   const [cleanHistoryStatus, setCleanHistoryStatus] = useState<string | null>(null);
   const [requestLogKey, setRequestLogKey] = useState(0);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const requestLoggerRef = useRef<any>(null);
   const t = useTranslations("logs");
-
-  useEffect(() => {
-    if (requestedTab && TAB_TO_LOG_TYPE[requestedTab] && requestedTab !== activeTab) {
-      setActiveTab(requestedTab);
-    }
-  }, [activeTab, requestedTab]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -54,11 +33,15 @@ export default function LogsPage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // initial id from URL (synchronously on client) so child can open on mount
+  const initialId =
+    typeof window !== "undefined" ? new URL(window.location.href).searchParams.get("id") : null;
+
   async function handleExport(hours: number) {
     setExporting(true);
     setShowExport(false);
     try {
-      const logType = TAB_TO_LOG_TYPE[activeTab] || "call-logs";
+      const logType = "request-logs";
       const res = await fetch(`/api/logs/export?hours=${hours}&type=${logType}`);
       if (!res.ok) throw new Error(t("exportFailed"));
       const blob = await res.blob();
@@ -90,7 +73,8 @@ export default function LogsPage() {
       }
 
       const deleted = typeof data?.deleted === "number" ? data.deleted : 0;
-      const deletedArtifacts = typeof data?.deletedArtifacts === "number" ? data.deletedArtifacts : 0;
+      const deletedArtifacts =
+        typeof data?.deletedArtifacts === "number" ? data.deletedArtifacts : 0;
       setRequestLogKey((key) => key + 1);
       setCleanHistoryStatus(
         deleted || deletedArtifacts
@@ -108,18 +92,9 @@ export default function LogsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <SegmentedControl
-          options={[
-            { value: "request-logs", label: t("requestLogs") },
-            { value: "proxy-logs", label: t("proxyLogs") },
-            { value: "audit-logs", label: t("auditLog") },
-            { value: "console", label: t("console") },
-          ]}
-          value={activeTab}
-          onChange={setActiveTab}
-        />
+    <div className="h-full flex flex-col gap-6 overflow-hidden">
+      <div className="flex-shrink-0 flex items-center justify-between gap-4 flex-wrap">
+        <h2 className="text-lg font-semibold text-text-main">{t("requestLogs")}</h2>
 
         <div className="flex items-center gap-2">
           <EmailPrivacyToggle size="md" />
@@ -209,20 +184,14 @@ export default function LogsPage() {
       </div>
 
       {cleanHistoryStatus && (
-        <div className="rounded-lg border border-[var(--border,#333)] bg-[var(--card-bg,#1e1e2e)] px-4 py-3 text-sm text-[var(--text-secondary,#aaa)]">
+        <div className="flex-shrink-0 rounded-lg border border-[var(--border,#333)] bg-[var(--card-bg,#1e1e2e)] px-4 py-3 text-sm text-[var(--text-secondary,#aaa)]">
           {cleanHistoryStatus}
         </div>
       )}
 
-      {activeTab === "request-logs" && (
-        <div className="flex flex-col gap-6">
-          <ActiveRequestsPanel />
-          <RequestLoggerV2 key={requestLogKey} />
-        </div>
-      )}
-      {activeTab === "proxy-logs" && <ProxyLogger />}
-      {activeTab === "audit-logs" && <AuditLogTab />}
-      {activeTab === "console" && <ConsoleLogViewer />}
+      <div className="flex-1 min-h-0 overflow-hidden">
+        <RequestLoggerV2 key={requestLogKey} ref={requestLoggerRef} initialSelectedId={initialId} />
+      </div>
 
       <ConfirmModal
         isOpen={showCleanHistory}
