@@ -12,6 +12,8 @@ const core = await import("../../src/lib/db/core.ts");
 const providersDb = await import("../../src/lib/db/providers.ts");
 const apiKeysDb = await import("../../src/lib/db/apiKeys.ts");
 const settingsDb = await import("../../src/lib/db/settings.ts");
+const chatGptTls = await import("../../open-sse/services/chatgptTlsClient.ts");
+const chatGptWeb = await import("../../open-sse/executors/chatgpt-web.ts");
 const imageRoute = await import("../../src/app/api/v1/images/generations/route.ts");
 const imageEditRoute = await import("../../src/app/api/v1/images/edits/route.ts");
 const providerImageRoute =
@@ -26,6 +28,8 @@ type ErrorBody = { error?: { message?: string } };
 
 async function resetStorage() {
   globalThis.fetch = originalFetch;
+  chatGptTls.__setTlsFetchOverrideForTesting(null);
+  chatGptWeb.__resetChatGptWebCachesForTesting();
   delete process.env.REQUIRE_API_KEY;
   delete process.env.OMNIROUTE_API_KEY;
   delete process.env.ROUTER_API_KEY;
@@ -47,6 +51,12 @@ async function seedConnection(provider: string, overrides: { apiKey?: string | n
   });
 }
 
+function makeHeaders(map: Record<string, string> = {}) {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(map)) headers.set(key, value);
+  return headers;
+}
+
 test.beforeEach(async () => {
   await resetStorage();
 });
@@ -66,13 +76,15 @@ test.after(() => {
 
 test("v1 image models GET exposes image-only modalities for image-only models", async () => {
   const response = await imageRoute.GET();
-  const body = (await response.json()) as any;
+  const body = (await response.json()) as {
+    data: Array<{ id: string; input_modalities?: string[] }>;
+  };
   const byId = new Map(body.data.map((item: { id: string }) => [item.id, item]));
 
   assert.equal(response.status, 200);
-  assert.deepEqual((byId.get("topaz/topaz-enhance") as any).input_modalities, ["image"]);
-  assert.deepEqual((byId.get("stability-ai/remove-background") as any).input_modalities, ["image"]);
-  assert.deepEqual((byId.get("stability-ai/fast") as any).input_modalities, ["image"]);
+  assert.deepEqual(byId.get("topaz/topaz-enhance")?.input_modalities, ["image"]);
+  assert.deepEqual(byId.get("stability-ai/remove-background")?.input_modalities, ["image"]);
+  assert.deepEqual(byId.get("stability-ai/fast")?.input_modalities, ["image"]);
 });
 
 test("v1 image generation POST accepts promptless requests for image-only models", async () => {
@@ -111,7 +123,7 @@ test("v1 image generation POST accepts promptless requests for image-only models
       }),
     })
   );
-  const body = (await response.json()) as any;
+  const body = (await response.json()) as { data: Array<{ b64_json?: string }> };
 
   assert.equal(response.status, 200);
   assert.equal(body.data[0].b64_json, "BwcH");
@@ -154,7 +166,7 @@ test("v1 image generation POST accepts multipart image uploads for image-input m
       body: formData,
     })
   );
-  const body = (await response.json()) as any;
+  const body = (await response.json()) as { data: Array<{ b64_json?: string }> };
 
   assert.equal(response.status, 200);
   assert.equal(body.data[0].b64_json, "BwcH");
@@ -171,7 +183,7 @@ test("v1 image generation POST still requires prompts for text-input models", as
       }),
     })
   );
-  const body = (await response.json()) as any;
+  const body = (await response.json()) as ErrorBody;
 
   assert.equal(response.status, 400);
   assert.match(body.error.message, /Prompt is required for image model: openai\/gpt-image-2/);
@@ -391,4 +403,187 @@ test("v1 image generation POST executes directly when credentials.connectionId i
   const body = (await response.json()) as any;
   assert.equal(response.status, 200);
   assert.ok(body.data, "should have image data");
+});
+
+test("v1 image generation POST retries ChatGPT Web Sentinel blocks with another account", async () => {
+  await seedConnection("chatgpt-web", { apiKey: "blocked-cookie" });
+  await seedConnection("chatgpt-web", { apiKey: "good-cookie" });
+
+  const sentinelCookies: string[] = [];
+  const conversationCookies: string[] = [];
+  const sseText = [
+    {
+      conversation_id: "conv-img-route",
+      message: {
+        id: "msg-img-route",
+        author: { role: "assistant" },
+        content: {
+          content_type: "text",
+          parts: [
+            "![image](http://localhost/v1/chatgpt-web/image/0123456789abcdef0123456789abcdef)",
+          ],
+        },
+        status: "finished_successfully",
+      },
+    },
+  ]
+    .map((event) => `data: ${JSON.stringify(event)}\r\n\r\n`)
+    .join("");
+
+  chatGptTls.__setTlsFetchOverrideForTesting(async (url, options = {}) => {
+    const stringUrl = String(url);
+    const headers = (options.headers || {}) as Record<string, string>;
+    const cookie = String(headers.Cookie || headers.cookie || "");
+
+    if (stringUrl === "https://chatgpt.com/" || stringUrl === "https://chatgpt.com") {
+      return {
+        status: 200,
+        headers: makeHeaders({ "content-type": "text/html" }),
+        text: '<html data-build="prod-test"><script src="https://cdn.oaistatic.com/_next/static/chunks/main-test.js"></script></html>',
+        body: null,
+      };
+    }
+
+    if (stringUrl.includes("/api/auth/session")) {
+      return {
+        status: 200,
+        headers: makeHeaders({ "content-type": "application/json" }),
+        text: JSON.stringify({
+          accessToken: cookie.includes("good-cookie") ? "jwt-good" : "jwt-blocked",
+          expires: new Date(Date.now() + 3600_000).toISOString(),
+          user: { id: cookie.includes("good-cookie") ? "user-good" : "user-blocked" },
+        }),
+        body: null,
+      };
+    }
+
+    if (
+      stringUrl.includes("/backend-api/me") ||
+      stringUrl.includes("/backend-api/conversations?") ||
+      stringUrl.includes("/backend-api/models?")
+    ) {
+      return {
+        status: 200,
+        headers: makeHeaders({ "content-type": "application/json" }),
+        text: "{}",
+        body: null,
+      };
+    }
+
+    if (stringUrl.includes("/backend-api/sentinel/chat-requirements/prepare")) {
+      sentinelCookies.push(cookie);
+      if (cookie.includes("blocked-cookie")) {
+        return {
+          status: 403,
+          headers: makeHeaders({ "content-type": "application/json" }),
+          text: JSON.stringify({ error: "turnstile required" }),
+          body: null,
+        };
+      }
+      return {
+        status: 200,
+        headers: makeHeaders({ "content-type": "application/json" }),
+        text: JSON.stringify({
+          prepare_token: "prepare-good",
+          proofofwork: { required: false },
+        }),
+        body: null,
+      };
+    }
+
+    if (stringUrl.includes("/backend-api/sentinel/chat-requirements")) {
+      return {
+        status: 200,
+        headers: makeHeaders({ "content-type": "application/json" }),
+        text: JSON.stringify({ token: "requirements-good", proofofwork: { required: false } }),
+        body: null,
+      };
+    }
+
+    if (stringUrl.endsWith("/backend-api/f/conversation")) {
+      conversationCookies.push(cookie);
+      return {
+        status: 200,
+        headers: makeHeaders({ "content-type": "text/event-stream" }),
+        text: `${sseText}data: [DONE]\r\n\r\n`,
+        body: null,
+      };
+    }
+
+    return {
+      status: 404,
+      headers: makeHeaders(),
+      text: `Unexpected URL: ${stringUrl}`,
+      body: null,
+    };
+  });
+
+  const response = await imageRoute.POST(
+    new Request("http://localhost/api/v1/images/generations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "cgpt-web/gpt-5.3-instant",
+        prompt: "make a stable retry image",
+      }),
+    })
+  );
+  const body = (await response.json()) as { data: Array<{ url?: string }> };
+
+  assert.equal(response.status, 200);
+  assert.equal(
+    body.data[0].url,
+    "http://localhost/v1/chatgpt-web/image/0123456789abcdef0123456789abcdef"
+  );
+  assert.ok(
+    sentinelCookies.some((cookie) => cookie.includes("blocked-cookie")),
+    "first account should hit Sentinel"
+  );
+  assert.ok(
+    sentinelCookies.some((cookie) => cookie.includes("good-cookie")),
+    "second account should be retried"
+  );
+  assert.deepEqual(
+    conversationCookies.map((cookie) =>
+      cookie.includes("good-cookie") ? "good-cookie" : "blocked-cookie"
+    ),
+    ["good-cookie"]
+  );
+});
+
+test("shouldRetryImageGenerationWithNextAccount only retries ChatGPT Web account-scoped errors", () => {
+  const credentials = { connectionId: "conn-1" };
+  assert.equal(
+    imageRoute.shouldRetryImageGenerationWithNextAccount(
+      {
+        success: false,
+        status: 403,
+        error: JSON.stringify({
+          error: {
+            message: "ChatGPT blocked the request (Sentinel/Turnstile required).",
+            code: "SENTINEL_BLOCKED",
+          },
+        }),
+      },
+      { format: "chatgpt-web" },
+      credentials
+    ),
+    true
+  );
+  assert.equal(
+    imageRoute.shouldRetryImageGenerationWithNextAccount(
+      { success: false, status: 403, error: "policy denied" },
+      { format: "openai" },
+      credentials
+    ),
+    false
+  );
+  assert.equal(
+    imageRoute.shouldRetryImageGenerationWithNextAccount(
+      { success: false, status: 400, error: "bad prompt" },
+      { format: "chatgpt-web" },
+      credentials
+    ),
+    false
+  );
 });

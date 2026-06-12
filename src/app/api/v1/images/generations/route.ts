@@ -121,6 +121,13 @@ const MULTIPART_IMAGE_FIELDS = new Set<string>([
   ...MULTIPART_IMAGE_FILE_FIELDS,
 ]);
 const MULTIPART_NUMBER_FIELDS = new Set(["n", "timeout_ms", "poll_interval_ms"]);
+const CHATGPT_WEB_IMAGE_MAX_ACCOUNT_ATTEMPTS = 5;
+const CHATGPT_WEB_RETRYABLE_ACCOUNT_ERROR_CODES = new Set([
+  "SENTINEL_BLOCKED",
+  "HTTP_401",
+  "HTTP_403",
+  "HTTP_429",
+]);
 
 function isMultipartRequest(request: Request) {
   return (
@@ -189,6 +196,60 @@ async function readMultipartImageGenerationBody(formData: FormData) {
   }
 
   return body;
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function parseErrorString(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function getImageGenerationErrorCode(error: unknown): string | null {
+  const parsed = typeof error === "string" ? parseErrorString(error) : error;
+  const payload = toRecord(parsed);
+  const nestedError = toRecord(payload?.error);
+  const code = nestedError?.code ?? payload?.code;
+  return typeof code === "string" && code.trim() ? code.trim() : null;
+}
+
+function getImageGenerationErrorMessage(error: unknown): string {
+  const parsed = typeof error === "string" ? parseErrorString(error) : error;
+  const payload = toRecord(parsed);
+  const nestedError = toRecord(payload?.error);
+  const message = nestedError?.message ?? payload?.message;
+  if (typeof message === "string") return message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+export function shouldRetryImageGenerationWithNextAccount(
+  result: { success?: unknown; status?: unknown; error?: unknown } | null | undefined,
+  providerConfig: { format?: string } | null | undefined,
+  credentials: { connectionId?: unknown } | null | undefined
+): boolean {
+  if (!result || result.success) return false;
+  if (providerConfig?.format !== "chatgpt-web") return false;
+  if (typeof credentials?.connectionId !== "string" || !credentials.connectionId) return false;
+
+  const status = Number(result.status);
+  const code = getImageGenerationErrorCode(result.error);
+  if (code && CHATGPT_WEB_RETRYABLE_ACCOUNT_ERROR_CODES.has(code)) return true;
+  if (status === HTTP_STATUS.UNAUTHORIZED || status === HTTP_STATUS.RATE_LIMITED) return true;
+
+  const message = getImageGenerationErrorMessage(result.error);
+  return status === HTTP_STATUS.FORBIDDEN && /\b(?:sentinel|turnstile)\b/i.test(message);
 }
 
 export async function POST(request: Request) {
@@ -286,71 +347,91 @@ export async function POST(request: Request) {
     );
   }
 
-  // Get credentials — skip for local providers (authType: "none")
-  let credentials = null;
-  if (providerConfig && providerConfig.authType !== "none") {
-    credentials = await getProviderCredentials(provider);
-    if (!credentials) {
-      return errorResponse(
-        HTTP_STATUS.BAD_REQUEST,
-        `No credentials for image provider: ${provider}`
-      );
+  const needsCredentials = Boolean(
+    (providerConfig && providerConfig.authType !== "none") || isCustomModel
+  );
+  const noCredentialsMessage = isCustomModel
+    ? `No credentials for custom image provider: ${provider}`
+    : `No credentials for image provider: ${provider}`;
+  const maxAttempts =
+    providerConfig?.format === "chatgpt-web" ? CHATGPT_WEB_IMAGE_MAX_ACCOUNT_ATTEMPTS : 1;
+  const excludedConnectionIds: string[] = [];
+  let excludedConnectionId: string | null = null;
+  let credentials: any = null;
+  let result: any = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    if (needsCredentials) {
+      credentials = await getProviderCredentials(provider, excludedConnectionId, null, null, {
+        excludeConnectionIds: excludedConnectionIds,
+      });
+      if (!credentials) {
+        if (result) break;
+        return errorResponse(HTTP_STATUS.BAD_REQUEST, noCredentialsMessage);
+      }
+      if (credentials.allRateLimited) {
+        if (result) break;
+        return unavailableResponse(
+          HTTP_STATUS.RATE_LIMITED,
+          `[${provider}] All accounts rate limited`,
+          credentials.retryAfter,
+          credentials.retryAfterHuman
+        );
+      }
     }
-    if (credentials.allRateLimited) {
-      return unavailableResponse(
-        HTTP_STATUS.RATE_LIMITED,
-        `[${provider}] All accounts rate limited`,
-        credentials.retryAfter,
-        credentials.retryAfterHuman
-      );
+
+    // Resolve proxy for the selected connection on each attempt (#1904).
+    let proxyInfo = null;
+    if (credentials?.connectionId) {
+      try {
+        proxyInfo = await resolveProxyForConnection(credentials.connectionId);
+      } catch {
+        log.debug("PROXY", `Failed to resolve proxy for image provider: ${provider}`);
+      }
     }
-  } else if (isCustomModel) {
-    credentials = await getProviderCredentials(provider);
-    if (!credentials) {
-      return errorResponse(
-        HTTP_STATUS.BAD_REQUEST,
-        `No credentials for custom image provider: ${provider}`
+
+    const generateImage = () =>
+      handleImageGeneration({
+        body,
+        credentials,
+        log,
+        apiKeyInfo: policy.apiKeyInfo,
+        ...(isCustomModel && { resolvedProvider: provider }),
+        signal: request.signal,
+        clientHeaders: publicBaseUrlHeaders(request.headers),
+      });
+
+    // Execute with proxy context when available, direct otherwise (#1904)
+    result = await (credentials?.connectionId
+      ? runWithProxyContext(proxyInfo?.proxy || null, generateImage).catch((err: any) => ({
+          success: false,
+          status: err.statusCode || 500,
+          error: err.message,
+        }))
+      : generateImage());
+
+    if (
+      attempt < maxAttempts &&
+      !request.signal.aborted &&
+      shouldRetryImageGenerationWithNextAccount(result, providerConfig, credentials)
+    ) {
+      const connectionId = credentials.connectionId;
+      if (excludedConnectionIds.includes(connectionId)) break;
+      excludedConnectionIds.push(connectionId);
+      excludedConnectionId = connectionId;
+      const code = getImageGenerationErrorCode(result.error) || `HTTP_${result.status}`;
+      log.warn(
+        "IMAGE",
+        `ChatGPT Web image attempt ${attempt} failed with ${code} on ${connectionId.slice(
+          0,
+          8
+        )}; retrying with another account`
       );
+      continue;
     }
-    if (credentials.allRateLimited) {
-      return unavailableResponse(
-        HTTP_STATUS.RATE_LIMITED,
-        `[${provider}] All accounts rate limited`,
-        credentials.retryAfter,
-        credentials.retryAfterHuman
-      );
-    }
+
+    break;
   }
-
-  // Resolve proxy for the connection if credentials exist (#1904)
-  let proxyInfo = null;
-  if (credentials?.connectionId) {
-    try {
-      proxyInfo = await resolveProxyForConnection(credentials.connectionId);
-    } catch {
-      log.debug("PROXY", `Failed to resolve proxy for image provider: ${provider}`);
-    }
-  }
-
-  const generateImage = () =>
-    handleImageGeneration({
-      body,
-      credentials,
-      log,
-      apiKeyInfo: policy.apiKeyInfo,
-      ...(isCustomModel && { resolvedProvider: provider }),
-      signal: request.signal,
-      clientHeaders: publicBaseUrlHeaders(request.headers),
-    });
-
-  // Execute with proxy context when available, direct otherwise (#1904)
-  const result = await (credentials?.connectionId
-    ? runWithProxyContext(proxyInfo?.proxy || null, generateImage).catch((err: any) => ({
-        success: false,
-        status: err.statusCode || 500,
-        error: err.message,
-      }))
-    : generateImage());
 
   if (result.success) {
     await clearRecoveredProviderState(credentials);
