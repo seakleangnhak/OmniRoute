@@ -136,6 +136,11 @@ const EXTRA_MODULE_ENTRIES = [
     dest: ["v1-ws-bridge.mjs"],
   },
   {
+    label: "webdav-handler (server-ws.mjs dependency)",
+    src: ["scripts", "dev", "webdav-handler.mjs"],
+    dest: ["webdav-handler.mjs"],
+  },
+  {
     label: "runtime-env script",
     src: ["scripts", "build", "runtime-env.mjs"],
     dest: ["build", "runtime-env.mjs"],

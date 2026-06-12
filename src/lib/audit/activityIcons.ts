@@ -21,6 +21,10 @@ export const ACTIVITY_ICONS: Record<string, ActivityIconSpec> = {
     icon: "extension_off",
     i18nKeyVerb: "providerCredentialsBatchRevoked",
   },
+  "provider.credentials.batch_updated": {
+    icon: "edit",
+    i18nKeyVerb: "providerCredentialsBatchUpdated",
+  },
   "provider.credentials.bulk_created": {
     icon: "extension",
     i18nKeyVerb: "providerCredentialsBulkCreated",

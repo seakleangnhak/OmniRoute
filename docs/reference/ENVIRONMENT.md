@@ -228,11 +228,12 @@ OmniRoute provides a two-layer defense: request-side injection scanning and resp
 
 ## 6. Tool & Routing Policies
 
-| Variable                            | Default                      | Source File                         | Description                                                                                                                               |
-| ----------------------------------- | ---------------------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `TOOL_POLICY_MODE`                  | `disabled`                   | `src/lib/toolPolicy.ts`             | Controls LLM tool/function-calling access. `allowlist` = only listed tools, `denylist` = all except listed, `disabled` = no restrictions. |
-| `OMNIROUTE_PAYLOAD_RULES_PATH`      | `./config/payloadRules.json` | `open-sse/services/payloadRules.ts` | Path to payload manipulation rules JSON file (per-model/protocol upstream tweaks).                                                        |
-| `OMNIROUTE_PAYLOAD_RULES_RELOAD_MS` | `5000`                       | `open-sse/services/payloadRules.ts` | Reload interval (ms) for hot-reloading the payload rules file. Minimum `1000`.                                                            |
+| Variable                                                    | Default                      | Source File                         | Description                                                                                                                                                                                                                                                |
+| ----------------------------------------------------------- | ---------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TOOL_POLICY_MODE`                                          | `disabled`                   | `src/lib/toolPolicy.ts`             | Controls LLM tool/function-calling access. `allowlist` = only listed tools, `denylist` = all except listed, `disabled` = no restrictions.                                                                                                                  |
+| `OMNIROUTE_PAYLOAD_RULES_PATH`                              | `./config/payloadRules.json` | `open-sse/services/payloadRules.ts` | Path to payload manipulation rules JSON file (per-model/protocol upstream tweaks).                                                                                                                                                                         |
+| `OMNIROUTE_PAYLOAD_RULES_RELOAD_MS`                         | `5000`                       | `open-sse/services/payloadRules.ts` | Reload interval (ms) for hot-reloading the payload rules file. Minimum `1000`.                                                                                                                                                                             |
+| `OMNIROUTE_PREFER_CLAUDE_CODE_FOR_UNPREFIXED_CLAUDE_MODELS` | `false`                      | `open-sse/services/model.ts`        | Opt-in: route bare `claude-*` model IDs from Claude Code clients through the Claude Code OAuth account instead of requiring a provider prefix. Explicit provider prefixes still win. Also configurable via a dashboard toggle on the Claude provider page. |
 
 ---
 
@@ -299,22 +300,23 @@ Route upstream LLM provider calls through an HTTP or SOCKS5 proxy for egress con
 
 Controls how OmniRoute discovers and launches CLI sidecars (Claude Code, Codex, etc.).
 
-| Variable                  | Default    | Source File                         | Description                                                                        |
-| ------------------------- | ---------- | ----------------------------------- | ---------------------------------------------------------------------------------- |
-| `CLI_MODE`                | `auto`     | `src/shared/services/cliRuntime.ts` | `auto` = search system PATH; `manual` = use explicit paths only.                   |
-| `CLI_EXTRA_PATHS`         | _(unset)_  | `src/shared/services/cliRuntime.ts` | Additional PATH entries for CLI binary discovery (colon-separated).                |
-| `CLI_CONFIG_HOME`         | _(unset)_  | `src/shared/services/cliRuntime.ts` | Override home directory for reading CLI configs (`~/.claude`, `~/.codex`).         |
-| `CLI_ALLOW_CONFIG_WRITES` | `false`    | `src/shared/services/cliRuntime.ts` | Allow OmniRoute to write CLI config files (token refresh, session data).           |
-| `CLI_CLAUDE_BIN`          | `claude`   | `src/shared/services/cliRuntime.ts` | Custom path to Claude CLI binary.                                                  |
-| `CLI_CODEX_BIN`           | `codex`    | `src/shared/services/cliRuntime.ts` | Custom path to Codex CLI binary.                                                   |
-| `CLI_DROID_BIN`           | `droid`    | `src/shared/services/cliRuntime.ts` | Custom path to Droid CLI binary.                                                   |
-| `CLI_OPENCLAW_BIN`        | `openclaw` | `src/shared/services/cliRuntime.ts` | Custom path to OpenClaw CLI binary.                                                |
-| `CLI_CURSOR_BIN`          | `agent`    | `src/shared/services/cliRuntime.ts` | Custom path to Cursor agent binary.                                                |
-| `CLI_CLINE_BIN`           | `cline`    | `src/shared/services/cliRuntime.ts` | Custom path to Cline CLI binary.                                                   |
-| `CLI_CONTINUE_BIN`        | `cn`       | `src/shared/services/cliRuntime.ts` | Custom path to Continue CLI binary.                                                |
-| `CLI_QODER_BIN`           | `qoder`    | `src/shared/services/cliRuntime.ts` | Custom path to Qoder CLI binary.                                                   |
-| `CLI_QWEN_BIN`            | `qwen`     | `src/shared/services/cliRuntime.ts` | Custom path to the Qwen Code CLI binary.                                           |
-| `CLI_DEVIN_BIN`           | `devin`    | `open-sse/executors/devin-cli.ts`   | Custom path to the Devin CLI binary (v3.8.0). Used by the Windsurf/Devin executor. |
+| Variable                  | Default     | Source File                                         | Description                                                                                                                                                                    |
+| ------------------------- | ----------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `CLI_MODE`                | `auto`      | `src/shared/services/cliRuntime.ts`                 | `auto` = search system PATH; `manual` = use explicit paths only.                                                                                                               |
+| `CLI_EXTRA_PATHS`         | _(unset)_   | `src/shared/services/cliRuntime.ts`                 | Additional PATH entries for CLI binary discovery (colon-separated).                                                                                                            |
+| `CLI_CONFIG_HOME`         | _(unset)_   | `src/shared/services/cliRuntime.ts`                 | Override home directory for reading CLI configs (`~/.claude`, `~/.codex`).                                                                                                     |
+| `CLI_ALLOW_CONFIG_WRITES` | `false`     | `src/shared/services/cliRuntime.ts`                 | Allow OmniRoute to write CLI config files (token refresh, session data).                                                                                                       |
+| `CLI_CLAUDE_BIN`          | `claude`    | `src/shared/services/cliRuntime.ts`                 | Custom path to Claude CLI binary.                                                                                                                                              |
+| `CLI_CODEX_BIN`           | `codex`     | `src/shared/services/cliRuntime.ts`                 | Custom path to Codex CLI binary.                                                                                                                                               |
+| `CLI_DROID_BIN`           | `droid`     | `src/shared/services/cliRuntime.ts`                 | Custom path to Droid CLI binary.                                                                                                                                               |
+| `CLI_OPENCLAW_BIN`        | `openclaw`  | `src/shared/services/cliRuntime.ts`                 | Custom path to OpenClaw CLI binary.                                                                                                                                            |
+| `CLI_CURSOR_BIN`          | `agent`     | `src/shared/services/cliRuntime.ts`                 | Custom path to Cursor agent binary.                                                                                                                                            |
+| `CLI_CLINE_BIN`           | `cline`     | `src/shared/services/cliRuntime.ts`                 | Custom path to Cline CLI binary.                                                                                                                                               |
+| `CLI_CONTINUE_BIN`        | `cn`        | `src/shared/services/cliRuntime.ts`                 | Custom path to Continue CLI binary.                                                                                                                                            |
+| `CLI_QODER_BIN`           | `qoder`     | `src/shared/services/cliRuntime.ts`                 | Custom path to Qoder CLI binary.                                                                                                                                               |
+| `CLI_QWEN_BIN`            | `qwen`      | `src/shared/services/cliRuntime.ts`                 | Custom path to the Qwen Code CLI binary.                                                                                                                                       |
+| `CLI_DEVIN_BIN`           | `devin`     | `open-sse/executors/devin-cli.ts`                   | Custom path to the Devin CLI binary (v3.8.0). Used by the Windsurf/Devin executor.                                                                                             |
+| `HERMES_HOME`             | `~/.hermes` | `src/lib/cli-helper/config-generator/hermesHome.ts` | Hermes Agent home directory where OmniRoute reads/writes the Hermes CLI config. Matches the env var the Hermes PowerShell installer sets on Windows (`%LOCALAPPDATA%\hermes`). |
 
 ### Docker Example
 

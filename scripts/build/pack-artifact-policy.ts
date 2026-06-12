@@ -43,6 +43,7 @@ export const APP_STAGING_ALLOWED_EXACT_PATHS: string[] = [
   "server.js",
   "server-ws.mjs",
   "v1-ws-bridge.mjs",
+  "webdav-handler.mjs",
 ];
 
 export const APP_STAGING_ALLOWED_PATH_PREFIXES: string[] = [
@@ -123,6 +124,7 @@ export const PACK_ARTIFACT_REQUIRED_PATHS: string[] = [
   "dist/responses-ws-proxy.mjs",
   "dist/peer-stamp.mjs",
   "dist/v1-ws-bridge.mjs",
+  "dist/webdav-handler.mjs",
   "bin/cli/program.mjs",
   "bin/mcp-server.mjs",
   "bin/nodeRuntimeSupport.mjs",

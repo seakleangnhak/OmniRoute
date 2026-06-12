@@ -279,11 +279,13 @@ export async function PATCH(request: Request) {
 
     await syncToCloudIfEnabled();
 
+    // Partial failure (some ids no longer exist) is logged as "warn" so the
+    // Activity feed reflects that not every requested id was applied.
     logAuditEvent({
       action: "provider.credentials.batch_updated",
       actor: "admin",
       resourceType: "provider_credentials",
-      status: "success",
+      status: notFoundIds.length > 0 ? "warn" : "success",
       ipAddress: auditContext.ipAddress || undefined,
       requestId: auditContext.requestId,
       metadata: { isActive, updated: updatedIds.length, notFound: notFoundIds, ids },
@@ -298,7 +300,7 @@ export async function PATCH(request: Request) {
       { status: 200 }
     );
   } catch (error) {
-    console.log("Error batch updating connections:", error);
+    console.error("Error batch updating connections:", error);
     return NextResponse.json({ error: "Failed to batch update connections" }, { status: 500 });
   }
 }
