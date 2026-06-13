@@ -207,6 +207,18 @@ const RENAMED_MIGRATION_COMPATIBILITY = [
     toVersion: "098",
     toName: "discovery_results",
   },
+  {
+    fromVersion: "097",
+    fromName: "model_intelligence",
+    toVersion: "099",
+    toName: "model_intelligence",
+  },
+  {
+    fromVersion: "098",
+    fromName: "clear_semantic_cache_for_key_isolation",
+    toVersion: "100",
+    toName: "clear_semantic_cache_for_key_isolation",
+  },
 ] as const;
 
 const LEGACY_VERSION_SLOT_MIGRATIONS = [
@@ -586,6 +598,14 @@ function isSchemaAlreadyApplied(
       );
     case "098":
       return hasTable(db, "discovery_results");
+    case "099":
+      // Retroactive guard for model_intelligence renumbered from 097 after
+      // merging with the canonical per-model token limits migration.
+      return hasTable(db, "model_intelligence");
+    case "100":
+      // Data-only cleanup migration. Compatibility reconciliation moves an
+      // existing 098 marker to 100 for databases that already applied it.
+      return false;
     default:
       return false;
   }

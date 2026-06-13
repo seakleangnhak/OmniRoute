@@ -22,6 +22,8 @@ import { useNotificationStore } from "@/store/notificationStore";
 import {
   buildCompatMap,
   providerText,
+  testAllResultsText,
+  evaluateTestAllEntry,
   buildPassthroughTestBody,
   shouldSwitchToVisibleFilter,
   type CompatModelRow,
@@ -65,6 +67,8 @@ export interface PassthroughModelsSectionProps {
   togglingModelId?: string | null;
   onTestModel?: (modelId: string, fullModel: string) => Promise<void>;
   modelTestStatus?: Record<string, "ok" | "error" | null>;
+  /** Report a model's test-all result so the parent updates the green/red icon. */
+  onModelTestStatusChange?: (modelId: string, status: "ok" | "error") => void;
   testingModelId?: string | null;
   providerId: string;
   connectionId: string;
@@ -102,6 +106,7 @@ export default function PassthroughModelsSection({
   togglingModelId,
   onTestModel,
   modelTestStatus,
+  onModelTestStatusChange,
   testingModelId,
   providerId,
   connectionId,
@@ -163,22 +168,26 @@ export default function PassthroughModelsSection({
         }).then((r) => r.json());
 
         const entry = result.results?.[model.modelId];
-        if (entry?.status === "ok") {
+        const outcome = evaluateTestAllEntry(entry, autoHideFailed);
+        // Paint the per-model icon green/red, same as the single-model ▶ test.
+        onModelTestStatusChange?.(model.modelId, outcome.status);
+        if (outcome.status === "ok") {
           ok++;
         } else {
           error++;
-          if (autoHideFailed && !entry?.rateLimited && !entry?.isTimeout) {
+          if (outcome.shouldHide) {
             await onToggleHidden(model.modelId, true);
             hiddenCount++;
           }
         }
       } catch (e) {
         error++;
+        onModelTestStatusChange?.(model.modelId, "error");
       }
       setTestProgress((prev) => (prev ? { done: prev.done + 1, total: prev.total } : null));
     }
 
-    notify.info(providerText(t, "testAllResults", "{ok} ok, {error} error", { ok, error }));
+    notify.info(testAllResultsText(t, ok, ok + error));
     if (hiddenCount > 0) {
       notify.info(providerText(t, "testAllFailedHidden", "{count} hidden", { count: hiddenCount }));
       // Bug #3610 fix 3: switch to "visible" filter so hidden models disappear on-screen

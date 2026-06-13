@@ -161,4 +161,60 @@ export function register_providers(parent) {
       const data = res.ok ? await res.json() : await res.text();
       emit(data, gOpts);
     });
+  tag
+    .command("post-api-providers-agy-auth-import")
+    .description("Import an Antigravity CLI (agy) token file as an `agy` connection")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/providers/agy-auth/import";
+      const res = await apiFetch(url, {
+        method: "POST",
+        baseUrl: gOpts.baseUrl,
+        apiKey: gOpts.apiKey,
+      });
+      const data = res.ok ? await res.json() : await res.text();
+      emit(data, gOpts);
+    });
+  tag
+    .command("post-api-providers-agy-auth-import-bulk")
+    .description("Bulk-import multiple Antigravity CLI (agy) token files (up to 50)")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/providers/agy-auth/import-bulk";
+      const res = await apiFetch(url, {
+        method: "POST",
+        baseUrl: gOpts.baseUrl,
+        apiKey: gOpts.apiKey,
+      });
+      const data = res.ok ? await res.json() : await res.text();
+      emit(data, gOpts);
+    });
+  tag
+    .command("post-api-providers-agy-auth-zip-extract")
+    .description("Extract `.json` token files from an uploaded ZIP for agy bulk import")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/providers/agy-auth/zip-extract";
+      const res = await apiFetch(url, {
+        method: "POST",
+        baseUrl: gOpts.baseUrl,
+        apiKey: gOpts.apiKey,
+      });
+      const data = res.ok ? await res.json() : await res.text();
+      emit(data, gOpts);
+    });
+  tag
+    .command("post-api-providers-agy-auth-apply-local")
+    .description("Auto-detect and import the local Antigravity CLI (agy) login from disk")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/providers/agy-auth/apply-local";
+      const res = await apiFetch(url, {
+        method: "POST",
+        baseUrl: gOpts.baseUrl,
+        apiKey: gOpts.apiKey,
+      });
+      const data = res.ok ? await res.json() : await res.text();
+      emit(data, gOpts);
+    });
 }

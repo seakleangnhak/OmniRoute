@@ -1051,50 +1051,55 @@ test("createSSEStream passthrough merges Claude usage chunks and restores mapped
   assert.equal(onCompletePayload.responseBody.usage.total_tokens, 10);
 });
 
-test("createSSEStream passthrough injects a synthetic Claude text block for empty assistant SSE", async () => {
-  let onCompletePayload = null;
-  const text = await readTransformed(
-    [
-      `event: message_start\ndata: ${JSON.stringify({
-        type: "message_start",
-        message: {
-          id: "msg_empty_passthrough",
-          type: "message",
-          role: "assistant",
-          model: "claude-sonnet-4",
-          content: [],
-          stop_reason: null,
-          stop_sequence: null,
-          usage: { input_tokens: 7, output_tokens: 0 },
+test("#3685 createSSEStream passthrough emits SSE error (not synthetic text) for empty Claude assistant SSE", async () => {
+  let failurePayload = null;
+  let completePayload = null;
+  await assert.rejects(
+    readTransformed(
+      [
+        `event: message_start\ndata: ${JSON.stringify({
+          type: "message_start",
+          message: {
+            id: "msg_empty_passthrough",
+            type: "message",
+            role: "assistant",
+            model: "claude-sonnet-4",
+            content: [],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: { input_tokens: 7, output_tokens: 0 },
+          },
+        })}\n\n`,
+        `event: message_stop\ndata: ${JSON.stringify({
+          type: "message_stop",
+        })}\n\n`,
+      ],
+      {
+        mode: "passthrough",
+        sourceFormat: FORMATS.CLAUDE,
+        provider: "claude",
+        model: "claude-sonnet-4",
+        body: {
+          messages: [{ role: "user", content: "hello" }],
         },
-      })}\n\n`,
-      `event: message_stop\ndata: ${JSON.stringify({
-        type: "message_stop",
-      })}\n\n`,
-    ],
-    {
-      mode: "passthrough",
-      sourceFormat: FORMATS.CLAUDE,
-      provider: "claude",
-      model: "claude-sonnet-4",
-      body: {
-        messages: [{ role: "user", content: "hello" }],
-      },
-      onComplete(payload) {
-        onCompletePayload = payload;
-      },
-    }
+        onFailure(payload) {
+          failurePayload = payload;
+        },
+        onComplete(payload) {
+          completePayload = payload;
+        },
+      }
+    ),
+    /empty response/i
   );
-
-  assert.equal((text.match(/event: message_start/g) || []).length, 1);
-  assert.equal((text.match(/event: message_delta/g) || []).length, 1);
-  assert.match(text, /event: content_block_start/);
-  assert.match(text, /event: content_block_delta/);
-  assert.match(text, /event: message_stop/);
-  assert.ok(text.indexOf("event: content_block_start") > text.indexOf("event: message_start"));
-  assert.ok(text.indexOf("event: message_stop") > text.indexOf("event: content_block_stop"));
-  // SYNTHETIC_CLAUDE_EMPTY_RESPONSE_TEXT is "" so the accumulator produces null content (empty delta is falsy).
-  assert.equal(onCompletePayload.responseBody.choices[0].message.content, null);
+  assert.ok(failurePayload, "onFailure should be called");
+  assert.equal(failurePayload.status, 502);
+  assert.match(failurePayload.message, /empty response/i);
+  assert.equal(failurePayload.code, "empty_response", "code must identify the failure kind");
+  assert.equal(typeof failurePayload.code, "string", "code must be a string");
+  assert.ok(failurePayload.message.length > 0, "message must be non-empty");
+  assert.ok(failurePayload.status >= 500, "status must be a server error (5xx)");
+  assert.equal(completePayload, null, "onComplete must not fire when stream is empty");
 });
 
 test("createSSEStream passthrough does not emit [DONE] for Claude SSE clients", async () => {
@@ -1153,51 +1158,54 @@ test("createSSEStream passthrough does not emit [DONE] for Claude SSE clients", 
   assert.doesNotMatch(text, /\[DONE\]/);
 });
 
-test("createSSEStream translate mode injects a synthetic Claude text block when OpenAI finishes empty", async () => {
-  let onCompletePayload = null;
-  const text = await readTransformed(
-    [
-      `data: ${JSON.stringify({
-        id: "chatcmpl_empty_1",
-        object: "chat.completion.chunk",
-        created: 1,
+test("#3685 createSSEStream translate mode emits SSE error (not synthetic text) when OpenAI upstream finishes empty for Claude client", async () => {
+  let failurePayload = null;
+  let completePayload = null;
+  await assert.rejects(
+    readTransformed(
+      [
+        `data: ${JSON.stringify({
+          id: "chatcmpl_empty_1",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "gpt-4.1-mini",
+          choices: [{ index: 0, delta: { role: "assistant" } }],
+        })}\n\n`,
+        `data: ${JSON.stringify({
+          id: "chatcmpl_empty_1",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "gpt-4.1-mini",
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+          usage: { prompt_tokens: 3, completion_tokens: 0, total_tokens: 3 },
+        })}\n\n`,
+      ],
+      {
+        mode: "translate",
+        targetFormat: FORMATS.OPENAI,
+        sourceFormat: FORMATS.CLAUDE,
+        provider: "openai",
         model: "gpt-4.1-mini",
-        choices: [{ index: 0, delta: { role: "assistant" } }],
-      })}\n\n`,
-      `data: ${JSON.stringify({
-        id: "chatcmpl_empty_1",
-        object: "chat.completion.chunk",
-        created: 1,
-        model: "gpt-4.1-mini",
-        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-        usage: { prompt_tokens: 3, completion_tokens: 0, total_tokens: 3 },
-      })}\n\n`,
-    ],
-    {
-      mode: "translate",
-      targetFormat: FORMATS.OPENAI,
-      sourceFormat: FORMATS.CLAUDE,
-      provider: "openai",
-      model: "gpt-4.1-mini",
-      body: {
-        messages: [{ role: "user", content: "hello" }],
-      },
-      onComplete(payload) {
-        onCompletePayload = payload;
-      },
-    }
+        body: {
+          messages: [{ role: "user", content: "hello" }],
+        },
+        onFailure(payload) {
+          failurePayload = payload;
+        },
+        onComplete(payload) {
+          completePayload = payload;
+        },
+      }
+    ),
+    /empty response/i
   );
-
-  assert.equal((text.match(/event: message_start/g) || []).length, 1);
-  assert.match(text, /event: content_block_start/);
-  assert.match(text, /event: content_block_delta/);
-  assert.match(text, /event: message_delta/);
-  assert.match(text, /event: message_stop/);
-  assert.ok(text.indexOf("event: content_block_start") > text.indexOf("event: message_start"));
-  assert.ok(text.indexOf("event: message_delta") > text.indexOf("event: content_block_stop"));
-  // SYNTHETIC_CLAUDE_EMPTY_RESPONSE_TEXT is "" so the accumulator produces null content (empty delta is falsy).
-  assert.equal(onCompletePayload.responseBody.choices[0].message.content, null);
-  assert.equal(onCompletePayload.responseBody.usage.total_tokens, 3);
+  assert.ok(failurePayload, "onFailure should be called");
+  assert.equal(failurePayload.status, 502);
+  assert.match(failurePayload.message, /empty response/i);
+  assert.equal(failurePayload.code, "empty_response", "code must identify the failure kind");
+  assert.ok(failurePayload.message.length > 0, "message must be non-empty");
+  assert.ok(failurePayload.status >= 500, "status must be a server error (5xx)");
+  assert.equal(completePayload, null, "onComplete must not fire when stream is empty");
 });
 
 test("createSSETransformStreamWithLogger flushes a trailing Claude usage event without a newline", async () => {

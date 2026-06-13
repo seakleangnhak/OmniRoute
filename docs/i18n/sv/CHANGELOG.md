@@ -386,6 +386,12 @@ must be a response to a preceding message with 'tool_calls'` when a Codex
 
 ## [Unreleased]
 
+---
+
+## [3.8.23] — TBD
+
+---
+
 ### ✨ New Features
 
 ### 🔧 Bug Fixes

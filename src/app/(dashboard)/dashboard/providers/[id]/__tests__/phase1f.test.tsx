@@ -10,9 +10,10 @@
 // Uses createRoot + act to mount each hook inside a minimal wrapper component
 // so we test real React hook semantics without a full Next.js server context.
 
-import React, { act } from "react";
+import React, { act, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import path from "node:path";
 
 // ---------------------------------------------------------------------------
 // Global mocks required by the extracted hooks
@@ -79,11 +80,11 @@ describe("useProviderConnections — initial state", () => {
     type HookResult = ReturnType<typeof useProviderConnections>;
     let result: HookResult | null = null;
 
-    function TestWrapper({ onResult }: { onResult: (value: HookResult) => void }) {
+    function TestWrapper() {
       const hookResult = useProviderConnections("openai", true, false);
-      React.useEffect(() => {
-        onResult(hookResult);
-      }, [hookResult, onResult]);
+      useEffect(() => {
+        result = hookResult;
+      }, [hookResult]);
       return (
         <span data-testid="loaded">
           {String(hookResult.connections.length)}|{String(hookResult.batchTesting)}
@@ -92,13 +93,7 @@ describe("useProviderConnections — initial state", () => {
     }
 
     await act(async () => {
-      root.render(
-        <TestWrapper
-          onResult={(value) => {
-            result = value;
-          }}
-        />
-      );
+      root.render(<TestWrapper />);
     });
 
     expect(result).not.toBeNull();
@@ -117,22 +112,16 @@ describe("useProviderConnections — initial state", () => {
     type HookResult = ReturnType<typeof useProviderConnections>;
     let result: HookResult | null = null;
 
-    function TestWrapper({ onResult }: { onResult: (value: HookResult) => void }) {
+    function TestWrapper() {
       const hookResult = useProviderConnections("openai", true, false);
-      React.useEffect(() => {
-        onResult(hookResult);
-      }, [hookResult, onResult]);
+      useEffect(() => {
+        result = hookResult;
+      }, [hookResult]);
       return <span />;
     }
 
     await act(async () => {
-      root.render(
-        <TestWrapper
-          onResult={(value) => {
-            result = value;
-          }}
-        />
-      );
+      root.render(<TestWrapper />);
     });
 
     const expected = [
@@ -196,22 +185,16 @@ describe("useProviderSettings — initial state", () => {
     type HookResult = ReturnType<typeof useProviderSettings>;
     let result: HookResult | null = null;
 
-    function TestWrapper({ onResult }: { onResult: (value: HookResult) => void }) {
+    function TestWrapper() {
       const hookResult = useProviderSettings("openai");
-      React.useEffect(() => {
-        onResult(hookResult);
-      }, [hookResult, onResult]);
+      useEffect(() => {
+        result = hookResult;
+      }, [hookResult]);
       return <span />;
     }
 
     await act(async () => {
-      root.render(
-        <TestWrapper
-          onResult={(value) => {
-            result = value;
-          }}
-        />
-      );
+      root.render(<TestWrapper />);
     });
 
     expect(result).not.toBeNull();
@@ -231,22 +214,16 @@ describe("useProviderSettings — initial state", () => {
     type HookResult = ReturnType<typeof useProviderSettings>;
     let result: HookResult | null = null;
 
-    function TestWrapper({ onResult }: { onResult: (value: HookResult) => void }) {
+    function TestWrapper() {
       const hookResult = useProviderSettings("codex");
-      React.useEffect(() => {
-        onResult(hookResult);
-      }, [hookResult, onResult]);
+      useEffect(() => {
+        result = hookResult;
+      }, [hookResult]);
       return <span />;
     }
 
     await act(async () => {
-      root.render(
-        <TestWrapper
-          onResult={(value) => {
-            result = value;
-          }}
-        />
-      );
+      root.render(<TestWrapper />);
     });
 
     expect(typeof result!.loadCodexSettings).toBe("function");
@@ -286,22 +263,16 @@ describe("useProviderModels — initial state", () => {
     type HookResult = ReturnType<typeof useProviderModels>;
     let result: HookResult | null = null;
 
-    function TestWrapper({ onResult }: { onResult: (value: HookResult) => void }) {
+    function TestWrapper() {
       const hookResult = useProviderModels("openai", false);
-      React.useEffect(() => {
-        onResult(hookResult);
-      }, [hookResult, onResult]);
+      useEffect(() => {
+        result = hookResult;
+      }, [hookResult]);
       return <span />;
     }
 
     await act(async () => {
-      root.render(
-        <TestWrapper
-          onResult={(value) => {
-            result = value;
-          }}
-        />
-      );
+      root.render(<TestWrapper />);
     });
 
     expect(result).not.toBeNull();
@@ -317,22 +288,16 @@ describe("useProviderModels — initial state", () => {
     type HookResult = ReturnType<typeof useProviderModels>;
     let result: HookResult | null = null;
 
-    function TestWrapper({ onResult }: { onResult: (value: HookResult) => void }) {
+    function TestWrapper() {
       const hookResult = useProviderModels("openai", false);
-      React.useEffect(() => {
-        onResult(hookResult);
-      }, [hookResult, onResult]);
+      useEffect(() => {
+        result = hookResult;
+      }, [hookResult]);
       return <span />;
     }
 
     await act(async () => {
-      root.render(
-        <TestWrapper
-          onResult={(value) => {
-            result = value;
-          }}
-        />
-      );
+      root.render(<TestWrapper />);
     });
 
     expect(typeof result!.fetchProviderModelMeta).toBe("function");
@@ -368,33 +333,32 @@ describe("useProviderModels — initial state", () => {
 // Cycle-safety: hooks must NOT import from ProviderDetailPageClient
 // ---------------------------------------------------------------------------
 
+// Resolve the hooks dir from the repo root (vitest runs from cwd). Was a
+// hardcoded absolute worktree path that broke the test outside that worktree
+// (#3501 Phase 1g-1j).
+const HOOKS_DIR = path.join(process.cwd(), "src/app/(dashboard)/dashboard/providers/[id]/hooks");
+
 describe("Cycle-safety — hooks do not import ProviderDetailPageClient", () => {
   // We allow the name in JSDoc comments; what we forbid is an actual ES import statement.
   function hasImport(source: string): boolean {
     return /^import[^;]*ProviderDetailPageClient/m.test(source);
   }
 
-  async function readHookSource(fileName: string): Promise<string> {
-    const fs = await import("fs/promises");
-    const path = await import("node:path");
-    return fs.readFile(
-      path.join(process.cwd(), "src/app/(dashboard)/dashboard/providers/[id]/hooks", fileName),
-      "utf-8"
-    );
-  }
-
   it("useProviderConnections has no ES import of ProviderDetailPageClient", async () => {
-    const source = await readHookSource("useProviderConnections.ts");
+    const fs = await import("fs/promises");
+    const source = await fs.readFile(`${HOOKS_DIR}/useProviderConnections.ts`, "utf-8");
     expect(hasImport(source)).toBe(false);
   });
 
   it("useProviderSettings has no ES import of ProviderDetailPageClient", async () => {
-    const source = await readHookSource("useProviderSettings.ts");
+    const fs = await import("fs/promises");
+    const source = await fs.readFile(`${HOOKS_DIR}/useProviderSettings.ts`, "utf-8");
     expect(hasImport(source)).toBe(false);
   });
 
   it("useProviderModels has no ES import of ProviderDetailPageClient", async () => {
-    const source = await readHookSource("useProviderModels.ts");
+    const fs = await import("fs/promises");
+    const source = await fs.readFile(`${HOOKS_DIR}/useProviderModels.ts`, "utf-8");
     expect(hasImport(source)).toBe(false);
   });
 });

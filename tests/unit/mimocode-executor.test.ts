@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert";
 import {
   MimocodeExecutor,
+  MIMO_SYSTEM_MARKER,
   generateFingerprint,
   normalizeFingerprint,
 } from "../../open-sse/executors/mimocode.ts";
@@ -77,7 +78,7 @@ describe("MimocodeExecutor", () => {
     assert.strictEqual(result.model, "mimo-auto");
     assert.strictEqual(result.max_tokens, 128000);
     assert.strictEqual(result.messages[0].role, "system");
-    assert.ok(result.messages[0].content.includes("You are MiMoCode"));
+    assert.ok(result.messages[0].content.includes(MIMO_SYSTEM_MARKER));
     assert.strictEqual(result.messages[1].role, "user");
   });
 
@@ -128,7 +129,7 @@ describe("MimocodeExecutor", () => {
 
     assert.strictEqual(result.messages.length, 2);
     assert.strictEqual(result.messages[0].role, "system");
-    assert.ok(result.messages[0].content.includes("You are MiMoCode"));
+    assert.ok(result.messages[0].content.includes(MIMO_SYSTEM_MARKER));
     assert.ok(
       result.messages[0].content.includes("continue tool calls until the work is complete")
     );
@@ -144,8 +145,7 @@ describe("MimocodeExecutor", () => {
         messages: [
           {
             role: "system",
-            content:
-              "You are MiMoCode, an interactive CLI tool that helps users with software engineering tasks.",
+            content: MIMO_SYSTEM_MARKER,
           },
           { role: "user", content: "hi" },
         ],
@@ -155,7 +155,7 @@ describe("MimocodeExecutor", () => {
 
     assert.strictEqual(
       result.messages.filter(
-        (message: any) => message.role === "system" && message.content.includes("You are MiMoCode")
+        (message: any) => message.role === "system" && message.content.includes(MIMO_SYSTEM_MARKER)
       ).length,
       1
     );
@@ -368,7 +368,7 @@ describe("mimocode multi-account", () => {
       const chatBody = JSON.parse(String(calls[1].init.body));
       assert.strictEqual(chatBody.max_tokens, 128000);
       assert.strictEqual(chatBody.messages[0].role, "system");
-      assert.ok(chatBody.messages[0].content.includes("You are MiMoCode"));
+      assert.ok(chatBody.messages[0].content.includes(MIMO_SYSTEM_MARKER));
       assert.strictEqual(chatBody.messages[1].role, "user");
     } finally {
       globalThis.fetch = originalFetch;

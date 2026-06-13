@@ -700,13 +700,21 @@ export async function deleteProxyById(id: string, options?: { force?: boolean })
   return result.changes > 0;
 }
 
+// A proxy is "alive" for resolution unless it has been explicitly marked dead
+// (by an operator or a health check). Conservative: active/null/unknown stay
+// usable so a working proxy is never stranded; only known-dead states are
+// excluded so a dead proxy stops being handed out (every request would
+// otherwise pay the timeout or leak out the host IP).
+const PROXY_ALIVE_PREDICATE =
+  "(p.status IS NULL OR LOWER(p.status) NOT IN ('inactive','error','disabled','dead','down'))";
+
 export async function resolveProxyForConnectionFromRegistry(connectionId: string) {
   try {
     const db = getDbInstance();
 
     const accountAssignment = db
       .prepare(
-        "SELECT p.id, p.type, p.host, p.port, p.username, p.password, p.notes FROM proxy_assignments a JOIN proxy_registry p ON p.id = a.proxy_id WHERE a.scope = 'account' AND a.scope_id = ? LIMIT 1"
+        `SELECT p.id, p.type, p.host, p.port, p.username, p.password, p.notes FROM proxy_assignments a JOIN proxy_registry p ON p.id = a.proxy_id WHERE a.scope = 'account' AND a.scope_id = ? AND ${PROXY_ALIVE_PREDICATE} LIMIT 1`
       )
       .get(connectionId);
     if (accountAssignment) {
@@ -734,7 +742,7 @@ export async function resolveProxyForConnectionFromRegistry(connectionId: string
     if (connection?.provider) {
       const providerAssignment = db
         .prepare(
-          "SELECT p.id, p.type, p.host, p.port, p.username, p.password, p.notes FROM proxy_assignments a JOIN proxy_registry p ON p.id = a.proxy_id WHERE a.scope = 'provider' AND a.scope_id = ? LIMIT 1"
+          `SELECT p.id, p.type, p.host, p.port, p.username, p.password, p.notes FROM proxy_assignments a JOIN proxy_registry p ON p.id = a.proxy_id WHERE a.scope = 'provider' AND a.scope_id = ? AND ${PROXY_ALIVE_PREDICATE} LIMIT 1`
         )
         .get(connection.provider);
       if (providerAssignment) {
@@ -758,7 +766,7 @@ export async function resolveProxyForConnectionFromRegistry(connectionId: string
 
     const globalAssignment = db
       .prepare(
-        "SELECT p.id, p.type, p.host, p.port, p.username, p.password, p.notes FROM proxy_assignments a JOIN proxy_registry p ON p.id = a.proxy_id WHERE a.scope = 'global' LIMIT 1"
+        `SELECT p.id, p.type, p.host, p.port, p.username, p.password, p.notes FROM proxy_assignments a JOIN proxy_registry p ON p.id = a.proxy_id WHERE a.scope = 'global' AND ${PROXY_ALIVE_PREDICATE} LIMIT 1`
       )
       .get();
     if (globalAssignment) {
@@ -795,7 +803,7 @@ export async function resolveProxyForScopeFromRegistry(scope: string, scopeId?: 
     if (normalizedScope === "global") {
       const globalAssignment = db
         .prepare(
-          "SELECT p.id, p.type, p.host, p.port, p.username, p.password, p.notes FROM proxy_assignments a JOIN proxy_registry p ON p.id = a.proxy_id WHERE a.scope = 'global' LIMIT 1"
+          `SELECT p.id, p.type, p.host, p.port, p.username, p.password, p.notes FROM proxy_assignments a JOIN proxy_registry p ON p.id = a.proxy_id WHERE a.scope = 'global' AND ${PROXY_ALIVE_PREDICATE} LIMIT 1`
         )
         .get();
       return globalAssignment ? toRegistryProxyResolution(globalAssignment, "global", null) : null;
@@ -806,7 +814,7 @@ export async function resolveProxyForScopeFromRegistry(scope: string, scopeId?: 
 
     const assignment = db
       .prepare(
-        "SELECT p.id, p.type, p.host, p.port, p.username, p.password, p.notes FROM proxy_assignments a JOIN proxy_registry p ON p.id = a.proxy_id WHERE a.scope = ? AND a.scope_id = ? LIMIT 1"
+        `SELECT p.id, p.type, p.host, p.port, p.username, p.password, p.notes FROM proxy_assignments a JOIN proxy_registry p ON p.id = a.proxy_id WHERE a.scope = ? AND a.scope_id = ? AND ${PROXY_ALIVE_PREDICATE} LIMIT 1`
       )
       .get(normalizedScope, normalizedScopeId);
 

@@ -42,8 +42,9 @@ const MIMO_SOURCE = "mimocode-cli-free";
 const MIMO_ACCEPT = "*/*";
 const MIMO_BOOTSTRAP_USER_AGENT = "Bun/1.3.11";
 const MIMO_USER_AGENT = "mimocode/local ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.11";
-const MIMOCODE_IDENTITY_PROMPT =
-  "You are MiMoCode, an interactive CLI tool that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.";
+export const MIMO_SYSTEM_MARKER =
+  "You are MiMoCode, an interactive CLI tool that helps users with software engineering tasks.";
+const MIMOCODE_IDENTITY_PROMPT = `${MIMO_SYSTEM_MARKER} Use the instructions below and the tools available to you to assist the user.`;
 const MIMOCODE_TOOL_CONTINUATION_PROMPT = [
   "When caller-side tools are available and the user asks you to implement, fix, build, or verify code, use the tools immediately and continue tool calls until the work is complete, verified, or genuinely blocked.",
   "If the next step requires a tool, emit that tool call in the same response.",
@@ -51,8 +52,7 @@ const MIMOCODE_TOOL_CONTINUATION_PROMPT = [
   "Do not end a turn with only a plan, status update, or statement like 'let me continue', 'now I need to', 'now fix', 'now update', 'running', 'building', or 'creating'.",
 ].join(" ");
 const MIMOCODE_PROVIDER_PROMPT = `${MIMOCODE_IDENTITY_PROMPT}\n\n${MIMOCODE_TOOL_CONTINUATION_PROMPT}`;
-const MIMOCODE_LEGACY_IDENTITY_PROMPT =
-  "You are MiMoCode, an interactive CLI tool that helps users with software engineering tasks.";
+const MIMOCODE_LEGACY_IDENTITY_PROMPT = MIMO_SYSTEM_MARKER;
 const MIMOCODE_STALLED_OUTPUT_REMINDER = [
   "<system-reminder>",
   "Your previous response stopped before making actionable progress.",
