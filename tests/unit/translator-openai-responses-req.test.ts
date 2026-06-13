@@ -104,6 +104,68 @@ test("Responses -> Chat converts string input to a user message", () => {
   assert.equal(Object.prototype.hasOwnProperty.call(result as any, "input"), false);
 });
 
+test("Responses -> Chat preserves trailing reasoning summary on assistant message", () => {
+  const result = openaiResponsesToOpenAIRequest(
+    "mimo-auto",
+    {
+      input: [
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "Now writing engine.ts." }],
+        },
+        {
+          type: "reasoning",
+          summary: [
+            { type: "summary_text", text: "Need to finish implementation before stopping." },
+          ],
+        },
+        { type: "message", role: "user", content: [{ type: "input_text", text: "continue" }] },
+      ],
+    },
+    true,
+    null
+  ) as Record<string, unknown>;
+
+  const messages = result.messages as Array<Record<string, unknown>>;
+  assert.equal(messages[0].role, "assistant");
+  assert.equal(messages[0].reasoning_content, "Need to finish implementation before stopping.");
+  assert.equal(messages[1].role, "user");
+});
+
+test("Responses -> Chat preserves leading reasoning summary on assistant tool call", () => {
+  const result = openaiResponsesToOpenAIRequest(
+    "mimo-auto",
+    {
+      input: [
+        {
+          type: "reasoning",
+          summary: [{ type: "summary_text", text: "Need to inspect the file." }],
+        },
+        {
+          type: "function_call",
+          call_id: "call_reasoned",
+          name: "exec_command",
+          arguments: { cmd: "sed -n '1,80p' src/main.ts" },
+        },
+        {
+          type: "function_call_output",
+          call_id: "call_reasoned",
+          output: "file contents",
+        },
+      ],
+    },
+    true,
+    null
+  ) as Record<string, unknown>;
+
+  const messages = result.messages as Array<Record<string, unknown>>;
+  assert.equal(messages[0].role, "assistant");
+  assert.equal(messages[0].reasoning_content, "Need to inspect the file.");
+  assert.equal((messages[0].tool_calls as Array<Record<string, unknown>>)[0].id, "call_reasoned");
+  assert.equal(messages[1].role, "tool");
+});
+
 test("Responses -> Chat converts object input with text to a user message", () => {
   const result = openaiResponsesToOpenAIRequest(
     "local-model",
@@ -1025,6 +1087,59 @@ test("Responses -> Chat: function_call with empty name leaves no orphan tool out
     false,
     "an output whose function_call was skipped (empty name) must not survive as an orphan"
   );
+});
+
+test("Responses -> Chat: function_call with malformed JSON arguments is dropped with its output", () => {
+  const result = openaiResponsesToOpenAIRequest(
+    "gpt-4o",
+    {
+      input: [
+        { type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] },
+        {
+          type: "function_call",
+          name: "codex_app",
+          call_id: "call_2cfaa13aaea84bf29659cd29",
+          arguments: '{"action": ',
+        },
+        {
+          type: "function_call_output",
+          call_id: "call_2cfaa13aaea84bf29659cd29",
+          output: "unsupported call: codex_app",
+        },
+        { type: "function_call", name: "read", call_id: "call_ok", arguments: "{}" },
+        { type: "function_call_output", call_id: "call_ok", output: "result" },
+      ],
+    },
+    false,
+    null
+  ) as Record<string, unknown>;
+
+  const messages = result.messages as Array<Record<string, unknown>>;
+  assert.equal(
+    messages.some(
+      (m) =>
+        Array.isArray(m.tool_calls) &&
+        (m.tool_calls as Array<Record<string, unknown>>).some(
+          (tc) => tc.id === "call_2cfaa13aaea84bf29659cd29"
+        )
+    ),
+    false,
+    "malformed assistant tool call must be dropped"
+  );
+  assert.equal(
+    messages.some((m) => m.role === "tool" && m.tool_call_id === "call_2cfaa13aaea84bf29659cd29"),
+    false,
+    "tool output for malformed tool call must be dropped"
+  );
+
+  const assistant = messages.find((m) => m.role === "assistant" && Array.isArray(m.tool_calls));
+  assert.ok(assistant, "valid assistant tool call must still be preserved");
+  const assistantToolCalls = assistant.tool_calls as Array<Record<string, unknown>>;
+  assert.equal(assistantToolCalls.length, 1);
+  assert.equal(assistantToolCalls[0].id, "call_ok");
+  const toolMsg = messages.find((m) => m.role === "tool");
+  assert.ok(toolMsg, "valid tool output must still be preserved");
+  assert.equal(toolMsg.tool_call_id, "call_ok");
 });
 
 test("Responses -> Chat: a valid function_call/output pair is preserved (issue #2893 regression)", () => {

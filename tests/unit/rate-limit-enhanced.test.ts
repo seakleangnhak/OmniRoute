@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 const {
   checkFallbackError,
+  getProviderProfile,
   parseRetryAfterFromBody,
   classifyError,
   classifyErrorText,
@@ -48,6 +49,43 @@ test("parseRetryAfterFromBody: parses OpenAI retry message format", () => {
   const result = parseRetryAfterFromBody(body);
   assert.equal(result.retryAfterMs, 20000);
   assert.equal(result.reason, RateLimitReason.RATE_LIMIT_EXCEEDED);
+});
+
+test("parseRetryAfterFromBody: parses structured retry fields", () => {
+  assert.equal(
+    parseRetryAfterFromBody({
+      error: { retry_after_ms: 7_500 },
+    }).retryAfterMs,
+    7_500
+  );
+  assert.equal(
+    parseRetryAfterFromBody({
+      error: { retry_after: 8 },
+    }).retryAfterMs,
+    8_000
+  );
+});
+
+test("checkFallbackError: trusts internal all-accounts-cooling retry hint", () => {
+  const profile = {
+    ...getProviderProfile("mimocode"),
+    useUpstreamRetryHints: false,
+  };
+  const result = checkFallbackError(
+    429,
+    "All accounts are cooling down",
+    0,
+    "mimo-auto",
+    "mimocode",
+    { "Retry-After": "7" },
+    profile,
+    { code: "ACCOUNTS_COOLING_DOWN" }
+  );
+
+  assert.equal(result.shouldFallback, true);
+  assert.equal(result.usedUpstreamRetryHint, true);
+  assert.ok(result.cooldownMs > 0);
+  assert.ok(result.cooldownMs <= 7_000);
 });
 
 test("parseRetryAfterFromBody: classifies Anthropic rate_limit_error", () => {

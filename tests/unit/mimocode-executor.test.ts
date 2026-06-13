@@ -439,12 +439,383 @@ describe("mimocode multi-account", () => {
       );
       assert.ok(
         String(chatBodies[1].messages.at(-1)?.content).includes(
-          "Your previous response contained no usable answer"
+          "stopped before making actionable progress"
         )
       );
       const text = await result.response.text();
       assert.ok(text.includes('"tool_calls"'));
       assert.ok(!text.includes("I should keep working."));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("auto-continues repeated reasoning-only progress stops until a tool call", async () => {
+    const autoContinueExecutor = new MimocodeExecutor();
+    const originalFetch = globalThis.fetch;
+    const chatBodies: Array<{ messages: Array<Record<string, unknown>> }> = [];
+    globalThis.fetch = async (url, init = {}) => {
+      if (String(url).includes("/api/free-ai/bootstrap")) {
+        return new Response(JSON.stringify({ jwt: "test-jwt" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      chatBodies.push(
+        JSON.parse(String(init.body)) as { messages: Array<Record<string, unknown>> }
+      );
+      if (chatBodies.length <= 4) {
+        return new Response(
+          [
+            `data: {"id":"chatcmpl_${chatBodies.length}","choices":[{"index":0,"delta":{"reasoning_content":"Now let me continue building the remaining files."},"finish_reason":null}]}`,
+            `data: {"id":"chatcmpl_${chatBodies.length}","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+            "data: [DONE]",
+            "",
+          ].join("\n\n"),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } }
+        );
+      }
+
+      return new Response(
+        [
+          'data: {"id":"chatcmpl_tool","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"exec_command","arguments":"{}"}}]},"finish_reason":null}]}',
+          'data: {"id":"chatcmpl_tool","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}',
+          "data: [DONE]",
+          "",
+        ].join("\n\n"),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } }
+      );
+    };
+
+    try {
+      const result = await autoContinueExecutor.execute({
+        model: "mimo-auto",
+        body: {
+          messages: [{ role: "user", content: "build the full project" }],
+          tools: [{ type: "function", function: { name: "exec_command", parameters: {} } }],
+          stream: true,
+        },
+        stream: true,
+        credentials: {
+          connectionId: "connection-repeated-auto-continue",
+          providerSpecificData: { fingerprints: ["fingerprint-repeated-auto-continue"] },
+        },
+        log: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+      });
+
+      assert.strictEqual(result.response.status, 200);
+      assert.strictEqual(chatBodies.length, 5);
+      assert.ok(
+        String(chatBodies.at(-1)?.messages.at(-1)?.content).includes(
+          "stopped before making actionable progress"
+        )
+      );
+      const text = await result.response.text();
+      assert.ok(text.includes('"tool_calls"'));
+      assert.ok(!text.includes("Now let me continue building"));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("auto-continues visible progress-only stops before returning", async () => {
+    const autoContinueExecutor = new MimocodeExecutor();
+    const originalFetch = globalThis.fetch;
+    const chatBodies: Array<{ messages: Array<Record<string, unknown>> }> = [];
+    globalThis.fetch = async (url, init = {}) => {
+      if (String(url).includes("/api/free-ai/bootstrap")) {
+        return new Response(JSON.stringify({ jwt: "test-jwt" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      chatBodies.push(
+        JSON.parse(String(init.body)) as { messages: Array<Record<string, unknown>> }
+      );
+      if (chatBodies.length === 1) {
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: { role: "assistant", content: "Now let me run the full build:" },
+                finish_reason: "stop",
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: { role: "assistant", content: "Build completed successfully." },
+              finish_reason: "stop",
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    };
+
+    try {
+      const result = await autoContinueExecutor.execute({
+        model: "mimo-auto",
+        body: {
+          messages: [{ role: "user", content: "build the full project" }],
+          tools: [{ type: "function", function: { name: "exec_command", parameters: {} } }],
+          stream: false,
+        },
+        stream: false,
+        credentials: {
+          connectionId: "connection-visible-auto-continue",
+          providerSpecificData: { fingerprints: ["fingerprint-visible-auto-continue"] },
+        },
+        log: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+      });
+
+      assert.strictEqual(result.response.status, 200);
+      assert.strictEqual(chatBodies.length, 2);
+      const text = await result.response.text();
+      assert.ok(text.includes("Build completed successfully."));
+      assert.ok(!text.includes("Now let me run the full build"));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("auto-continues a premature build-success wrap-up from the VPS log", async () => {
+    const autoContinueExecutor = new MimocodeExecutor();
+    const originalFetch = globalThis.fetch;
+    const chatBodies: Array<{ messages: Array<Record<string, unknown>> }> = [];
+    globalThis.fetch = async (url, init = {}) => {
+      if (String(url).includes("/api/free-ai/bootstrap")) {
+        return new Response(JSON.stringify({ jwt: "test-jwt" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      chatBodies.push(
+        JSON.parse(String(init.body)) as { messages: Array<Record<string, unknown>> }
+      );
+      if (chatBodies.length === 1) {
+        return new Response(
+          [
+            'data: {"id":"chatcmpl_wrapup","choices":[{"index":0,"delta":{"reasoning_content":"Build passes. Let me update the plan."},"finish_reason":null}]}',
+            'data: {"id":"chatcmpl_wrapup","choices":[{"index":0,"delta":{"content":"Build passes! The large chunk warning is expected since Phaser is a large library. Let me update the plan and provide the final summary."},"finish_reason":null}]}',
+            'data: {"id":"chatcmpl_wrapup","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+            "data: [DONE]",
+            "",
+          ].join("\n\n"),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } }
+        );
+      }
+
+      return new Response(
+        [
+          'data: {"id":"chatcmpl_tool","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_review","type":"function","function":{"name":"exec_command","arguments":"{\\"cmd\\":\\"npm run test\\"}"}}]},"finish_reason":null}]}',
+          'data: {"id":"chatcmpl_tool","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}',
+          "data: [DONE]",
+          "",
+        ].join("\n\n"),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } }
+      );
+    };
+
+    try {
+      const result = await autoContinueExecutor.execute({
+        model: "mimo-auto",
+        body: {
+          messages: [{ role: "user", content: "finish implementing the full project" }],
+          tools: [{ type: "function", function: { name: "exec_command", parameters: {} } }],
+          stream: true,
+        },
+        stream: true,
+        credentials: {
+          connectionId: "connection-premature-wrapup",
+          providerSpecificData: { fingerprints: ["fingerprint-premature-wrapup"] },
+        },
+        log: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+      });
+
+      assert.strictEqual(result.response.status, 200);
+      assert.strictEqual(chatBodies.length, 2);
+      assert.match(
+        String(chatBodies[1].messages.at(-2)?.content),
+        /Let me update the plan and provide the final summary/
+      );
+      const text = await result.response.text();
+      assert.ok(text.includes('"name":"exec_command"'));
+      assert.ok(!text.includes("The large chunk warning is expected"));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("returns a real final summary without auto-continuing it", async () => {
+    const completedExecutor = new MimocodeExecutor();
+    const originalFetch = globalThis.fetch;
+    let chatCalls = 0;
+    globalThis.fetch = async (url) => {
+      if (String(url).includes("/api/free-ai/bootstrap")) {
+        return new Response(JSON.stringify({ jwt: "test-jwt" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      chatCalls++;
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content:
+                  "Summary: implemented the requested game systems and verified the production build. How to run: npm run dev. Known limitations: none.",
+              },
+              finish_reason: "stop",
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    };
+
+    try {
+      const result = await completedExecutor.execute({
+        model: "mimo-auto",
+        body: {
+          messages: [{ role: "user", content: "finish implementing the full project" }],
+          tools: [{ type: "function", function: { name: "exec_command", parameters: {} } }],
+          stream: false,
+        },
+        stream: false,
+        credentials: {
+          connectionId: "connection-complete-summary",
+          providerSpecificData: { fingerprints: ["fingerprint-complete-summary"] },
+        },
+        log: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+      });
+
+      assert.strictEqual(result.response.status, 200);
+      assert.strictEqual(chatCalls, 1);
+      assert.match(await result.response.text(), /How to run: npm run dev/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("auto-continues all three streaming progress stops from the VPS log", async () => {
+    const autoContinueExecutor = new MimocodeExecutor();
+    const originalFetch = globalThis.fetch;
+    const chatBodies: Array<{ messages: Array<Record<string, unknown>> }> = [];
+    const progressStops = [
+      {
+        reasoning: ["Now let me update ", "the App.tsx and create the CSS files."],
+        content: ["Now ", "update App.tsx and create the styles."],
+      },
+      {
+        reasoning: ["Now let me fix the component files too."],
+        content: ["Now fix the React components."],
+      },
+      {
+        reasoning: ["Now let me fix the remaining issues in engine.ts."],
+        content: ["Now fix the remaining unused imports and issues."],
+      },
+    ];
+    globalThis.fetch = async (url, init = {}) => {
+      if (String(url).includes("/api/free-ai/bootstrap")) {
+        return new Response(JSON.stringify({ jwt: "test-jwt" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      chatBodies.push(
+        JSON.parse(String(init.body)) as { messages: Array<Record<string, unknown>> }
+      );
+      const progressStop = progressStops[chatBodies.length - 1];
+      if (progressStop) {
+        return new Response(
+          [
+            ...progressStop.reasoning.map(
+              (text) =>
+                `data: ${JSON.stringify({
+                  id: "chatcmpl_stall",
+                  choices: [
+                    {
+                      index: 0,
+                      delta: { reasoning_content: text },
+                      finish_reason: null,
+                    },
+                  ],
+                })}`
+            ),
+            ...progressStop.content.map(
+              (text) =>
+                `data: ${JSON.stringify({
+                  id: "chatcmpl_stall",
+                  choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
+                })}`
+            ),
+            'data: {"id":"chatcmpl_stall","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+            "data: [DONE]",
+            "",
+          ].join("\n\n"),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } }
+        );
+      }
+
+      return new Response(
+        [
+          'data: {"id":"chatcmpl_tool","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_fix","type":"function","function":{"name":"exec_command","arguments":"{\\"cmd\\":\\"npm run build\\"}"}}]},"finish_reason":null}]}',
+          'data: {"id":"chatcmpl_tool","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}',
+          "data: [DONE]",
+          "",
+        ].join("\n\n"),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } }
+      );
+    };
+
+    try {
+      const result = await autoContinueExecutor.execute({
+        model: "mimo-auto",
+        body: {
+          messages: [{ role: "user", content: "finish the implementation" }],
+          tools: [{ type: "function", function: { name: "exec_command", parameters: {} } }],
+          stream: true,
+        },
+        stream: true,
+        credentials: {
+          connectionId: "connection-vps-progress-stop",
+          providerSpecificData: { fingerprints: ["fingerprint-vps-progress-stop"] },
+        },
+        log: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+      });
+
+      assert.strictEqual(result.response.status, 200);
+      assert.strictEqual(chatBodies.length, 4);
+      assert.strictEqual(
+        chatBodies[1].messages.at(-2)?.content,
+        "Now update App.tsx and create the styles."
+      );
+      assert.strictEqual(
+        chatBodies[1].messages.at(-2)?.reasoning_content,
+        "Now let me update the App.tsx and create the CSS files."
+      );
+      assert.strictEqual(chatBodies[2].messages.at(-2)?.content, "Now fix the React components.");
+      assert.strictEqual(
+        chatBodies[3].messages.at(-2)?.content,
+        "Now fix the remaining unused imports and issues."
+      );
+      const text = await result.response.text();
+      assert.ok(text.includes('"name":"exec_command"'));
+      assert.ok(!text.includes("Now update App.tsx"));
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -486,7 +857,7 @@ describe("mimocode multi-account", () => {
         log: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
       });
 
-      assert.strictEqual(chatCalls, 3);
+      assert.strictEqual(chatCalls, 7);
       assert.strictEqual(result.response.status, 502);
       assert.match(await result.response.text(), /INVALID_OUTPUT/);
     } finally {

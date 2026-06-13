@@ -952,26 +952,15 @@ export async function getProviderCredentials(
   try {
     await selectionLock.wait;
 
-    // No-auth providers (e.g. opencode) need no DB connection — return synthetic credentials
-    // so the executor receives a valid credentials object without auth headers being added.
     const resolvedId = resolveProviderId(provider);
-    const providerMaps: Record<string, { noAuth?: boolean } | undefined>[] = [
-      NOAUTH_PROVIDERS as Record<string, { noAuth?: boolean } | undefined>,
-      WEB_COOKIE_PROVIDERS as Record<string, { noAuth?: boolean } | undefined>,
-    ];
-    if (providerMaps.some((map) => map[resolvedId]?.noAuth)) {
-      // #3061: there is only one synthetic "noauth" connection for a no-auth
-      // provider. If the caller already tried and excluded it (account-fallback
-      // after a persistent upstream error), do NOT hand it back — that would let
-      // the chat fallback loop re-select "noauth" forever (no real DB row → no
-      // cooldown to brake it), writing logs every iteration until the disk fills.
-      // Returning null here lets the handler stop after a single attempt.
-      const excludedForNoAuth = normalizeExcludedConnectionIds(
-        excludeConnectionId,
-        options.excludeConnectionIds
+    const prefersConfiguredNoAuthConnections =
+      Boolean(
+        (NOAUTH_PROVIDERS as Record<string, { noAuth?: boolean } | undefined>)[resolvedId]?.noAuth
+      ) ||
+      Boolean(
+        (WEB_COOKIE_PROVIDERS as Record<string, { noAuth?: boolean } | undefined>)[resolvedId]
+          ?.noAuth
       );
-      return maybeSyntheticNoAuthFallback(resolvedId, excludedForNoAuth);
-    }
 
     const allowSuppressedConnections = options.allowSuppressedConnections === true;
     const allowRateLimitedConnections =
@@ -996,6 +985,13 @@ export async function getProviderCredentials(
     let connections = (Array.isArray(connectionsRaw) ? connectionsRaw : [])
       .map(toProviderConnection)
       .filter((conn) => conn.id.length > 0);
+    let hasConfiguredNoAuthConnections =
+      prefersConfiguredNoAuthConnections && connections.length > 0;
+    const getSyntheticFallback = () =>
+      hasConfiguredNoAuthConnections
+        ? null
+        : maybeSyntheticNoAuthFallback(resolvedId, excludedConnectionIds);
+
     // allowedConnections: restrict to specific connection IDs (from API key policy, #363)
     if (allowedConnections && allowedConnections.length > 0) {
       connections = connections.filter((conn) => allowedConnections.includes(conn.id));
@@ -1016,9 +1012,15 @@ export async function getProviderCredentials(
       const allConnectionsResults = await Promise.all(
         providersToSearch.map((p) => getProviderConnections({ provider: p }))
       );
-      let allConnections = (allConnectionsResults.filter(Array.isArray).flat() as unknown[])
+      const allConfiguredConnections = (
+        allConnectionsResults.filter(Array.isArray).flat() as unknown[]
+      )
         .map(toProviderConnection)
         .filter((conn) => conn.id.length > 0);
+      if (prefersConfiguredNoAuthConnections && allConfiguredConnections.length > 0) {
+        hasConfiguredNoAuthConnections = true;
+      }
+      let allConnections = allConfiguredConnections;
       if (allowedConnections && allowedConnections.length > 0) {
         allConnections = allConnections.filter((conn) => allowedConnections.includes(conn.id));
       }
@@ -1055,9 +1057,6 @@ export async function getProviderCredentials(
         // the dashboard sees a misleading "bad_request" code.
         const terminalConnections = allConnections.filter(isTerminalConnectionStatus);
         if (terminalConnections.length === allConnections.length) {
-          const syntheticFallback = maybeSyntheticNoAuthFallback(resolvedId, excludedConnectionIds);
-          if (syntheticFallback) return syntheticFallback;
-
           const statusCounts = new Map<string, number>();
           for (const c of terminalConnections) {
             const key = normalizeStatus(c.testStatus) || "expired";
@@ -1072,7 +1071,7 @@ export async function getProviderCredentials(
           };
         }
       }
-      const syntheticFallback = maybeSyntheticNoAuthFallback(resolvedId, excludedConnectionIds);
+      const syntheticFallback = getSyntheticFallback();
       if (syntheticFallback) return syntheticFallback;
       log.warn("AUTH", `No credentials for ${provider}`);
       return null;
@@ -1243,7 +1242,7 @@ export async function getProviderCredentials(
           cooldownModel: allBlockedByModelCooldown ? requestedModel : null,
         };
       }
-      const syntheticFallback = maybeSyntheticNoAuthFallback(resolvedId, excludedConnectionIds);
+      const syntheticFallback = getSyntheticFallback();
       if (syntheticFallback) return syntheticFallback;
       log.warn("AUTH", `${provider} | all ${connections.length} accounts unavailable`);
       return null;
@@ -1707,6 +1706,8 @@ export async function markAccountUnavailable(
   providerProfile = null,
   options: {
     persistUnavailableState?: boolean;
+    headers?: Headers | Record<string, string> | null;
+    structuredError?: { code?: string | null; type?: string | null } | null;
   } = {}
 ) {
   const currentMutex = markMutexes.get(connectionId) || Promise.resolve();
@@ -1779,8 +1780,9 @@ export async function markAccountUnavailable(
       backoffLevel,
       model,
       provider,
-      null,
-      effectiveProviderProfile
+      options.headers ?? null,
+      effectiveProviderProfile,
+      options.structuredError ?? null
     );
 
     // Read passthroughModels from connection config (user-configured per-model quota)

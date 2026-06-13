@@ -146,3 +146,62 @@ test("model test route ignores forwarded hosts and works in strict API-key mode"
   assert.equal(fetchCalls.length, 1);
   assert.match(fetchCalls[0], /\/chat\/completions$/);
 });
+
+test("model test route honors the requested provider connection", async () => {
+  await providersDb.createProviderConnection({
+    provider: "openai",
+    authType: "apikey",
+    name: "openai-model-test-default",
+    apiKey: "sk-default-model-test",
+    isActive: true,
+    testStatus: "active",
+    providerSpecificData: {},
+  });
+  const forcedConnection = (await providersDb.createProviderConnection({
+    provider: "openai",
+    authType: "apikey",
+    name: "openai-model-test-forced",
+    apiKey: "sk-forced-model-test",
+    isActive: true,
+    testStatus: "active",
+    providerSpecificData: {},
+  })) as { id: string };
+
+  const fetchCalls: Array<{ url: string; init: RequestInit }> = [];
+  globalThis.fetch = async (url, init = {}) => {
+    fetchCalls.push({ url: String(url), init });
+    return Response.json({
+      id: "chatcmpl-model-test",
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: "FORCED",
+          },
+        },
+      ],
+    });
+  };
+
+  const response = await route.POST(
+    new Request("http://localhost/api/models/test", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        providerId: "openai",
+        modelId: "gpt-4o-2024-11-20",
+        connectionId: forcedConnection.id,
+      }),
+    })
+  );
+  const body = (await response.json()) as any;
+
+  assert.equal(response.status, 200);
+  assert.equal(body.status, "ok");
+  assert.equal(body.responseText, "FORCED");
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(
+    (fetchCalls[0].init.headers as Record<string, string>).Authorization,
+    "Bearer sk-forced-model-test"
+  );
+});

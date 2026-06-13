@@ -16,6 +16,8 @@ interface NoAuthAccountCardProps {
   description?: string;
   /** Custom "add" button label */
   addLabel?: string;
+  /** Notify parent views that derive their own connection state. */
+  onConnectionsChanged?: () => void | Promise<void>;
 }
 
 interface Connection {
@@ -24,6 +26,13 @@ interface Connection {
   apiKey?: string;
   providerSpecificData?: Record<string, string[]>;
   isActive?: boolean;
+  name?: string;
+}
+
+interface AccountEntry {
+  accountId: string;
+  connectionId: string;
+  connectionAccountIds: string[];
 }
 
 export default function NoAuthAccountCard({
@@ -33,6 +42,7 @@ export default function NoAuthAccountCard({
   dataKey = "fingerprints",
   description = "Ready to use — no signup needed. Add accounts for rate-limit rotation.",
   addLabel = "Add Account",
+  onConnectionsChanged,
 }: NoAuthAccountCardProps) {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,36 +69,33 @@ export default function NoAuthAccountCard({
     void fetchConnections();
   }, [fetchConnections]);
 
-  const allAccountIds = connections.flatMap((c) => c.providerSpecificData?.[dataKey] || []);
+  const accountEntries: AccountEntry[] = connections.flatMap((connection) => {
+    const ids = connection.providerSpecificData?.[dataKey] || [];
+    return ids.map((accountId) => ({
+      accountId,
+      connectionId: connection.id,
+      connectionAccountIds: ids,
+    }));
+  });
+  const allAccountIds = accountEntries.map((entry) => entry.accountId);
 
   const handleAddAccount = async () => {
     setAdding(true);
     try {
       const accountId = generateAccountId();
-      if (connections.length === 0) {
-        const res = await fetch("/api/providers", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            provider: providerId,
-            name: `${providerName} Account 1`,
-            providerSpecificData: { [dataKey]: [accountId] },
-          }),
-        });
-        if (!res.ok) throw new Error("Failed to create connection");
-      } else {
-        const conn = connections[0];
-        const updated = [...allAccountIds, accountId];
-        const res = await fetch(`/api/providers/${conn.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            providerSpecificData: { [dataKey]: updated },
-          }),
-        });
-        if (!res.ok) throw new Error("Failed to update connection");
-      }
+      const res = await fetch("/api/providers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: providerId,
+          name: `${providerName} Account ${accountId.slice(0, 8)}`,
+          testStatus: "active",
+          providerSpecificData: { [dataKey]: [accountId] },
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to create connection");
       await fetchConnections();
+      await onConnectionsChanged?.();
     } catch (err) {
       console.error("Failed to add account:", err);
     } finally {
@@ -96,19 +103,23 @@ export default function NoAuthAccountCard({
     }
   };
 
-  const handleRemoveAccount = async (accountId: string) => {
-    if (connections.length === 0) return;
-    const conn = connections[0];
-    const updated = allAccountIds.filter((id) => id !== accountId);
+  const handleRemoveAccount = async (entry: AccountEntry) => {
+    const updated = entry.connectionAccountIds.filter((id) => id !== entry.accountId);
     try {
-      const res = await fetch(`/api/providers/${conn.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          providerSpecificData: { [dataKey]: updated },
-        }),
-      });
-      if (res.ok) await fetchConnections();
+      const res =
+        updated.length === 0
+          ? await fetch(`/api/providers/${entry.connectionId}`, { method: "DELETE" })
+          : await fetch(`/api/providers/${entry.connectionId}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                providerSpecificData: { [dataKey]: updated },
+              }),
+            });
+      if (res.ok) {
+        await fetchConnections();
+        await onConnectionsChanged?.();
+      }
     } catch (err) {
       console.error("Failed to remove account:", err);
     }
@@ -144,16 +155,16 @@ export default function NoAuthAccountCard({
 
         {!loading && allAccountIds.length > 0 && (
           <div className="space-y-1">
-            {allAccountIds.map((id, i) => (
+            {accountEntries.map((entry, i) => (
               <div
-                key={id}
+                key={`${entry.connectionId}:${entry.accountId}`}
                 className="flex items-center justify-between rounded-md bg-bg-secondary px-3 py-1.5 text-xs"
               >
                 <span className="font-mono text-text-muted">
-                  Account {i + 1}: {id.slice(0, 12)}...
+                  Account {i + 1}: {entry.accountId.slice(0, 12)}...
                 </span>
                 <button
-                  onClick={() => handleRemoveAccount(id)}
+                  onClick={() => handleRemoveAccount(entry)}
                   className="text-red-500 hover:text-red-400 text-xs"
                 >
                   Remove

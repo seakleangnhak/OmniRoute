@@ -37,11 +37,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: validation.error.format() }, { status: 400 });
     }
     const { providerId, modelId, connectionId } = validation.data;
+    const authCookie = request.headers.get("cookie");
 
     const result = await runSingleModelTest({
       providerId,
       modelId,
       ...(connectionId ? { connectionId } : {}),
+      ...(authCookie ? { authCookie } : {}),
       timeoutMs: SINGLE_TEST_TIMEOUT_MS,
     });
 

@@ -344,7 +344,14 @@ const CHAT_OPENAI_COMPAT_MODELS: Record<string, RegistryModel[]> = {
     { id: "mimo-v2-flash", name: "MiMo-V2-Flash", contextLength: 262144, maxOutputTokens: 65536 },
   ],
   mimocode: [
-    { id: "mimo-auto", name: "MiMo Auto", contextLength: 1000000, maxOutputTokens: 128000 },
+    {
+      id: "mimo-auto",
+      name: "MiMo Auto",
+      contextLength: 1000000,
+      maxOutputTokens: 128000,
+      supportsReasoning: true,
+      interleavedField: "reasoning_content",
+    },
   ],
   gitlawb: [
     { id: "mimo-v2.5-pro", name: "MiMo-V2.5-Pro", contextLength: 1048576, maxOutputTokens: 131072 },

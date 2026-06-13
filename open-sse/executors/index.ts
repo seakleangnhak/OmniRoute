@@ -53,6 +53,8 @@ import { ChipotleExecutor } from "./chipotle.ts";
 import { LMArenaExecutor } from "./lmarena.ts";
 import { MimocodeExecutor } from "./mimocode.ts";
 
+const mimocodeExecutor = new MimocodeExecutor();
+
 const executors = {
   antigravity: new AntigravityExecutor(),
   agy: new AntigravityExecutor(),
@@ -147,8 +149,8 @@ const executors = {
   pepper: new ChipotleExecutor(), // Alias
   lmarena: new LMArenaExecutor(),
   lma: new LMArenaExecutor(), // Alias
-  mimocode: new MimocodeExecutor(),
-  mcode: new MimocodeExecutor(), // Alias
+  mimocode: mimocodeExecutor,
+  mcode: mimocodeExecutor, // Alias
 };
 
 const defaultCache = new Map();

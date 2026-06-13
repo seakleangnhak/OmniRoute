@@ -37,6 +37,42 @@ function stripEmptyOptionalToolArgs(value, toolName) {
   return cleaned;
 }
 
+function nextOutputIndex(state) {
+  if (typeof state.nextOutputIndex !== "number") state.nextOutputIndex = 0;
+  return state.nextOutputIndex++;
+}
+
+function ensureIndexMap(state, key) {
+  if (!state[key] || typeof state[key] !== "object") state[key] = {};
+  return state[key];
+}
+
+function getReasoningOutputIndex(state) {
+  if (!Number.isInteger(state.reasoningOutputIndex)) {
+    state.reasoningOutputIndex = nextOutputIndex(state);
+  }
+  return state.reasoningOutputIndex;
+}
+
+function getMessageOutputIndex(state, idx) {
+  const key = String(idx);
+  const map = ensureIndexMap(state, "msgOutputIndices");
+  if (!Number.isInteger(map[key])) map[key] = nextOutputIndex(state);
+  return map[key];
+}
+
+function getToolCallOutputIndex(state, idx) {
+  const key = String(idx);
+  const map = ensureIndexMap(state, "funcOutputIndices");
+  if (!Number.isInteger(map[key])) map[key] = nextOutputIndex(state);
+  return map[key];
+}
+
+function clearToolCallOutputIndex(state, idx) {
+  const map = ensureIndexMap(state, "funcOutputIndices");
+  delete map[String(idx)];
+}
+
 /**
  * Translate OpenAI chunk to Responses API events
  * @returns {Array} Array of events with { event, data } structure
@@ -173,19 +209,20 @@ export function openaiToOpenAIResponsesResponse(chunk, state) {
 // Helper functions
 function startReasoning(state, emit, idx) {
   if (!state.reasoningId) {
-    state.reasoningId = `rs_${state.responseId}_${idx}`;
-    state.reasoningIndex = idx;
+    const outputIndex = getReasoningOutputIndex(state);
+    state.reasoningId = `rs_${state.responseId}_${outputIndex}`;
+    state.reasoningIndex = outputIndex;
 
     emit("response.output_item.added", {
       type: "response.output_item.added",
-      output_index: idx,
+      output_index: outputIndex,
       item: { id: state.reasoningId, type: "reasoning", summary: [] },
     });
 
     emit("response.reasoning_summary_part.added", {
       type: "response.reasoning_summary_part.added",
       item_id: state.reasoningId,
-      output_index: idx,
+      output_index: outputIndex,
       summary_index: 0,
       part: { type: "summary_text", text: "" },
     });
@@ -238,13 +275,14 @@ function closeReasoning(state, emit) {
 }
 
 function emitTextContent(state, emit, idx, content) {
+  const outputIndex = getMessageOutputIndex(state, idx);
   if (!state.msgItemAdded[idx]) {
     state.msgItemAdded[idx] = true;
-    const msgId = `msg_${state.responseId}_${idx}`;
+    const msgId = `msg_${state.responseId}_${outputIndex}`;
 
     emit("response.output_item.added", {
       type: "response.output_item.added",
-      output_index: idx,
+      output_index: outputIndex,
       item: { id: msgId, type: "message", content: [], role: "assistant" },
     });
   }
@@ -254,8 +292,8 @@ function emitTextContent(state, emit, idx, content) {
 
     emit("response.content_part.added", {
       type: "response.content_part.added",
-      item_id: `msg_${state.responseId}_${idx}`,
-      output_index: idx,
+      item_id: `msg_${state.responseId}_${outputIndex}`,
+      output_index: outputIndex,
       content_index: 0,
       part: { type: "output_text", annotations: [], logprobs: [], text: "" },
     });
@@ -263,8 +301,8 @@ function emitTextContent(state, emit, idx, content) {
 
   emit("response.output_text.delta", {
     type: "response.output_text.delta",
-    item_id: `msg_${state.responseId}_${idx}`,
-    output_index: idx,
+    item_id: `msg_${state.responseId}_${outputIndex}`,
+    output_index: outputIndex,
     content_index: 0,
     delta: content,
     logprobs: [],
@@ -278,12 +316,13 @@ function closeMessage(state, emit, idx) {
   if (state.msgItemAdded[idx] && !state.msgItemDone[idx]) {
     state.msgItemDone[idx] = true;
     const fullText = state.msgTextBuf[idx] || "";
-    const msgId = `msg_${state.responseId}_${idx}`;
+    const outputIndex = getMessageOutputIndex(state, idx);
+    const msgId = `msg_${state.responseId}_${outputIndex}`;
 
     emit("response.output_text.done", {
       type: "response.output_text.done",
       item_id: msgId,
-      output_index: parseInt(idx),
+      output_index: outputIndex,
       content_index: 0,
       text: fullText,
       logprobs: [],
@@ -292,14 +331,14 @@ function closeMessage(state, emit, idx) {
     emit("response.content_part.done", {
       type: "response.content_part.done",
       item_id: msgId,
-      output_index: parseInt(idx),
+      output_index: outputIndex,
       content_index: 0,
       part: { type: "output_text", annotations: [], logprobs: [], text: fullText },
     });
 
     emit("response.output_item.done", {
       type: "response.output_item.done",
-      output_index: parseInt(idx),
+      output_index: outputIndex,
       item: {
         id: msgId,
         type: "message",
@@ -324,16 +363,18 @@ function emitToolCall(state, emit, tc) {
     delete state.funcArgsBuf[tcIdx];
     delete state.funcArgsDone[tcIdx];
     delete state.funcItemDone[tcIdx];
+    clearToolCallOutputIndex(state, tcIdx);
   }
 
   if (funcName) state.funcNames[tcIdx] = funcName;
 
   if (!state.funcCallIds[tcIdx] && newCallId) {
     state.funcCallIds[tcIdx] = newCallId;
+    const outputIndex = getToolCallOutputIndex(state, tcIdx);
 
     emit("response.output_item.added", {
       type: "response.output_item.added",
-      output_index: tcIdx,
+      output_index: outputIndex,
       item: {
         id: `fc_${newCallId}`,
         type: "function_call",
@@ -349,10 +390,11 @@ function emitToolCall(state, emit, tc) {
   if (tc.function?.arguments) {
     const refCallId = state.funcCallIds[tcIdx] || newCallId;
     if (refCallId) {
+      const outputIndex = getToolCallOutputIndex(state, tcIdx);
       emit("response.function_call_arguments.delta", {
         type: "response.function_call_arguments.delta",
         item_id: `fc_${refCallId}`,
-        output_index: tcIdx,
+        output_index: outputIndex,
         delta: tc.function.arguments,
       });
     }
@@ -364,17 +406,18 @@ function closeToolCall(state, emit, idx) {
   const callId = state.funcCallIds[idx];
   if (callId && !state.funcItemDone[idx]) {
     const args = state.funcArgsBuf[idx] || "{}";
+    const outputIndex = getToolCallOutputIndex(state, idx);
 
     emit("response.function_call_arguments.done", {
       type: "response.function_call_arguments.done",
       item_id: `fc_${callId}`,
-      output_index: parseInt(idx),
+      output_index: outputIndex,
       arguments: args,
     });
 
     emit("response.output_item.done", {
       type: "response.output_item.done",
-      output_index: parseInt(idx),
+      output_index: outputIndex,
       item: {
         id: `fc_${callId}`,
         type: "function_call",
@@ -393,33 +436,44 @@ function sendCompleted(state, emit) {
   if (!state.completedSent) {
     state.completedSent = true;
 
-    // Build output from accumulated state
-    const output = [];
+    // Build output from accumulated state in the same order as output_index.
+    const outputEntries = [];
     if (state.reasoningId) {
-      output.push({
-        id: state.reasoningId,
-        type: "reasoning",
-        summary: [{ type: "summary_text", text: state.reasoningBuf }],
+      outputEntries.push({
+        index: getReasoningOutputIndex(state),
+        item: {
+          id: state.reasoningId,
+          type: "reasoning",
+          summary: [{ type: "summary_text", text: state.reasoningBuf }],
+        },
       });
     }
     for (const idx in state.msgItemAdded) {
-      output.push({
-        id: `msg_${state.responseId}_${idx}`,
-        type: "message",
-        role: "assistant",
-        content: [{ type: "output_text", annotations: [], text: state.msgTextBuf[idx] || "" }],
+      const outputIndex = getMessageOutputIndex(state, idx);
+      outputEntries.push({
+        index: outputIndex,
+        item: {
+          id: `msg_${state.responseId}_${outputIndex}`,
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", annotations: [], text: state.msgTextBuf[idx] || "" }],
+        },
       });
     }
     for (const idx in state.funcCallIds) {
       const callId = state.funcCallIds[idx];
-      output.push({
-        id: `fc_${callId}`,
-        type: "function_call",
-        call_id: callId,
-        name: state.funcNames[idx] || "",
-        arguments: state.funcArgsBuf[idx] || "{}",
+      outputEntries.push({
+        index: getToolCallOutputIndex(state, idx),
+        item: {
+          id: `fc_${callId}`,
+          type: "function_call",
+          call_id: callId,
+          name: state.funcNames[idx] || "",
+          arguments: state.funcArgsBuf[idx] || "{}",
+        },
       });
     }
+    const output = outputEntries.sort((a, b) => a.index - b.index).map((entry) => entry.item);
 
     const response: Record<string, unknown> = {
       id: state.responseId,

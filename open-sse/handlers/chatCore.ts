@@ -474,6 +474,27 @@ function resolveMemoryOwnerId(apiKeyInfo: Record<string, unknown> | null): strin
   return null;
 }
 
+export function shouldAttemptGenericCredentialRefresh({
+  provider,
+  status,
+  isExplicitExpiration = false,
+  requestWasModified = false,
+}: {
+  provider?: string | null;
+  status: number;
+  isExplicitExpiration?: boolean;
+  requestWasModified?: boolean;
+}): boolean {
+  if (requestWasModified) return false;
+  const normalizedProvider = String(provider || "").toLowerCase();
+  if (normalizedProvider === "mimocode" || normalizedProvider === "mcode") {
+    return false;
+  }
+  return (
+    status === HTTP_STATUS.UNAUTHORIZED || status === HTTP_STATUS.FORBIDDEN || isExplicitExpiration
+  );
+}
+
 export function shouldUseNativeCodexPassthrough({
   provider,
   sourceFormat,
@@ -4259,10 +4280,12 @@ export async function handleChatCore({
 
   // Handle 401/403 (and Qwen explicit expiration) - try token refresh using executor
   if (
-    (providerResponse.status === HTTP_STATUS.UNAUTHORIZED ||
-      providerResponse.status === HTTP_STATUS.FORBIDDEN ||
-      isQwenExpiredError) &&
-    !hadStreamOptions // Skip refresh if failure may be from stream_options removal, not auth
+    shouldAttemptGenericCredentialRefresh({
+      provider,
+      status: providerResponse.status,
+      isExplicitExpiration: isQwenExpiredError,
+      requestWasModified: hadStreamOptions,
+    })
   ) {
     // Fix A: wrap refreshCredentials in runWithOnPersist so the persist callback
     // executes INSIDE the per-connection mutex held by getAccessToken. This makes

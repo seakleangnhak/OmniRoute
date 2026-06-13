@@ -21,3 +21,12 @@ test("chatCore.ts imports without a duplicate-declaration transform error", asyn
     "handleChatCore must be importable (no duplicate `const settings` in scope)"
   );
 });
+
+test("MiMo 403 skips the generic OAuth credential refresh path", async () => {
+  const { shouldAttemptGenericCredentialRefresh } =
+    await import("../../open-sse/handlers/chatCore.ts");
+
+  assert.equal(shouldAttemptGenericCredentialRefresh({ provider: "mimocode", status: 403 }), false);
+  assert.equal(shouldAttemptGenericCredentialRefresh({ provider: "mcode", status: 403 }), false);
+  assert.equal(shouldAttemptGenericCredentialRefresh({ provider: "codex", status: 403 }), true);
+});

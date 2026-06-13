@@ -13,6 +13,8 @@ interface ErrorResponseBody {
     message: string;
     type?: string;
     code?: string;
+    retry_after?: number;
+    retry_after_ms?: number;
   };
   upstream_details?: Record<string, unknown> | null; // sanitized upstream provider body
 }
@@ -208,6 +210,35 @@ export function parseAntigravityRetryTime(message: unknown): number | null {
   return totalMs > 0 ? totalMs : null;
 }
 
+function parseRetryAfterMsFromPayload(payload: unknown): number | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const record = payload as Record<string, unknown>;
+  const error =
+    record.error && typeof record.error === "object" && !Array.isArray(record.error)
+      ? (record.error as Record<string, unknown>)
+      : {};
+
+  const retryAfterMs = error.retry_after_ms ?? record.retry_after_ms;
+  if (typeof retryAfterMs === "number" && Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+    return retryAfterMs;
+  }
+  if (typeof retryAfterMs === "string" && retryAfterMs.trim()) {
+    const parsed = Number(retryAfterMs);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+
+  const retryAfterSec = error.retry_after ?? record.retry_after ?? error.reset_seconds;
+  if (typeof retryAfterSec === "number" && Number.isFinite(retryAfterSec) && retryAfterSec > 0) {
+    return retryAfterSec * 1000;
+  }
+  if (typeof retryAfterSec === "string" && retryAfterSec.trim()) {
+    const parsed = Number(retryAfterSec);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed * 1000;
+  }
+
+  return null;
+}
+
 /**
  * Parse upstream provider error response
  * @param {Response} response - Fetch response from provider
@@ -233,6 +264,7 @@ export async function parseUpstreamError(response: Response, provider: string | 
       message = json.error?.message || json.message || json.error || text;
       errorCode = json.error?.code || json.code;
       errorType = json.error?.type || json.type;
+      retryAfterMs = parseRetryAfterMsFromPayload(json);
     } catch {
       message = text;
     }
@@ -341,6 +373,16 @@ export function createErrorResult(
   // Add retryAfterMs if available (for Antigravity quota errors)
   if (retryAfterMs) {
     result.retryAfterMs = retryAfterMs;
+    const retryAfterSec = Math.max(Math.ceil(retryAfterMs / 1000), 1);
+    body.error.retry_after = retryAfterSec;
+    body.error.retry_after_ms = Math.ceil(retryAfterMs);
+    result.response = new Response(JSON.stringify(body), {
+      status: statusCode,
+      headers: {
+        "Content-Type": "application/json",
+        "Retry-After": String(retryAfterSec),
+      },
+    });
   }
 
   return result;

@@ -342,6 +342,16 @@ test("createErrorResult — exposes error code/type on the result object", async
   assert.equal(result.errorType, "timeout");
 });
 
+test("createErrorResult — preserves retry-after metadata", async () => {
+  const { createErrorResult } = await import("../../open-sse/utils/error.ts");
+  const result = createErrorResult(429, "All accounts are cooling down", 7_500);
+  const body = (await result.response.clone().json()) as any;
+  assert.equal(result.retryAfterMs, 7_500);
+  assert.equal(result.response.headers.get("Retry-After"), "8");
+  assert.equal(body.error.retry_after, 8);
+  assert.equal(body.error.retry_after_ms, 7_500);
+});
+
 test("regression: upstream_details never contains stack trace text", async () => {
   const { createErrorResult } = await import("../../open-sse/utils/error.ts");
   const upstream = { error: { message: "err" }, stack: "Error\n    at /abs/path.ts:1:2" };

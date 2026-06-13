@@ -511,6 +511,11 @@ describe("Reasoning Replay Cache — Provider Detection", () => {
     assert.equal(requiresReasoningReplay({ provider: "XIAOMI-MIMO", model: "mimo-v2.5" }), true);
   });
 
+  it("should detect mimocode free provider", () => {
+    assert.equal(requiresReasoningReplay({ provider: "mimocode", model: "mimo-auto" }), true);
+    assert.equal(requiresReasoningReplay({ provider: "mcode", model: "mimo-auto" }), true);
+  });
+
   it("should detect mimo-v* model pattern under any provider id", () => {
     assert.equal(
       requiresReasoningReplay({ provider: "unknown-provider", model: "mimo-v2.5-pro" }),
@@ -674,6 +679,36 @@ describe("Reasoning Replay Cache — Translator Replay", () => {
 
     assert.equal(translated.messages[1].reasoning_content, undefined);
     assert.equal(getReasoningCacheServiceStats().replays, 0);
+  });
+
+  it("should preserve Codex Responses reasoning history for mimocode", () => {
+    clearReasoningCacheAll();
+    clearModelsDevCapabilities();
+
+    const translated = translateRequest(
+      FORMATS.OPENAI_RESPONSES,
+      FORMATS.OPENAI,
+      "mimo-auto",
+      {
+        input: [
+          {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "Now creating components." }],
+          },
+          {
+            type: "reasoning",
+            summary: [{ type: "summary_text", text: "Need to create files and then build." }],
+          },
+          { type: "message", role: "user", content: [{ type: "input_text", text: "continue" }] },
+        ],
+      },
+      true,
+      null,
+      "mimocode"
+    );
+
+    assert.equal(translated.messages[0].reasoning_content, "Need to create files and then build.");
   });
 
   it("should support the full capture then replay flow", () => {

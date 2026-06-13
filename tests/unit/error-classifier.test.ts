@@ -91,6 +91,17 @@ test("classifyProviderError: API-key provider plain 403 is recoverable", () => {
   assert.equal(result, null);
 });
 
+test("classifyProviderError: MiMo Illegal access is recoverable", () => {
+  const result = classifyProviderError(
+    403,
+    {
+      error: { code: "403", message: "Illegal access", type: "forbidden" },
+    },
+    "mimocode"
+  );
+  assert.equal(result, null);
+});
+
 test("classifyProviderError: 403 with project string as plain string body => PROJECT_ROUTE_ERROR", () => {
   const body = JSON.stringify({
     error: { message: "API has not been used in project abc-xyz before" },

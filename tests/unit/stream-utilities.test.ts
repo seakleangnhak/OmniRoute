@@ -6,7 +6,10 @@ import {
   createStreamController,
   createDisconnectAwareStream,
 } from "../../open-sse/utils/streamHandler.ts";
-import { createPassthroughStreamWithLogger } from "../../open-sse/utils/stream.ts";
+import {
+  createPassthroughStreamWithLogger,
+  createSSETransformStreamWithLogger,
+} from "../../open-sse/utils/stream.ts";
 
 import { wantsProgress, createProgressTransform } from "../../open-sse/utils/progressTracker.ts";
 
@@ -281,6 +284,64 @@ test("createPassthroughStreamWithLogger keeps reasoning deltas out of logged ass
     false
   );
   assert.equal(JSON.stringify(completePayload.responseBody).includes("secret.txt"), false);
+});
+
+test("translated Responses call logs retain OpenAI tool calls", async () => {
+  let completePayload = null;
+  const transform = createSSETransformStreamWithLogger(
+    "openai",
+    "openai-responses",
+    "mimocode",
+    null,
+    null,
+    "mimo-auto",
+    "connection-1",
+    {
+      tools: [{ type: "function", function: { name: "exec_command", parameters: {} } }],
+    },
+    (payload) => {
+      completePayload = payload;
+    }
+  );
+
+  const writer = transform.writable.getWriter();
+  await writer.write(
+    new TextEncoder().encode(
+      [
+        'data: {"id":"chatcmpl_mimo","choices":[{"index":0,"delta":{"reasoning_content":"Need to run the build."},"finish_reason":null}]}',
+        "",
+        'data: {"id":"chatcmpl_mimo","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_build","type":"function","function":{"name":"exec_command","arguments":"{\\"cmd\\":\\"npm run build\\"}"}}]},"finish_reason":null}]}',
+        "",
+        'data: {"id":"chatcmpl_mimo","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}',
+        "",
+        "data: [DONE]",
+        "",
+      ].join("\n")
+    )
+  );
+  await writer.close();
+
+  const reader = transform.readable.getReader();
+  const decoder = new TextDecoder();
+  let result = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    result += decoder.decode(value);
+  }
+
+  assert.match(result, /response\.output_item\.added/);
+  assert.match(result, /"type":"function_call"/);
+  assert.ok(completePayload, "expected onComplete payload");
+  assert.equal(completePayload.responseBody.choices[0].finish_reason, "tool_calls");
+  assert.equal(
+    completePayload.responseBody.choices[0].message.tool_calls[0].function.name,
+    "exec_command"
+  );
+  assert.equal(
+    completePayload.responseBody.choices[0].message.tool_calls[0].function.arguments,
+    '{"cmd":"npm run build"}'
+  );
 });
 
 test("createStreamController returns valid controller", () => {

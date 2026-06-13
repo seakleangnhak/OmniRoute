@@ -79,6 +79,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: validation.error.format() }, { status: 400 });
   }
   const { providerId, modelIds, connectionId, respectRateLimit, autoHideFailed } = validation.data;
+  const authCookie = request.headers.get("cookie");
 
   log.info(
     "MODEL_TEST_ALL",
@@ -109,6 +110,7 @@ export async function POST(request: Request) {
         providerId,
         modelId,
         ...(effectiveConnectionId ? { connectionId: effectiveConnectionId } : {}),
+        ...(authCookie ? { authCookie } : {}),
         timeoutMs: PER_MODEL_TIMEOUT_MS,
       });
       entry = toBatchEntry(result);

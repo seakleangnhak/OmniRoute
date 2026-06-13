@@ -86,6 +86,16 @@ test("OpenAI -> Responses: emits lifecycle, reasoning, text, tool calls and comp
         event.data.arguments === '{"path":"/tmp/a"}'
     )
   );
+  assert.deepEqual(
+    events
+      .filter((event) => event.event === "response.output_item.added")
+      .map((event) => ({ type: event.data.item.type, output_index: event.data.output_index })),
+    [
+      { type: "reasoning", output_index: 0 },
+      { type: "message", output_index: 1 },
+      { type: "function_call", output_index: 2 },
+    ]
+  );
 
   const completed = events.find((event) => event.event === "response.completed");
   assert.ok(completed);

@@ -96,6 +96,9 @@ export function createResponsesApiTransformStream(logger = null, keepaliveInterv
     funcCallIds: {},
     funcArgsDone: {},
     funcItemDone: {},
+    nextOutputIndex: 0,
+    msgOutputIndices: {},
+    funcOutputIndices: {},
     buffer: "",
     completedSent: false,
     usage: null,
@@ -112,15 +115,41 @@ export function createResponsesApiTransformStream(logger = null, keepaliveInterv
     controller.enqueue(encoder.encode(output));
   };
 
+  const nextOutputIndex = () => state.nextOutputIndex++;
+  const getReasoningOutputIndex = () => {
+    if (!Number.isInteger(state.reasoningOutputIndex)) {
+      state.reasoningOutputIndex = nextOutputIndex();
+    }
+    return state.reasoningOutputIndex;
+  };
+  const getMessageOutputIndex = (idx) => {
+    const key = String(idx);
+    if (!Number.isInteger(state.msgOutputIndices[key])) {
+      state.msgOutputIndices[key] = nextOutputIndex();
+    }
+    return state.msgOutputIndices[key];
+  };
+  const getToolCallOutputIndex = (idx) => {
+    const key = String(idx);
+    if (!Number.isInteger(state.funcOutputIndices[key])) {
+      state.funcOutputIndices[key] = nextOutputIndex();
+    }
+    return state.funcOutputIndices[key];
+  };
+  const clearToolCallOutputIndex = (idx) => {
+    delete state.funcOutputIndices[String(idx)];
+  };
+
   // Helper to start reasoning
   const startReasoning = (controller, idx) => {
     if (!state.reasoningId) {
-      state.reasoningId = `rs_${state.responseId}_${idx}`;
-      state.reasoningIndex = idx;
+      const outputIndex = getReasoningOutputIndex();
+      state.reasoningId = `rs_${state.responseId}_${outputIndex}`;
+      state.reasoningIndex = outputIndex;
 
       emit(controller, "response.output_item.added", {
         type: "response.output_item.added",
-        output_index: idx,
+        output_index: outputIndex,
         item: {
           id: state.reasoningId,
           type: "reasoning",
@@ -131,7 +160,7 @@ export function createResponsesApiTransformStream(logger = null, keepaliveInterv
       emit(controller, "response.reasoning_summary_part.added", {
         type: "response.reasoning_summary_part.added",
         item_id: state.reasoningId,
-        output_index: idx,
+        output_index: outputIndex,
         summary_index: 0,
         part: { type: "summary_text", text: "" },
       });
@@ -187,12 +216,13 @@ export function createResponsesApiTransformStream(logger = null, keepaliveInterv
     if (state.msgItemAdded[idx] && !state.msgItemDone[idx]) {
       state.msgItemDone[idx] = true;
       const fullText = state.msgTextBuf[idx] || "";
-      const msgId = `msg_${state.responseId}_${idx}`;
+      const outputIndex = getMessageOutputIndex(idx);
+      const msgId = `msg_${state.responseId}_${outputIndex}`;
 
       emit(controller, "response.output_text.done", {
         type: "response.output_text.done",
         item_id: msgId,
-        output_index: parseInt(idx),
+        output_index: outputIndex,
         content_index: 0,
         text: fullText,
         logprobs: [],
@@ -201,14 +231,14 @@ export function createResponsesApiTransformStream(logger = null, keepaliveInterv
       emit(controller, "response.content_part.done", {
         type: "response.content_part.done",
         item_id: msgId,
-        output_index: parseInt(idx),
+        output_index: outputIndex,
         content_index: 0,
         part: { type: "output_text", annotations: [], logprobs: [], text: fullText },
       });
 
       emit(controller, "response.output_item.done", {
         type: "response.output_item.done",
-        output_index: parseInt(idx),
+        output_index: outputIndex,
         item: {
           id: msgId,
           type: "message",
@@ -223,6 +253,7 @@ export function createResponsesApiTransformStream(logger = null, keepaliveInterv
     const callId = state.funcCallIds[idx];
     if (callId && !state.funcItemDone[idx]) {
       let args = state.funcArgsBuf[idx] || "{}";
+      const outputIndex = getToolCallOutputIndex(idx);
 
       // Fix #1674 & #1852: Final cleanup of empty string and empty array placeholders
       try {
@@ -247,13 +278,13 @@ export function createResponsesApiTransformStream(logger = null, keepaliveInterv
       emit(controller, "response.function_call_arguments.done", {
         type: "response.function_call_arguments.done",
         item_id: `fc_${callId}`,
-        output_index: parseInt(idx),
+        output_index: outputIndex,
         arguments: args,
       });
 
       emit(controller, "response.output_item.done", {
         type: "response.output_item.done",
-        output_index: parseInt(idx),
+        output_index: outputIndex,
         item: {
           id: `fc_${callId}`,
           type: "function_call",
@@ -272,33 +303,44 @@ export function createResponsesApiTransformStream(logger = null, keepaliveInterv
     if (!state.completedSent) {
       state.completedSent = true;
 
-      // Build output from accumulated state
-      const output = [];
+      // Build output from accumulated state in the same order as output_index.
+      const outputEntries = [];
       if (state.reasoningId) {
-        output.push({
-          id: state.reasoningId,
-          type: "reasoning",
-          summary: [{ type: "summary_text", text: state.reasoningBuf }],
+        outputEntries.push({
+          index: getReasoningOutputIndex(),
+          item: {
+            id: state.reasoningId,
+            type: "reasoning",
+            summary: [{ type: "summary_text", text: state.reasoningBuf }],
+          },
         });
       }
       for (const idx in state.msgItemAdded) {
-        output.push({
-          id: `msg_${state.responseId}_${idx}`,
-          type: "message",
-          role: "assistant",
-          content: [{ type: "output_text", annotations: [], text: state.msgTextBuf[idx] || "" }],
+        const outputIndex = getMessageOutputIndex(idx);
+        outputEntries.push({
+          index: outputIndex,
+          item: {
+            id: `msg_${state.responseId}_${outputIndex}`,
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", annotations: [], text: state.msgTextBuf[idx] || "" }],
+          },
         });
       }
       for (const idx in state.funcCallIds) {
         const callId = state.funcCallIds[idx];
-        output.push({
-          id: `fc_${callId}`,
-          type: "function_call",
-          call_id: callId,
-          name: state.funcNames[idx] || "",
-          arguments: state.funcArgsBuf[idx] || "{}",
+        outputEntries.push({
+          index: getToolCallOutputIndex(idx),
+          item: {
+            id: `fc_${callId}`,
+            type: "function_call",
+            call_id: callId,
+            name: state.funcNames[idx] || "",
+            arguments: state.funcArgsBuf[idx] || "{}",
+          },
         });
       }
+      const output = outputEntries.sort((a, b) => a.index - b.index).map((entry) => entry.item);
 
       const response: Record<string, unknown> = {
         id: state.responseId,
@@ -434,13 +476,14 @@ export function createResponsesApiTransformStream(logger = null, keepaliveInterv
 
               if (!content) continue;
 
+              const outputIndex = getMessageOutputIndex(idx);
               if (!state.msgItemAdded[idx]) {
                 state.msgItemAdded[idx] = true;
-                const msgId = `msg_${state.responseId}_${idx}`;
+                const msgId = `msg_${state.responseId}_${outputIndex}`;
 
                 emit(controller, "response.output_item.added", {
                   type: "response.output_item.added",
-                  output_index: idx,
+                  output_index: outputIndex,
                   item: { id: msgId, type: "message", content: [], role: "assistant" },
                 });
               }
@@ -450,8 +493,8 @@ export function createResponsesApiTransformStream(logger = null, keepaliveInterv
 
                 emit(controller, "response.content_part.added", {
                   type: "response.content_part.added",
-                  item_id: `msg_${state.responseId}_${idx}`,
-                  output_index: idx,
+                  item_id: `msg_${state.responseId}_${outputIndex}`,
+                  output_index: outputIndex,
                   content_index: 0,
                   part: { type: "output_text", annotations: [], logprobs: [], text: "" },
                 });
@@ -459,8 +502,8 @@ export function createResponsesApiTransformStream(logger = null, keepaliveInterv
 
               emit(controller, "response.output_text.delta", {
                 type: "response.output_text.delta",
-                item_id: `msg_${state.responseId}_${idx}`,
-                output_index: idx,
+                item_id: `msg_${state.responseId}_${outputIndex}`,
+                output_index: outputIndex,
                 content_index: 0,
                 delta: content,
                 logprobs: [],
@@ -488,16 +531,18 @@ export function createResponsesApiTransformStream(logger = null, keepaliveInterv
                 delete state.funcArgsBuf[tcIdx];
                 delete state.funcArgsDone[tcIdx];
                 delete state.funcItemDone[tcIdx];
+                clearToolCallOutputIndex(tcIdx);
               }
 
               if (funcName) state.funcNames[tcIdx] = funcName;
 
               if (!state.funcCallIds[tcIdx] && newCallId) {
                 state.funcCallIds[tcIdx] = newCallId;
+                const outputIndex = getToolCallOutputIndex(tcIdx);
 
                 emit(controller, "response.output_item.added", {
                   type: "response.output_item.added",
-                  output_index: tcIdx,
+                  output_index: outputIndex,
                   item: {
                     id: `fc_${newCallId}`,
                     type: "function_call",
@@ -528,10 +573,11 @@ export function createResponsesApiTransformStream(logger = null, keepaliveInterv
                 }
 
                 if (refCallId) {
+                  const outputIndex = getToolCallOutputIndex(tcIdx);
                   emit(controller, "response.function_call_arguments.delta", {
                     type: "response.function_call_arguments.delta",
                     item_id: `fc_${refCallId}`,
-                    output_index: tcIdx,
+                    output_index: outputIndex,
                     delta: deltaStr,
                   });
                 }

@@ -259,6 +259,57 @@ function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
+function normalizeLoggedToolCall(value: unknown, fallbackIndex: number): ToolCall {
+  const record = asRecord(value);
+  const fn = asRecord(record.function);
+  const index =
+    typeof record.index === "number" && Number.isInteger(record.index)
+      ? record.index
+      : typeof record.blockIndex === "number" && Number.isInteger(record.blockIndex)
+        ? record.blockIndex
+        : fallbackIndex;
+  const rawArguments = fn.arguments ?? record.arguments;
+  return {
+    id: record.id != null ? String(record.id) : null,
+    index,
+    type: typeof record.type === "string" ? record.type : "function",
+    function: {
+      name:
+        typeof fn.name === "string" ? fn.name : typeof record.name === "string" ? record.name : "",
+      arguments:
+        typeof rawArguments === "string" ? rawArguments : JSON.stringify(rawArguments ?? {}),
+    },
+  };
+}
+
+function collectTranslateStateToolCalls(state: TranslateState | null): ToolCall[] {
+  if (state?.toolCalls instanceof Map && state.toolCalls.size > 0) {
+    return [...state.toolCalls.values()]
+      .map((toolCall, index) => normalizeLoggedToolCall(toolCall, index))
+      .sort((a, b) => a.index - b.index);
+  }
+
+  const stateRecord = asRecord(state);
+  const callIds = asRecord(stateRecord.funcCallIds);
+  const names = asRecord(stateRecord.funcNames);
+  const argumentsByIndex = asRecord(stateRecord.funcArgsBuf);
+  return Object.keys(callIds)
+    .map((key, position) => {
+      const parsedIndex = Number(key);
+      return {
+        id: callIds[key] != null ? String(callIds[key]) : null,
+        index: Number.isInteger(parsedIndex) ? parsedIndex : position,
+        type: "function",
+        function: {
+          name: typeof names[key] === "string" ? names[key] : "",
+          arguments: typeof argumentsByIndex[key] === "string" ? argumentsByIndex[key] : "{}",
+        },
+      };
+    })
+    .filter((toolCall) => toolCall.id || toolCall.function.name)
+    .sort((a, b) => a.index - b.index);
+}
+
 const STREAM_SUMMARY_TEXT_LIMIT = 64 * 1024;
 
 function appendBoundedText(current: string, next: string): string {
@@ -2563,21 +2614,7 @@ export function createSSEStream(options: StreamOptions = {}) {
               const prompt = Number(u?.prompt_tokens ?? u?.input_tokens ?? 0);
               const completion = Number(u?.completion_tokens ?? u?.output_tokens ?? 0);
               let content = (state?.accumulatedContent ?? "").trim() || "";
-              const normalizedToolCalls: ToolCall[] = state?.toolCalls?.size
-                ? [...state.toolCalls.values()]
-                    .map(
-                      (tc: Record<string, unknown>): ToolCall => ({
-                        id: tc.id != null ? String(tc.id) : null,
-                        index: (tc.index as number) ?? (tc.blockIndex as number) ?? 0,
-                        type: (tc.type as string) ?? "function",
-                        function: (tc.function as ToolCall["function"]) ?? {
-                          name: (tc.name as string) ?? "",
-                          arguments: "",
-                        },
-                      })
-                    )
-                    .sort((a, b) => a.index - b.index)
-                : [];
+              const normalizedToolCalls = collectTranslateStateToolCalls(state);
               const textualToolCall = parseTextualToolCallFromContent(content);
               if (textualToolCall) {
                 normalizedToolCalls.push({

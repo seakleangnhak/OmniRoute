@@ -59,30 +59,53 @@ async function findCustomModelMetadata(providerId: string, modelId: string) {
   }
 }
 
-function buildInternalChatRequest(testBody: Record<string, unknown>, signal: AbortSignal) {
+function buildInternalChatRequest(
+  testBody: Record<string, unknown>,
+  signal: AbortSignal,
+  connectionId?: string,
+  authCookie?: string
+) {
+  const forcedConnectionId = typeof connectionId === "string" ? connectionId.trim() : "";
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    // Reuse the existing strict-mode internal bypass for live health checks.
+    "X-Internal-Test": "combo-health-check",
+    "X-OmniRoute-No-Cache": "true",
+    "X-Request-Id": `model-test-${randomUUID()}`,
+  };
+  if (forcedConnectionId) {
+    headers["X-OmniRoute-Connection"] = forcedConnectionId;
+  }
+  if (authCookie) {
+    headers.Cookie = authCookie;
+  }
+
   return new Request(`${INTERNAL_ORIGIN}/v1/chat/completions`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      // Reuse the existing strict-mode internal bypass for live health checks.
-      "X-Internal-Test": "combo-health-check",
-      "X-OmniRoute-No-Cache": "true",
-      "X-Request-Id": `model-test-${randomUUID()}`,
-    },
+    headers,
     body: JSON.stringify(testBody),
     signal,
   });
 }
 
-function buildInternalRerankRequest(testBody: Record<string, unknown>, signal: AbortSignal) {
+function buildInternalRerankRequest(
+  testBody: Record<string, unknown>,
+  signal: AbortSignal,
+  authCookie?: string
+) {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Internal-Test": "combo-health-check",
+    "X-OmniRoute-No-Cache": "true",
+    "X-Request-Id": `model-test-${randomUUID()}`,
+  };
+  if (authCookie) {
+    headers.Cookie = authCookie;
+  }
+
   return new Request(`${INTERNAL_ORIGIN}/v1/rerank`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Internal-Test": "combo-health-check",
-      "X-OmniRoute-No-Cache": "true",
-      "X-Request-Id": `model-test-${randomUUID()}`,
-    },
+    headers,
     body: JSON.stringify(testBody),
     signal,
   });
@@ -136,6 +159,7 @@ export interface RunSingleModelTestOptions {
   providerId: string;
   modelId: string;
   connectionId?: string;
+  authCookie?: string;
   timeoutMs?: number;
 }
 
@@ -161,7 +185,13 @@ export interface SingleModelTestResult {
 export async function runSingleModelTest(
   options: RunSingleModelTestOptions
 ): Promise<SingleModelTestResult> {
-  const { providerId, modelId, connectionId, timeoutMs = DEFAULT_TEST_TIMEOUT_MS } = options;
+  const {
+    providerId,
+    modelId,
+    connectionId,
+    authCookie,
+    timeoutMs = DEFAULT_TEST_TIMEOUT_MS,
+  } = options;
 
   let fullModelStr = modelId;
   if (!fullModelStr.includes("/")) {
@@ -202,9 +232,9 @@ export async function runSingleModelTest(
       );
     }
     if (isRerank) {
-      return postRerank(buildInternalRerankRequest(testBody, signal));
+      return postRerank(buildInternalRerankRequest(testBody, signal, authCookie));
     }
-    return postChatCompletion(buildInternalChatRequest(testBody, signal));
+    return postChatCompletion(buildInternalChatRequest(testBody, signal, connectionId, authCookie));
   };
 
   let res: Response;

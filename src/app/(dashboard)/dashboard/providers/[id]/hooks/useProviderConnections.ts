@@ -77,6 +77,7 @@ export interface UseProviderConnectionsReturn {
   // Connection fetch
   fetchConnections: () => Promise<void>;
   fetchProxyConfig: () => Promise<void>;
+  loadConnProxies: (conns: { id?: string }[]) => Promise<void>;
 
   // Single-connection handlers
   handleDelete: (connectionId: string) => Promise<void>;
@@ -893,6 +894,7 @@ export function useProviderConnections(
     // Fetch
     fetchConnections,
     fetchProxyConfig,
+    loadConnProxies,
 
     // Single-connection handlers
     handleDelete,

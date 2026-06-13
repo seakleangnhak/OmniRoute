@@ -28,6 +28,8 @@ process.env.DATA_DIR = TEST_DATA_DIR;
 
 const core = await import("../../src/lib/db/core.ts");
 const { getProviderCredentials } = await import("../../src/sse/services/auth.ts");
+const { createProviderConnection, deleteProviderConnection } =
+  await import("../../src/lib/db/providers.ts");
 
 test.after(() => {
   core.resetDbInstance();
@@ -72,4 +74,68 @@ test("#3061 opencode-zen no-auth: excluding 'noauth' returns null (breaks the fa
     null,
     "excluded synthetic noauth must not be re-selected for the opencode-zen keyless path"
   );
+});
+
+test("mimocode no-auth uses saved account rows before synthetic noauth", async () => {
+  const firstConnection = await createProviderConnection({
+    provider: "mimocode",
+    authType: "apikey",
+    name: "MiMoCode Account A",
+    priority: 1,
+    isActive: true,
+    testStatus: "active",
+    providerSpecificData: { fingerprints: ["mimo-fingerprint-a"] },
+  });
+  const secondConnection = await createProviderConnection({
+    provider: "mimocode",
+    authType: "apikey",
+    name: "MiMoCode Account B",
+    priority: 2,
+    isActive: true,
+    testStatus: "active",
+    providerSpecificData: { fingerprints: ["mimo-fingerprint-b"] },
+  });
+
+  try {
+    const first = await getProviderCredentials("mimocode");
+    assert.ok(first, "mimocode must resolve to a saved connection when rows exist");
+    assert.equal((first as { connectionId?: string }).connectionId, firstConnection?.id);
+    assert.notEqual((first as { connectionId?: string }).connectionId, "noauth");
+
+    const second = await getProviderCredentials(
+      "mimocode",
+      (first as { connectionId?: string }).connectionId || null
+    );
+    assert.ok(second, "excluding the selected MiMo account should select the next saved row");
+    assert.equal((second as { connectionId?: string }).connectionId, secondConnection?.id);
+    assert.notEqual((second as { connectionId?: string }).connectionId, "noauth");
+  } finally {
+    if (firstConnection?.id) await deleteProviderConnection(firstConnection.id);
+    if (secondConnection?.id) await deleteProviderConnection(secondConnection.id);
+  }
+});
+
+test("mimocode configured banned row never falls through to synthetic noauth", async () => {
+  const connection = await createProviderConnection({
+    provider: "mimocode",
+    authType: "apikey",
+    name: "MiMoCode Banned Account",
+    priority: 1,
+    isActive: false,
+    testStatus: "banned",
+    providerSpecificData: { fingerprints: ["mimo-fingerprint-banned"] },
+  });
+
+  try {
+    const credentials = await getProviderCredentials("mimocode");
+    assert.ok(credentials, "terminal configured accounts should return an allExpired result");
+    assert.equal(
+      (credentials as { allExpired?: boolean }).allExpired,
+      true,
+      "a configured banned MiMo row must stop synthetic noauth fallback"
+    );
+    assert.notEqual((credentials as { connectionId?: string }).connectionId, "noauth");
+  } finally {
+    if (connection?.id) await deleteProviderConnection(connection.id);
+  }
 });

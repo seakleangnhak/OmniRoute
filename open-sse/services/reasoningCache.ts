@@ -39,6 +39,7 @@ const REASONING_REPLAY_PROVIDERS = new Set([
   // 400s with "Param Incorrect: The reasoning_content in the thinking mode
   // must be passed back to the API."
   "xiaomi-mimo",
+  "mimocode",
 ]);
 
 const REASONING_REPLAY_MODEL_PATTERNS = [
@@ -54,6 +55,7 @@ const REASONING_REPLAY_MODEL_PATTERNS = [
   // MiMo (Xiaomi) thinking models — defensive match if a wildcard route
   // assigns a non-`xiaomi-mimo` provider ID to a mimo-* model alias.
   /^mimo[-.]?v\d/i,
+  /^mimo-auto$/i,
 ];
 
 const DEEPSEEK_V4_MODEL_PATTERN = /deepseek[-/]v4[-.](flash|pro)/i;

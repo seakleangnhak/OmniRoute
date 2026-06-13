@@ -150,6 +150,12 @@ type ModelCompatSavePatch = {
 
 // ModelCompatPopover extracted to components/ModelCompatPopover.tsx (Phase 1d)
 
+function generateRandomHex(bytes = 32): string {
+  const buffer = new Uint8Array(bytes);
+  crypto.getRandomValues(buffer);
+  return Array.from(buffer, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 // ──── ProviderPlaygroundPanel ────────────────────────────────────────────────
 // Renders a playground section on the individual provider page.
 // Shows ServiceKindTabs if the provider declares multiple kinds; falls back to
@@ -362,6 +368,7 @@ export default function ProviderDetailPageClient() {
     setProviderNode,
     fetchConnections,
     fetchProxyConfig,
+    loadConnProxies,
     handleDelete,
     handleUpdateConnectionStatus,
     handleToggleRateLimit,
@@ -437,6 +444,8 @@ export default function ProviderDetailPageClient() {
   const providerSupportsPat = supportsApiKeyOnFreeProvider(providerId);
   const isOAuth = providerSupportsOAuth && !providerSupportsPat;
   const isFreeNoAuth = NOAUTH_PROVIDERS[providerId]?.noAuth === true;
+  const usesNoAuthAccountConnections =
+    isFreeNoAuth && (providerId === "mimocode" || providerId === "opencode");
   const registryModels = getModelsByProviderId(providerId);
   // Prefer synced API-discovered models when available, then merge built-ins
   // and user-managed custom models without duplicating IDs.
@@ -623,9 +632,15 @@ export default function ProviderDetailPageClient() {
   // loadCodexSettings, loadClaudeRoutingSettings → hooks/useProviderSettings.ts (Phase 1f)
   // loadConnProxies → hooks/useProviderConnections.ts (Phase 1f)
 
+  const getModelTestConnectionId = () =>
+    selectedConnection?.id ||
+    connections.find((connection) => connection.isActive !== false)?.id ||
+    undefined;
+
   const onTestModel = async (modelId: string, fullModel: string) => {
     setTestingModelId(modelId);
     setModelTestStatus((prev) => ({ ...prev, [modelId]: undefined }));
+    const modelTestConnectionId = getModelTestConnectionId();
     try {
       const res = await fetch("/api/models/test", {
         method: "POST",
@@ -633,7 +648,7 @@ export default function ProviderDetailPageClient() {
         body: JSON.stringify({
           providerId: selectedConnection?.provider || providerNode?.id || providerId,
           modelId: fullModel,
-          connectionId: selectedConnection?.id,
+          connectionId: modelTestConnectionId,
         }),
       });
       const data = await res.json();
@@ -679,6 +694,7 @@ export default function ProviderDetailPageClient() {
     let ok = 0;
     let error = 0;
     let hiddenCount = 0;
+    const modelTestConnectionId = getModelTestConnectionId();
 
     const CHUNK_SIZE = 3;
     for (let i = 0; i < targets.length; i += CHUNK_SIZE) {
@@ -701,7 +717,7 @@ export default function ProviderDetailPageClient() {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 providerId: providerId,
-                connectionId: selectedConnection?.id,
+                connectionId: modelTestConnectionId,
                 modelIds: [fullModel],
               }),
             }).then((r) => r.json());
@@ -2096,7 +2112,7 @@ export default function ProviderDetailPageClient() {
             modelTestStatus={modelTestStatus}
             testingModelId={testingModelId}
             providerId={providerId}
-            connectionId={selectedConnection?.id ?? ""}
+            connectionId={getModelTestConnectionId() ?? ""}
             autoHideFailed={autoHideFailed}
             onAutoHideFailedChange={setAutoHideFailed}
           />
@@ -2475,7 +2491,8 @@ export default function ProviderDetailPageClient() {
         <NoAuthAccountCard
           providerId={providerId}
           providerName="MiMoCode"
-          generateAccountId={() => crypto.randomUUID().replace(/-/g, "")}
+          generateAccountId={() => generateRandomHex(32)}
+          onConnectionsChanged={fetchConnections}
         />
       )}
       {!isUpstreamProxyProvider && isFreeNoAuth && providerId === "opencode" && (
@@ -2483,924 +2500,933 @@ export default function ProviderDetailPageClient() {
           providerId={providerId}
           providerName="OpenCode"
           generateAccountId={() => crypto.randomUUID().replace(/-/g, "")}
+          onConnectionsChanged={fetchConnections}
         />
       )}
       {!isUpstreamProxyProvider &&
         isFreeNoAuth &&
         providerId !== "mimocode" &&
         providerId !== "opencode" && <NoAuthProviderCard />}
-      {!isUpstreamProxyProvider && !isFreeNoAuth && (
-        <Card>
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <h2 className="text-lg font-semibold">{t("connections")}</h2>
-              {providerId === "claude" && (
-                <div
-                  className="inline-flex items-center gap-2 rounded-lg border border-orange-500/20 bg-orange-500/5 px-2 py-1 text-xs font-medium text-text-muted"
-                  title={providerText(
-                    t,
-                    "preferClaudeCodeForUnprefixedClaudeModelsTooltip",
-                    "Route bare claude-* model IDs from Claude Code clients through the Claude Code account instead of asking for a provider prefix."
-                  )}
-                >
-                  <span className="material-symbols-outlined text-[14px] text-orange-500">
-                    alt_route
-                  </span>
-                  <span>
-                    {providerText(
+      {!isUpstreamProxyProvider &&
+        (!isFreeNoAuth || (usesNoAuthAccountConnections && connections.length > 0)) && (
+          <Card>
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <h2 className="text-lg font-semibold">{t("connections")}</h2>
+                {providerId === "claude" && (
+                  <div
+                    className="inline-flex items-center gap-2 rounded-lg border border-orange-500/20 bg-orange-500/5 px-2 py-1 text-xs font-medium text-text-muted"
+                    title={providerText(
                       t,
-                      "preferClaudeCodeForUnprefixedClaudeModelsLabel",
-                      "Claude Code default"
+                      "preferClaudeCodeForUnprefixedClaudeModelsTooltip",
+                      "Route bare claude-* model IDs from Claude Code clients through the Claude Code account instead of asking for a provider prefix."
                     )}
-                  </span>
-                  <Toggle
-                    size="sm"
-                    checked={preferClaudeCodeForUnprefixedClaudeModels}
-                    onChange={handleToggleClaudeRoutingPreference}
-                    disabled={savingClaudeRoutingPreference || !claudeRoutingSettingsLoaded}
-                    ariaLabel={providerText(
-                      t,
-                      "preferClaudeCodeForUnprefixedClaudeModelsAria",
-                      "Prefer Claude Code for unprefixed Claude models"
-                    )}
-                    title={
-                      preferClaudeCodeForUnprefixedClaudeModels
-                        ? providerText(
-                            t,
-                            "preferClaudeCodeForUnprefixedClaudeModelsDisable",
-                            "Disable Claude Code preference for bare claude-* model IDs"
-                          )
-                        : providerText(
-                            t,
-                            "preferClaudeCodeForUnprefixedClaudeModelsEnable",
-                            "Enable Claude Code preference for bare claude-* model IDs"
-                          )
-                    }
-                  />
-                  <span className="text-[11px] text-text-muted/70">
-                    {preferClaudeCodeForUnprefixedClaudeModels
-                      ? providerText(t, "toggleOnShort", "On")
-                      : providerText(t, "toggleOffShort", "Off")}
-                  </span>
-                  {claudeRoutingSettingsLoadError ? (
-                    <button
-                      type="button"
-                      onClick={() => void loadClaudeRoutingSettings()}
-                      className="rounded border border-orange-500/30 px-2 py-0.5 text-[11px] font-medium text-orange-600 hover:bg-orange-500/10 dark:text-orange-300"
-                      title={claudeRoutingSettingsLoadError}
-                    >
-                      {providerText(t, "retry", "Retry")}
-                    </button>
-                  ) : null}
-                </div>
-              )}
-              {providerId === "codex" && (
-                <div
-                  className="inline-flex items-center gap-2 rounded-lg border border-sky-500/20 bg-sky-500/5 px-2 py-1 text-xs font-medium text-text-muted"
-                  title={providerText(
-                    t,
-                    "providerDetailServiceModeTooltip",
-                    "Set a global Codex service mode, or leave accounts on their individual service-tier setting."
-                  )}
-                >
-                  <span>
-                    {providerText(t, "providerDetailServiceModeLabel", "Global service mode:")}
-                  </span>
-                  <select
-                    value={codexGlobalServiceMode}
-                    onChange={(event) =>
-                      handleChangeCodexGlobalServiceMode(
-                        event.target.value as CodexGlobalServiceMode
-                      )
-                    }
-                    disabled={savingCodexGlobalServiceMode || !codexSettingsLoaded}
-                    aria-label="Global Codex service mode"
-                    className="rounded-md border border-border bg-bg px-2 py-1 text-xs text-text-main outline-none transition-colors focus:border-primary disabled:opacity-60"
                   >
-                    {codexGlobalServiceModeOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  {codexSettingsLoadError ? (
-                    <button
-                      type="button"
-                      onClick={() => void loadCodexSettings()}
-                      className="rounded border border-sky-500/30 px-2 py-0.5 text-[11px] font-medium text-sky-600 hover:bg-sky-500/10 dark:text-sky-300"
-                      title={codexSettingsLoadError}
-                    >
-                      {providerText(t, "retry", "Retry")}
-                    </button>
-                  ) : null}
-                </div>
-              )}
-              {/* Provider-level proxy indicator/button */}
-              <button
-                onClick={() =>
-                  setProxyTarget({
-                    level: "provider",
-                    id: providerId,
-                    label: providerInfo?.name || providerId,
-                  })
-                }
-                className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all ${
-                  proxyConfig?.providers?.[providerId]
-                    ? "bg-amber-500/15 text-amber-500 hover:bg-amber-500/25"
-                    : "bg-black/[0.03] dark:bg-white/[0.03] text-text-muted/50 hover:text-text-muted hover:bg-black/[0.06] dark:hover:bg-white/[0.06]"
-                }`}
-                title={
-                  proxyConfig?.providers?.[providerId]
-                    ? t("providerProxyTitleConfigured", {
-                        host: proxyConfig.providers[providerId].host || t("configured"),
-                      })
-                    : t("providerProxyConfigureHint")
-                }
-              >
-                <span className="material-symbols-outlined text-[14px]">vpn_lock</span>
-                {proxyConfig?.providers?.[providerId]
-                  ? proxyConfig.providers[providerId].host || t("providerProxy")
-                  : t("providerProxy")}
-              </button>
-            </div>
-            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-              {connections.length > 0 && (
-                <button
-                  onClick={() => handleDistributeProxies()}
-                  disabled={distributingProxies || batchTesting || !!retestingId}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                    distributingProxies
-                      ? "bg-primary/20 border-primary/40 text-primary animate-pulse"
-                      : "bg-bg-subtle border-border text-text-muted hover:text-text-primary hover:border-primary/40"
-                  }`}
-                  title={t("distributeProxies")}
-                  aria-label={t("distributeProxies")}
-                >
-                  <span className="material-symbols-outlined text-[14px]">
-                    {distributingProxies ? "sync" : "swap_horiz"}
-                  </span>
-                  {distributingProxies ? t("distributing") : t("distributeProxies")}
-                </button>
-              )}
-              {connections.length > 1 && (
-                <button
-                  onClick={handleBatchTestAll}
-                  disabled={batchTesting || batchRetesting || !!retestingId}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                    batchTesting
-                      ? "bg-primary/20 border-primary/40 text-primary animate-pulse"
-                      : "bg-bg-subtle border-border text-text-muted hover:text-text-primary hover:border-primary/40"
-                  }`}
-                  title={t("testAll")}
-                  aria-label={t("testAll")}
-                >
-                  <span className="material-symbols-outlined text-[14px]">
-                    {batchTesting ? "sync" : "play_arrow"}
-                  </span>
-                  {batchTesting ? t("testing") : t("testAll")}
-                </button>
-              )}
-              {!isCompatible ? (
-                <>
-                  {isCommandCode ? (
-                    <>
-                      <Button
-                        size="sm"
-                        icon="open_in_new"
-                        loading={
-                          commandCodeAuthState.phase === "starting" ||
-                          commandCodeAuthState.phase === "polling" ||
-                          commandCodeAuthState.phase === "applying"
-                        }
-                        onClick={() => gateConnectionFlow(handleOpenCommandCodeConnect)}
-                      >
-                        Connect
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        icon="add"
-                        onClick={() => gateConnectionFlow(openApiKeyAddFlow)}
-                      >
-                        Manual API key
-                      </Button>
-                    </>
-                  ) : (
-                    <>
-                      <Button
-                        size="sm"
-                        icon="add"
-                        onClick={() => gateConnectionFlow(openPrimaryAddFlow)}
-                      >
-                        {providerSupportsPat ? "Add PAT" : t("add")}
-                      </Button>
-                      {providerId === "qoder" && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => gateConnectionFlow(() => setShowOAuthModal(true))}
-                        >
-                          Experimental OAuth
-                        </Button>
-                      )}
-                      {providerId === "codex" && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          icon="menu_book"
-                          onClick={() => setCodexCliGuideOpen(true)}
-                        >
-                          Codex CLI Guide
-                        </Button>
-                      )}
-                      {providerId === "codex" && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          icon="share"
-                          onClick={() => gateConnectionFlow(openExternalLinkFlow)}
-                        >
-                          Adicionar Externo
-                        </Button>
-                      )}
-                      {providerId === "codex" && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          icon="upload_file"
-                          onClick={() => gateConnectionFlow(() => setImportCodexModalOpen(true))}
-                        >
-                          {typeof t.has === "function" && t.has("importCodexAuth")
-                            ? t("importCodexAuth")
-                            : "Import auth"}
-                        </Button>
-                      )}
-                      {providerId === "claude" && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          icon="upload_file"
-                          onClick={() => gateConnectionFlow(() => setImportClaudeModalOpen(true))}
-                        >
-                          {typeof t.has === "function" && t.has("importClaudeAuth")
-                            ? t("importClaudeAuth")
-                            : "Import auth"}
-                        </Button>
-                      )}
-                      {providerId === "gemini-cli" && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          icon="upload_file"
-                          onClick={() => gateConnectionFlow(() => setImportGeminiModalOpen(true))}
-                        >
-                          {typeof t.has === "function" && t.has("importGeminiAuth")
-                            ? t("importGeminiAuth")
-                            : "Import auth"}
-                        </Button>
-                      )}
-                    </>
-                  )}
-                </>
-              ) : (
-                connections.length === 0 && (
-                  <Button
-                    size="sm"
-                    icon="add"
-                    onClick={() => gateConnectionFlow(openApiKeyAddFlow)}
-                  >
-                    {t("add")}
-                  </Button>
-                )
-              )}
-            </div>
-          </div>
-
-          {connections.length === 0 ? (
-            <div className="text-center py-12">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 text-primary mb-4">
-                <span className="material-symbols-outlined text-[32px]">
-                  {isOAuth ? "lock" : "key"}
-                </span>
-              </div>
-              <p className="text-text-main font-medium mb-1">{t("noConnectionsYet")}</p>
-              <p className="text-sm text-text-muted mb-4">{t("addFirstConnectionHint")}</p>
-              {!isCompatible && (
-                <div className="flex items-center justify-center gap-2">
-                  {isCommandCode ? (
-                    <>
-                      <Button
-                        icon="open_in_new"
-                        loading={
-                          commandCodeAuthState.phase === "starting" ||
-                          commandCodeAuthState.phase === "polling" ||
-                          commandCodeAuthState.phase === "applying"
-                        }
-                        onClick={() => gateConnectionFlow(handleOpenCommandCodeConnect)}
-                      >
-                        Connect
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        icon="add"
-                        onClick={() => gateConnectionFlow(openApiKeyAddFlow)}
-                      >
-                        Manual API key
-                      </Button>
-                    </>
-                  ) : (
-                    <>
-                      <Button icon="add" onClick={() => gateConnectionFlow(openPrimaryAddFlow)}>
-                        {providerSupportsPat ? "Add PAT" : t("addConnection")}
-                      </Button>
-                      {providerId === "qoder" && (
-                        <Button
-                          variant="secondary"
-                          onClick={() => gateConnectionFlow(() => setShowOAuthModal(true))}
-                        >
-                          Experimental OAuth
-                        </Button>
-                      )}
-                      {providerId === "codex" && (
-                        <Button
-                          variant="secondary"
-                          icon="upload_file"
-                          onClick={() => gateConnectionFlow(() => setImportCodexModalOpen(true))}
-                        >
-                          {typeof t.has === "function" && t.has("importCodexAuth")
-                            ? t("importCodexAuth")
-                            : "Import auth"}
-                        </Button>
-                      )}
-                      {providerId === "claude" && (
-                        <Button
-                          variant="secondary"
-                          icon="upload_file"
-                          onClick={() => gateConnectionFlow(() => setImportClaudeModalOpen(true))}
-                        >
-                          {typeof t.has === "function" && t.has("importClaudeAuth")
-                            ? t("importClaudeAuth")
-                            : "Import auth"}
-                        </Button>
-                      )}
-                      {providerId === "gemini-cli" && (
-                        <Button
-                          variant="secondary"
-                          icon="upload_file"
-                          onClick={() => gateConnectionFlow(() => setImportGeminiModalOpen(true))}
-                        >
-                          {typeof t.has === "function" && t.has("importGeminiAuth")
-                            ? t("importGeminiAuth")
-                            : "Import auth"}
-                        </Button>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          ) : (
-            (() => {
-              const sorted = [...connections].sort((a, b) => (a.priority || 0) - (b.priority || 0));
-              const hasAnyTag = sorted.some(
-                (c) => c.providerSpecificData?.tag as string | undefined
-              );
-              const allSelected = selectedIds.size === connections.length && connections.length > 0;
-              const someSelected = selectedIds.size > 0 && selectedIds.size < connections.length;
-              const bulkBusy =
-                batchUpdating !== null || batchRetesting || batchDeleting || batchTesting;
-              const bulkActions = selectedIds.size > 0 && (
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    icon="toggle_on"
-                    loading={batchUpdating === "activate"}
-                    disabled={bulkBusy && batchUpdating !== "activate"}
-                    onClick={() => handleBatchSetActive(true)}
-                  >
-                    {t("batchActivateSelected")}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    icon="toggle_off"
-                    loading={batchUpdating === "deactivate"}
-                    disabled={bulkBusy && batchUpdating !== "deactivate"}
-                    onClick={() => handleBatchSetActive(false)}
-                  >
-                    {t("batchDeactivateSelected")}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    icon="play_arrow"
-                    loading={batchRetesting}
-                    disabled={(bulkBusy && !batchRetesting) || !!retestingId}
-                    onClick={handleBatchRetest}
-                  >
-                    {t("batchRetestSelected")}
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    icon="delete"
-                    loading={batchDeleting}
-                    disabled={bulkBusy && !batchDeleting}
-                    onClick={handleBatchDeleteOpenModal}
-                  >
-                    {t("batchDeleteSelected", { count: selectedIds.size })}
-                  </Button>
-                </div>
-              );
-
-              const isHealthy = (c: ConnectionRowConnection): boolean => {
-                const s = c.testStatus;
-                return c.isActive !== false && (!s || s === "active" || s === "success");
-              };
-              const STATUS_FILTER_OPTIONS = [
-                { value: "all", label: t("filterAll", "All") },
-                { value: "active", label: t("filterActive", "Active") },
-                { value: "error", label: t("filterError", "Error") },
-                { value: "banned", label: t("filterBanned", "Banned") },
-                {
-                  value: "credits_exhausted",
-                  label: t("filterCreditsExhausted", "Credits Exhausted"),
-                },
-              ];
-              const filtered =
-                healthFilter === "all"
-                  ? sorted
-                  : sorted.filter((c) => {
-                      if (healthFilter === "active") return isHealthy(c);
-                      if (healthFilter === "error")
-                        return (
-                          !isHealthy(c) &&
-                          c.testStatus !== "banned" &&
-                          c.testStatus !== "credits_exhausted"
-                        );
-                      return c.testStatus === healthFilter;
-                    });
-
-              const totalFilteredPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-              const clampedPage = Math.min(page, totalFilteredPages - 1);
-              const pageStart = clampedPage * PAGE_SIZE;
-              const pageEnd = pageStart + PAGE_SIZE;
-
-              const filterPills = (
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {STATUS_FILTER_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.value}
-                      onClick={() => {
-                        setHealthFilter(opt.value);
-                        setPage(0);
-                        setSelectedIds(new Set());
-                      }}
-                      className={`px-2.5 py-1 text-xs rounded-full font-medium transition-colors ${
-                        healthFilter === opt.value
-                          ? "bg-primary text-white"
-                          : "bg-muted/60 text-text-muted hover:bg-muted"
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              );
-
-              const paginationBar =
-                totalFilteredPages > 1 ? (
-                  <div className="flex items-center justify-between px-3 py-2 border-t border-border">
-                    <span className="text-xs text-text-muted">
-                      {pageStart + 1}–{Math.min(pageEnd, filtered.length)} / {filtered.length}
+                    <span className="material-symbols-outlined text-[14px] text-orange-500">
+                      alt_route
                     </span>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        icon="chevron_left"
-                        disabled={clampedPage === 0}
-                        onClick={() => setPage((p) => Math.max(0, p - 1))}
-                      />
-                      <span className="text-xs text-text-muted min-w-[4rem] text-center">
-                        {clampedPage + 1} / {totalFilteredPages}
-                      </span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        icon="chevron_right"
-                        disabled={clampedPage >= totalFilteredPages - 1}
-                        onClick={() => setPage((p) => Math.min(totalFilteredPages - 1, p + 1))}
-                      />
-                    </div>
-                  </div>
-                ) : null;
-
-              if (!hasAnyTag) {
-                const pageConnections = filtered.slice(pageStart, pageEnd);
-                const allSelected =
-                  pageConnections.length > 0 && pageConnections.every((c) => selectedIds.has(c.id));
-                const someSelected = pageConnections.some((c) => selectedIds.has(c.id));
-                return (
-                  <>
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 px-3 py-2 bg-muted/50 rounded-t-lg border border-b-0 border-border">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <label className="flex items-center gap-2 cursor-pointer select-none">
-                          <input
-                            type="checkbox"
-                            checked={allSelected}
-                            ref={(el) => {
-                              if (el) el.indeterminate = someSelected;
-                            }}
-                            onChange={() => {
-                              if (allSelected) {
-                                const toRemove = new Set(pageConnections.map((c) => c.id));
-                                setSelectedIds((prev) => {
-                                  const next = new Set(prev);
-                                  for (const id of toRemove) next.delete(id);
-                                  return next;
-                                });
-                              } else {
-                                setSelectedIds((prev) => {
-                                  const next = new Set(prev);
-                                  for (const c of pageConnections) next.add(c.id);
-                                  return next;
-                                });
-                              }
-                            }}
-                            className="w-4 h-4 rounded border-border text-primary focus:ring-primary/30 cursor-pointer"
-                          />
-                          <span className="text-sm font-medium text-text-muted">
-                            {selectedIds.size > 0
-                              ? providerCountText(
-                                  t,
-                                  "selectedCount",
-                                  selectedIds.size,
-                                  "{count} selected",
-                                  "{count} selected"
-                                )
-                              : providerCountText(
-                                  t,
-                                  "accountsCount",
-                                  filtered.length,
-                                  "{count} account",
-                                  "{count} accounts"
-                                )}
-                          </span>
-                        </label>
-                        {filterPills}
-                      </div>
-
-                      {bulkActions}
-                    </div>
-                    <div className="flex flex-col divide-y divide-black/[0.03] dark:divide-white/[0.03] border border-t-0 border-border rounded-b-lg overflow-hidden">
-                      {pageConnections.length === 0 ? (
-                        <div className="px-3 py-6 text-center text-sm text-text-muted">
-                          {t("noFilteredConnections", "No connections match the current filter.")}
-                        </div>
-                      ) : (
-                        pageConnections.map((conn, index) => (
-                          <ConnectionRow
-                            key={conn.id}
-                            connection={conn}
-                            isOAuth={conn.authType === "oauth"}
-                            isClaude={providerId === "claude"}
-                            codexGlobalServiceMode={codexGlobalServiceMode}
-                            isFirst={index === 0}
-                            isLast={index === pageConnections.length - 1}
-                            isSelected={selectedIds.has(conn.id)}
-                            onToggleSelect={() => handleToggleSelectOne(conn.id)}
-                            onMoveUp={() => handleSwapPriority(conn, sorted[index - 1])}
-                            onMoveDown={() => handleSwapPriority(conn, sorted[index + 1])}
-                            onToggleActive={(isActive) =>
-                              handleUpdateConnectionStatus(conn.id, isActive)
-                            }
-                            onToggleRateLimit={(enabled) => handleToggleRateLimit(conn.id, enabled)}
-                            onToggleClaudeExtraUsage={(enabled) =>
-                              handleToggleClaudeExtraUsage(conn.id, enabled)
-                            }
-                            isCodex={providerId === "codex"}
-                            isGeminiCli={providerId === "gemini-cli"}
-                            isCcCompatible={isCcCompatible}
-                            cliproxyapiEnabled={cpaProviderEnabled}
-                            onToggleCliproxyapiMode={(enabled) =>
-                              handleToggleCliproxyapiMode(conn.id, enabled)
-                            }
-                            onToggleCodex5h={(enabled) =>
-                              handleToggleCodexLimit(conn.id, "use5h", enabled)
-                            }
-                            onToggleCodexWeekly={(enabled) =>
-                              handleToggleCodexLimit(conn.id, "useWeekly", enabled)
-                            }
-                            onRetest={() => handleRetestConnection(conn.id)}
-                            isRetesting={retestingId === conn.id}
-                            onEdit={() => {
-                              setSelectedConnection(conn);
-                              setShowEditModal(true);
-                            }}
-                            onDelete={() => handleDelete(conn.id)}
-                            onReauth={
-                              conn.authType === "oauth"
-                                ? () => gateConnectionFlow(() => setShowOAuthModal(true, conn))
-                                : undefined
-                            }
-                            onRefreshToken={
-                              conn.authType === "oauth"
-                                ? () => handleRefreshToken(conn.id)
-                                : undefined
-                            }
-                            isRefreshing={refreshingId === conn.id}
-                            onApplyCodexAuthLocal={
-                              providerId === "codex"
-                                ? () => setApplyCodexModalConnectionId(conn.id)
-                                : undefined
-                            }
-                            isApplyingCodexAuthLocal={applyingCodexAuthId === conn.id}
-                            onExportCodexAuthFile={
-                              providerId === "codex"
-                                ? () => handleExportCodexAuthFile(conn.id)
-                                : undefined
-                            }
-                            isExportingCodexAuthFile={exportingCodexAuthId === conn.id}
-                            onApplyClaudeAuthLocal={
-                              providerId === "claude"
-                                ? () => setApplyClaudeModalConnectionId(conn.id)
-                                : undefined
-                            }
-                            isApplyingClaudeAuthLocal={applyingClaudeAuthId === conn.id}
-                            onExportClaudeAuthFile={
-                              providerId === "claude"
-                                ? () => handleExportClaudeAuthFile(conn.id)
-                                : undefined
-                            }
-                            isExportingClaudeAuthFile={exportingClaudeAuthId === conn.id}
-                            onApplyGeminiAuthLocal={
-                              providerId === "gemini-cli"
-                                ? () => setApplyGeminiModalConnectionId(conn.id)
-                                : undefined
-                            }
-                            isApplyingGeminiAuthLocal={applyingGeminiAuthId === conn.id}
-                            onExportGeminiAuthFile={
-                              providerId === "gemini-cli"
-                                ? () => handleExportGeminiAuthFile(conn.id)
-                                : undefined
-                            }
-                            isExportingGeminiAuthFile={exportingGeminiAuthId === conn.id}
-                            onProxy={() =>
-                              setProxyTarget({
-                                level: "key",
-                                id: conn.id,
-                                label: pickDisplayValue(
-                                  [conn.name, conn.email],
-                                  emailsVisible,
-                                  conn.id
-                                ),
-                              })
-                            }
-                            hasProxy={!!connProxyMap[conn.id]?.proxy}
-                            proxySource={connProxyMap[conn.id]?.level || null}
-                            proxyHost={connProxyMap[conn.id]?.proxy?.host || null}
-                            proxyEnabled={readBooleanToggle(conn.proxyEnabled, true)}
-                            onToggleProxyEnabled={(enabled) =>
-                              handleToggleProxyEnabled(conn.id, enabled)
-                            }
-                            perKeyProxyEnabled={readBooleanToggle(conn.perKeyProxyEnabled, false)}
-                            onTogglePerKeyProxyEnabled={(enabled) =>
-                              handleTogglePerKeyProxyEnabled(conn.id, enabled)
-                            }
-                          />
-                        ))
+                    <span>
+                      {providerText(
+                        t,
+                        "preferClaudeCodeForUnprefixedClaudeModelsLabel",
+                        "Claude Code default"
                       )}
-                    </div>
-                    {paginationBar}
+                    </span>
+                    <Toggle
+                      size="sm"
+                      checked={preferClaudeCodeForUnprefixedClaudeModels}
+                      onChange={handleToggleClaudeRoutingPreference}
+                      disabled={savingClaudeRoutingPreference || !claudeRoutingSettingsLoaded}
+                      ariaLabel={providerText(
+                        t,
+                        "preferClaudeCodeForUnprefixedClaudeModelsAria",
+                        "Prefer Claude Code for unprefixed Claude models"
+                      )}
+                      title={
+                        preferClaudeCodeForUnprefixedClaudeModels
+                          ? providerText(
+                              t,
+                              "preferClaudeCodeForUnprefixedClaudeModelsDisable",
+                              "Disable Claude Code preference for bare claude-* model IDs"
+                            )
+                          : providerText(
+                              t,
+                              "preferClaudeCodeForUnprefixedClaudeModelsEnable",
+                              "Enable Claude Code preference for bare claude-* model IDs"
+                            )
+                      }
+                    />
+                    <span className="text-[11px] text-text-muted/70">
+                      {preferClaudeCodeForUnprefixedClaudeModels
+                        ? providerText(t, "toggleOnShort", "On")
+                        : providerText(t, "toggleOffShort", "Off")}
+                    </span>
+                    {claudeRoutingSettingsLoadError ? (
+                      <button
+                        type="button"
+                        onClick={() => void loadClaudeRoutingSettings()}
+                        className="rounded border border-orange-500/30 px-2 py-0.5 text-[11px] font-medium text-orange-600 hover:bg-orange-500/10 dark:text-orange-300"
+                        title={claudeRoutingSettingsLoadError}
+                      >
+                        {providerText(t, "retry", "Retry")}
+                      </button>
+                    ) : null}
+                  </div>
+                )}
+                {providerId === "codex" && (
+                  <div
+                    className="inline-flex items-center gap-2 rounded-lg border border-sky-500/20 bg-sky-500/5 px-2 py-1 text-xs font-medium text-text-muted"
+                    title={providerText(
+                      t,
+                      "providerDetailServiceModeTooltip",
+                      "Set a global Codex service mode, or leave accounts on their individual service-tier setting."
+                    )}
+                  >
+                    <span>
+                      {providerText(t, "providerDetailServiceModeLabel", "Global service mode:")}
+                    </span>
+                    <select
+                      value={codexGlobalServiceMode}
+                      onChange={(event) =>
+                        handleChangeCodexGlobalServiceMode(
+                          event.target.value as CodexGlobalServiceMode
+                        )
+                      }
+                      disabled={savingCodexGlobalServiceMode || !codexSettingsLoaded}
+                      aria-label="Global Codex service mode"
+                      className="rounded-md border border-border bg-bg px-2 py-1 text-xs text-text-main outline-none transition-colors focus:border-primary disabled:opacity-60"
+                    >
+                      {codexGlobalServiceModeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    {codexSettingsLoadError ? (
+                      <button
+                        type="button"
+                        onClick={() => void loadCodexSettings()}
+                        className="rounded border border-sky-500/30 px-2 py-0.5 text-[11px] font-medium text-sky-600 hover:bg-sky-500/10 dark:text-sky-300"
+                        title={codexSettingsLoadError}
+                      >
+                        {providerText(t, "retry", "Retry")}
+                      </button>
+                    ) : null}
+                  </div>
+                )}
+                {/* Provider-level proxy indicator/button */}
+                <button
+                  onClick={() =>
+                    setProxyTarget({
+                      level: "provider",
+                      id: providerId,
+                      label: providerInfo?.name || providerId,
+                    })
+                  }
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all ${
+                    proxyConfig?.providers?.[providerId]
+                      ? "bg-amber-500/15 text-amber-500 hover:bg-amber-500/25"
+                      : "bg-black/[0.03] dark:bg-white/[0.03] text-text-muted/50 hover:text-text-muted hover:bg-black/[0.06] dark:hover:bg-white/[0.06]"
+                  }`}
+                  title={
+                    proxyConfig?.providers?.[providerId]
+                      ? t("providerProxyTitleConfigured", {
+                          host: proxyConfig.providers[providerId].host || t("configured"),
+                        })
+                      : t("providerProxyConfigureHint")
+                  }
+                >
+                  <span className="material-symbols-outlined text-[14px]">vpn_lock</span>
+                  {proxyConfig?.providers?.[providerId]
+                    ? proxyConfig.providers[providerId].host || t("providerProxy")
+                    : t("providerProxy")}
+                </button>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                {connections.length > 0 && (
+                  <button
+                    onClick={() => handleDistributeProxies()}
+                    disabled={distributingProxies || batchTesting || !!retestingId}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                      distributingProxies
+                        ? "bg-primary/20 border-primary/40 text-primary animate-pulse"
+                        : "bg-bg-subtle border-border text-text-muted hover:text-text-primary hover:border-primary/40"
+                    }`}
+                    title={t("distributeProxies")}
+                    aria-label={t("distributeProxies")}
+                  >
+                    <span className="material-symbols-outlined text-[14px]">
+                      {distributingProxies ? "sync" : "swap_horiz"}
+                    </span>
+                    {distributingProxies ? t("distributing") : t("distributeProxies")}
+                  </button>
+                )}
+                {connections.length > 1 && (
+                  <button
+                    onClick={handleBatchTestAll}
+                    disabled={batchTesting || batchRetesting || !!retestingId}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                      batchTesting
+                        ? "bg-primary/20 border-primary/40 text-primary animate-pulse"
+                        : "bg-bg-subtle border-border text-text-muted hover:text-text-primary hover:border-primary/40"
+                    }`}
+                    title={t("testAll")}
+                    aria-label={t("testAll")}
+                  >
+                    <span className="material-symbols-outlined text-[14px]">
+                      {batchTesting ? "sync" : "play_arrow"}
+                    </span>
+                    {batchTesting ? t("testing") : t("testAll")}
+                  </button>
+                )}
+                {!usesNoAuthAccountConnections && !isCompatible ? (
+                  <>
+                    {isCommandCode ? (
+                      <>
+                        <Button
+                          size="sm"
+                          icon="open_in_new"
+                          loading={
+                            commandCodeAuthState.phase === "starting" ||
+                            commandCodeAuthState.phase === "polling" ||
+                            commandCodeAuthState.phase === "applying"
+                          }
+                          onClick={() => gateConnectionFlow(handleOpenCommandCodeConnect)}
+                        >
+                          Connect
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          icon="add"
+                          onClick={() => gateConnectionFlow(openApiKeyAddFlow)}
+                        >
+                          Manual API key
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button
+                          size="sm"
+                          icon="add"
+                          onClick={() => gateConnectionFlow(openPrimaryAddFlow)}
+                        >
+                          {providerSupportsPat ? "Add PAT" : t("add")}
+                        </Button>
+                        {providerId === "qoder" && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => gateConnectionFlow(() => setShowOAuthModal(true))}
+                          >
+                            Experimental OAuth
+                          </Button>
+                        )}
+                        {providerId === "codex" && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            icon="menu_book"
+                            onClick={() => setCodexCliGuideOpen(true)}
+                          >
+                            Codex CLI Guide
+                          </Button>
+                        )}
+                        {providerId === "codex" && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            icon="share"
+                            onClick={() => gateConnectionFlow(openExternalLinkFlow)}
+                          >
+                            Adicionar Externo
+                          </Button>
+                        )}
+                        {providerId === "codex" && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            icon="upload_file"
+                            onClick={() => gateConnectionFlow(() => setImportCodexModalOpen(true))}
+                          >
+                            {typeof t.has === "function" && t.has("importCodexAuth")
+                              ? t("importCodexAuth")
+                              : "Import auth"}
+                          </Button>
+                        )}
+                        {providerId === "claude" && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            icon="upload_file"
+                            onClick={() => gateConnectionFlow(() => setImportClaudeModalOpen(true))}
+                          >
+                            {typeof t.has === "function" && t.has("importClaudeAuth")
+                              ? t("importClaudeAuth")
+                              : "Import auth"}
+                          </Button>
+                        )}
+                        {providerId === "gemini-cli" && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            icon="upload_file"
+                            onClick={() => gateConnectionFlow(() => setImportGeminiModalOpen(true))}
+                          >
+                            {typeof t.has === "function" && t.has("importGeminiAuth")
+                              ? t("importGeminiAuth")
+                              : "Import auth"}
+                          </Button>
+                        )}
+                      </>
+                    )}
                   </>
+                ) : !usesNoAuthAccountConnections ? (
+                  connections.length === 0 && (
+                    <Button
+                      size="sm"
+                      icon="add"
+                      onClick={() => gateConnectionFlow(openApiKeyAddFlow)}
+                    >
+                      {t("add")}
+                    </Button>
+                  )
+                ) : null}
+              </div>
+            </div>
+
+            {connections.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 text-primary mb-4">
+                  <span className="material-symbols-outlined text-[32px]">
+                    {isOAuth ? "lock" : "key"}
+                  </span>
+                </div>
+                <p className="text-text-main font-medium mb-1">{t("noConnectionsYet")}</p>
+                <p className="text-sm text-text-muted mb-4">{t("addFirstConnectionHint")}</p>
+                {!isCompatible && (
+                  <div className="flex items-center justify-center gap-2">
+                    {isCommandCode ? (
+                      <>
+                        <Button
+                          icon="open_in_new"
+                          loading={
+                            commandCodeAuthState.phase === "starting" ||
+                            commandCodeAuthState.phase === "polling" ||
+                            commandCodeAuthState.phase === "applying"
+                          }
+                          onClick={() => gateConnectionFlow(handleOpenCommandCodeConnect)}
+                        >
+                          Connect
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          icon="add"
+                          onClick={() => gateConnectionFlow(openApiKeyAddFlow)}
+                        >
+                          Manual API key
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button icon="add" onClick={() => gateConnectionFlow(openPrimaryAddFlow)}>
+                          {providerSupportsPat ? "Add PAT" : t("addConnection")}
+                        </Button>
+                        {providerId === "qoder" && (
+                          <Button
+                            variant="secondary"
+                            onClick={() => gateConnectionFlow(() => setShowOAuthModal(true))}
+                          >
+                            Experimental OAuth
+                          </Button>
+                        )}
+                        {providerId === "codex" && (
+                          <Button
+                            variant="secondary"
+                            icon="upload_file"
+                            onClick={() => gateConnectionFlow(() => setImportCodexModalOpen(true))}
+                          >
+                            {typeof t.has === "function" && t.has("importCodexAuth")
+                              ? t("importCodexAuth")
+                              : "Import auth"}
+                          </Button>
+                        )}
+                        {providerId === "claude" && (
+                          <Button
+                            variant="secondary"
+                            icon="upload_file"
+                            onClick={() => gateConnectionFlow(() => setImportClaudeModalOpen(true))}
+                          >
+                            {typeof t.has === "function" && t.has("importClaudeAuth")
+                              ? t("importClaudeAuth")
+                              : "Import auth"}
+                          </Button>
+                        )}
+                        {providerId === "gemini-cli" && (
+                          <Button
+                            variant="secondary"
+                            icon="upload_file"
+                            onClick={() => gateConnectionFlow(() => setImportGeminiModalOpen(true))}
+                          >
+                            {typeof t.has === "function" && t.has("importGeminiAuth")
+                              ? t("importGeminiAuth")
+                              : "Import auth"}
+                          </Button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              (() => {
+                const sorted = [...connections].sort(
+                  (a, b) => (a.priority || 0) - (b.priority || 0)
                 );
-              }
+                const hasAnyTag = sorted.some(
+                  (c) => c.providerSpecificData?.tag as string | undefined
+                );
+                const allSelected =
+                  selectedIds.size === connections.length && connections.length > 0;
+                const someSelected = selectedIds.size > 0 && selectedIds.size < connections.length;
+                const bulkBusy =
+                  batchUpdating !== null || batchRetesting || batchDeleting || batchTesting;
+                const bulkActions = selectedIds.size > 0 && (
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon="toggle_on"
+                      loading={batchUpdating === "activate"}
+                      disabled={bulkBusy && batchUpdating !== "activate"}
+                      onClick={() => handleBatchSetActive(true)}
+                    >
+                      {t("batchActivateSelected")}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon="toggle_off"
+                      loading={batchUpdating === "deactivate"}
+                      disabled={bulkBusy && batchUpdating !== "deactivate"}
+                      onClick={() => handleBatchSetActive(false)}
+                    >
+                      {t("batchDeactivateSelected")}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon="play_arrow"
+                      loading={batchRetesting}
+                      disabled={(bulkBusy && !batchRetesting) || !!retestingId}
+                      onClick={handleBatchRetest}
+                    >
+                      {t("batchRetestSelected")}
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      icon="delete"
+                      loading={batchDeleting}
+                      disabled={bulkBusy && !batchDeleting}
+                      onClick={handleBatchDeleteOpenModal}
+                    >
+                      {t("batchDeleteSelected", { count: selectedIds.size })}
+                    </Button>
+                  </div>
+                );
 
-              // Build ordered tag groups: untagged first, then alphabetically
-              const groupMap = new Map<string, ConnectionRowConnection[]>();
-              for (const conn of filtered) {
-                const tag = (conn.providerSpecificData?.tag as string | undefined)?.trim() || "";
-                if (!groupMap.has(tag)) groupMap.set(tag, []);
-                groupMap.get(tag)!.push(conn);
-              }
-              const groupKeys = Array.from(groupMap.keys()).sort((a, b) => {
-                if (a === "") return -1;
-                if (b === "") return 1;
-                return compareTr(a, b);
-              });
+                const isHealthy = (c: ConnectionRowConnection): boolean => {
+                  const s = c.testStatus;
+                  return c.isActive !== false && (!s || s === "active" || s === "success");
+                };
+                const STATUS_FILTER_OPTIONS = [
+                  { value: "all", label: t("filterAll", "All") },
+                  { value: "active", label: t("filterActive", "Active") },
+                  { value: "error", label: t("filterError", "Error") },
+                  { value: "banned", label: t("filterBanned", "Banned") },
+                  {
+                    value: "credits_exhausted",
+                    label: t("filterCreditsExhausted", "Credits Exhausted"),
+                  },
+                ];
+                const filtered =
+                  healthFilter === "all"
+                    ? sorted
+                    : sorted.filter((c) => {
+                        if (healthFilter === "active") return isHealthy(c);
+                        if (healthFilter === "error")
+                          return (
+                            !isHealthy(c) &&
+                            c.testStatus !== "banned" &&
+                            c.testStatus !== "credits_exhausted"
+                          );
+                        return c.testStatus === healthFilter;
+                      });
 
-              return (
-                <>
-                  {selectedIds.size > 0 || connections.length > 0 ? (
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 px-3 py-2 bg-muted/50 rounded-t-lg border border-b-0 border-border">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <label className="flex items-center gap-2 cursor-pointer select-none">
-                          <input
-                            type="checkbox"
-                            checked={allSelected}
-                            ref={(el) => {
-                              if (el) el.indeterminate = someSelected;
-                            }}
-                            onChange={handleToggleSelectAll}
-                            className="w-4 h-4 rounded border-border text-primary focus:ring-primary/30 cursor-pointer"
-                          />
-                          <span className="text-sm font-medium text-text-muted">
-                            {selectedIds.size > 0
-                              ? providerCountText(
-                                  t,
-                                  "selectedCount",
-                                  selectedIds.size,
-                                  "{count} selected",
-                                  "{count} selected"
-                                )
-                              : providerCountText(
-                                  t,
-                                  "accountsCount",
-                                  filtered.length,
-                                  "{count} account",
-                                  "{count} accounts"
-                                )}
-                          </span>
-                        </label>
-                        {filterPills}
+                const totalFilteredPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+                const clampedPage = Math.min(page, totalFilteredPages - 1);
+                const pageStart = clampedPage * PAGE_SIZE;
+                const pageEnd = pageStart + PAGE_SIZE;
+
+                const filterPills = (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {STATUS_FILTER_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        onClick={() => {
+                          setHealthFilter(opt.value);
+                          setPage(0);
+                          setSelectedIds(new Set());
+                        }}
+                        className={`px-2.5 py-1 text-xs rounded-full font-medium transition-colors ${
+                          healthFilter === opt.value
+                            ? "bg-primary text-white"
+                            : "bg-muted/60 text-text-muted hover:bg-muted"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                );
+
+                const paginationBar =
+                  totalFilteredPages > 1 ? (
+                    <div className="flex items-center justify-between px-3 py-2 border-t border-border">
+                      <span className="text-xs text-text-muted">
+                        {pageStart + 1}–{Math.min(pageEnd, filtered.length)} / {filtered.length}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          icon="chevron_left"
+                          disabled={clampedPage === 0}
+                          onClick={() => setPage((p) => Math.max(0, p - 1))}
+                        />
+                        <span className="text-xs text-text-muted min-w-[4rem] text-center">
+                          {clampedPage + 1} / {totalFilteredPages}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          icon="chevron_right"
+                          disabled={clampedPage >= totalFilteredPages - 1}
+                          onClick={() => setPage((p) => Math.min(totalFilteredPages - 1, p + 1))}
+                        />
                       </div>
+                    </div>
+                  ) : null;
 
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        {/* Distribute Proxies lives in the provider toolbar (top action bar);
-                            removed the duplicate here that rendered simultaneously when nothing
-                            was selected. Per-tag groups keep their own scoped button. */}
+                if (!hasAnyTag) {
+                  const pageConnections = filtered.slice(pageStart, pageEnd);
+                  const allSelected =
+                    pageConnections.length > 0 &&
+                    pageConnections.every((c) => selectedIds.has(c.id));
+                  const someSelected = pageConnections.some((c) => selectedIds.has(c.id));
+                  return (
+                    <>
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 px-3 py-2 bg-muted/50 rounded-t-lg border border-b-0 border-border">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={allSelected}
+                              ref={(el) => {
+                                if (el) el.indeterminate = someSelected;
+                              }}
+                              onChange={() => {
+                                if (allSelected) {
+                                  const toRemove = new Set(pageConnections.map((c) => c.id));
+                                  setSelectedIds((prev) => {
+                                    const next = new Set(prev);
+                                    for (const id of toRemove) next.delete(id);
+                                    return next;
+                                  });
+                                } else {
+                                  setSelectedIds((prev) => {
+                                    const next = new Set(prev);
+                                    for (const c of pageConnections) next.add(c.id);
+                                    return next;
+                                  });
+                                }
+                              }}
+                              className="w-4 h-4 rounded border-border text-primary focus:ring-primary/30 cursor-pointer"
+                            />
+                            <span className="text-sm font-medium text-text-muted">
+                              {selectedIds.size > 0
+                                ? providerCountText(
+                                    t,
+                                    "selectedCount",
+                                    selectedIds.size,
+                                    "{count} selected",
+                                    "{count} selected"
+                                  )
+                                : providerCountText(
+                                    t,
+                                    "accountsCount",
+                                    filtered.length,
+                                    "{count} account",
+                                    "{count} accounts"
+                                  )}
+                            </span>
+                          </label>
+                          {filterPills}
+                        </div>
+
                         {bulkActions}
                       </div>
-                    </div>
-                  ) : null}
-                  <div className="flex flex-col gap-0 border border-t-0 border-border rounded-b-lg overflow-hidden">
-                    {groupKeys.map((tag, gi) => {
-                      const groupConns = groupMap.get(tag)!;
-                      return (
-                        <div
-                          key={tag || "__untagged__"}
-                          className={
-                            gi > 0
-                              ? "border-t border-black/[0.06] dark:border-white/[0.06] mt-1 pt-1"
-                              : ""
-                          }
-                        >
-                          {tag && (
-                            <div className="flex items-center gap-2 px-3 pt-2 pb-1">
-                              <span className="material-symbols-outlined text-[13px] text-text-muted/50">
-                                label
-                              </span>
-                              <span className="text-[11px] font-semibold uppercase tracking-widest text-text-muted/60 select-none">
-                                {tag}
-                              </span>
-                              <div className="flex-1 h-px bg-black/[0.04] dark:bg-white/[0.04]" />
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                icon="shield"
-                                loading={distributingProxies}
-                                onClick={() => handleDistributeProxies(tag)}
-                              >
-                                Distribute Proxies
-                              </Button>
-                              <span className="text-[10px] text-text-muted/40">
-                                {groupConns.length}
-                              </span>
-                            </div>
-                          )}
-                          <div className="flex flex-col divide-y divide-black/[0.03] dark:divide-white/[0.03]">
-                            {groupConns.map((conn, index) => (
-                              <ConnectionRow
-                                key={conn.id}
-                                connection={conn}
-                                isOAuth={conn.authType === "oauth"}
-                                isClaude={providerId === "claude"}
-                                codexGlobalServiceMode={codexGlobalServiceMode}
-                                isFirst={gi === 0 && index === 0}
-                                isLast={
-                                  gi === groupKeys.length - 1 && index === groupConns.length - 1
-                                }
-                                isSelected={selectedIds.has(conn.id)}
-                                onToggleSelect={() => handleToggleSelectOne(conn.id)}
-                                onMoveUp={() =>
-                                  handleSwapPriority(conn, sorted[sorted.indexOf(conn) - 1])
-                                }
-                                onMoveDown={() =>
-                                  handleSwapPriority(conn, sorted[sorted.indexOf(conn) + 1])
-                                }
-                                onToggleActive={(isActive) =>
-                                  handleUpdateConnectionStatus(conn.id, isActive)
-                                }
-                                onToggleRateLimit={(enabled) =>
-                                  handleToggleRateLimit(conn.id, enabled)
-                                }
-                                onToggleClaudeExtraUsage={(enabled) =>
-                                  handleToggleClaudeExtraUsage(conn.id, enabled)
-                                }
-                                isCodex={providerId === "codex"}
-                                isGeminiCli={providerId === "gemini-cli"}
-                                isCcCompatible={isCcCompatible}
-                                cliproxyapiEnabled={cpaProviderEnabled}
-                                onToggleCodex5h={(enabled) =>
-                                  handleToggleCodexLimit(conn.id, "use5h", enabled)
-                                }
-                                onToggleCodexWeekly={(enabled) =>
-                                  handleToggleCodexLimit(conn.id, "useWeekly", enabled)
-                                }
-                                onRetest={() => handleRetestConnection(conn.id)}
-                                isRetesting={retestingId === conn.id}
-                                onEdit={() => {
-                                  setSelectedConnection(conn);
-                                  setShowEditModal(true);
-                                }}
-                                onDelete={() => handleDelete(conn.id)}
-                                onReauth={
-                                  conn.authType === "oauth"
-                                    ? () => gateConnectionFlow(() => setShowOAuthModal(true, conn))
-                                    : undefined
-                                }
-                                onRefreshToken={
-                                  conn.authType === "oauth"
-                                    ? () => handleRefreshToken(conn.id)
-                                    : undefined
-                                }
-                                isRefreshing={refreshingId === conn.id}
-                                onApplyCodexAuthLocal={
-                                  providerId === "codex"
-                                    ? () => setApplyCodexModalConnectionId(conn.id)
-                                    : undefined
-                                }
-                                isApplyingCodexAuthLocal={applyingCodexAuthId === conn.id}
-                                onExportCodexAuthFile={
-                                  providerId === "codex"
-                                    ? () => handleExportCodexAuthFile(conn.id)
-                                    : undefined
-                                }
-                                isExportingCodexAuthFile={exportingCodexAuthId === conn.id}
-                                onApplyClaudeAuthLocal={
-                                  providerId === "claude"
-                                    ? () => setApplyClaudeModalConnectionId(conn.id)
-                                    : undefined
-                                }
-                                isApplyingClaudeAuthLocal={applyingClaudeAuthId === conn.id}
-                                onExportClaudeAuthFile={
-                                  providerId === "claude"
-                                    ? () => handleExportClaudeAuthFile(conn.id)
-                                    : undefined
-                                }
-                                isExportingClaudeAuthFile={exportingClaudeAuthId === conn.id}
-                                onApplyGeminiAuthLocal={
-                                  providerId === "gemini-cli"
-                                    ? () => setApplyGeminiModalConnectionId(conn.id)
-                                    : undefined
-                                }
-                                isApplyingGeminiAuthLocal={applyingGeminiAuthId === conn.id}
-                                onExportGeminiAuthFile={
-                                  providerId === "gemini-cli"
-                                    ? () => handleExportGeminiAuthFile(conn.id)
-                                    : undefined
-                                }
-                                isExportingGeminiAuthFile={exportingGeminiAuthId === conn.id}
-                                onProxy={() =>
-                                  setProxyTarget({
-                                    level: "key",
-                                    id: conn.id,
-                                    label: pickDisplayValue(
-                                      [conn.name, conn.email],
-                                      emailsVisible,
-                                      conn.id
-                                    ),
-                                  })
-                                }
-                                hasProxy={!!connProxyMap[conn.id]?.proxy}
-                                proxySource={connProxyMap[conn.id]?.level || null}
-                                proxyHost={connProxyMap[conn.id]?.proxy?.host || null}
-                                proxyEnabled={readBooleanToggle(conn.proxyEnabled, true)}
-                                onToggleProxyEnabled={(enabled) =>
-                                  handleToggleProxyEnabled(conn.id, enabled)
-                                }
-                                perKeyProxyEnabled={readBooleanToggle(
-                                  conn.perKeyProxyEnabled,
-                                  false
-                                )}
-                                onTogglePerKeyProxyEnabled={(enabled) =>
-                                  handleTogglePerKeyProxyEnabled(conn.id, enabled)
-                                }
-                              />
-                            ))}
+                      <div className="flex flex-col divide-y divide-black/[0.03] dark:divide-white/[0.03] border border-t-0 border-border rounded-b-lg overflow-hidden">
+                        {pageConnections.length === 0 ? (
+                          <div className="px-3 py-6 text-center text-sm text-text-muted">
+                            {t("noFilteredConnections", "No connections match the current filter.")}
                           </div>
+                        ) : (
+                          pageConnections.map((conn, index) => (
+                            <ConnectionRow
+                              key={conn.id}
+                              connection={conn}
+                              isOAuth={conn.authType === "oauth"}
+                              isClaude={providerId === "claude"}
+                              codexGlobalServiceMode={codexGlobalServiceMode}
+                              isFirst={index === 0}
+                              isLast={index === pageConnections.length - 1}
+                              isSelected={selectedIds.has(conn.id)}
+                              onToggleSelect={() => handleToggleSelectOne(conn.id)}
+                              onMoveUp={() => handleSwapPriority(conn, sorted[index - 1])}
+                              onMoveDown={() => handleSwapPriority(conn, sorted[index + 1])}
+                              onToggleActive={(isActive) =>
+                                handleUpdateConnectionStatus(conn.id, isActive)
+                              }
+                              onToggleRateLimit={(enabled) =>
+                                handleToggleRateLimit(conn.id, enabled)
+                              }
+                              onToggleClaudeExtraUsage={(enabled) =>
+                                handleToggleClaudeExtraUsage(conn.id, enabled)
+                              }
+                              isCodex={providerId === "codex"}
+                              isGeminiCli={providerId === "gemini-cli"}
+                              isCcCompatible={isCcCompatible}
+                              cliproxyapiEnabled={cpaProviderEnabled}
+                              onToggleCliproxyapiMode={(enabled) =>
+                                handleToggleCliproxyapiMode(conn.id, enabled)
+                              }
+                              onToggleCodex5h={(enabled) =>
+                                handleToggleCodexLimit(conn.id, "use5h", enabled)
+                              }
+                              onToggleCodexWeekly={(enabled) =>
+                                handleToggleCodexLimit(conn.id, "useWeekly", enabled)
+                              }
+                              onRetest={() => handleRetestConnection(conn.id)}
+                              isRetesting={retestingId === conn.id}
+                              onEdit={() => {
+                                setSelectedConnection(conn);
+                                setShowEditModal(true);
+                              }}
+                              onDelete={() => handleDelete(conn.id)}
+                              onReauth={
+                                conn.authType === "oauth"
+                                  ? () => gateConnectionFlow(() => setShowOAuthModal(true, conn))
+                                  : undefined
+                              }
+                              onRefreshToken={
+                                conn.authType === "oauth"
+                                  ? () => handleRefreshToken(conn.id)
+                                  : undefined
+                              }
+                              isRefreshing={refreshingId === conn.id}
+                              onApplyCodexAuthLocal={
+                                providerId === "codex"
+                                  ? () => setApplyCodexModalConnectionId(conn.id)
+                                  : undefined
+                              }
+                              isApplyingCodexAuthLocal={applyingCodexAuthId === conn.id}
+                              onExportCodexAuthFile={
+                                providerId === "codex"
+                                  ? () => handleExportCodexAuthFile(conn.id)
+                                  : undefined
+                              }
+                              isExportingCodexAuthFile={exportingCodexAuthId === conn.id}
+                              onApplyClaudeAuthLocal={
+                                providerId === "claude"
+                                  ? () => setApplyClaudeModalConnectionId(conn.id)
+                                  : undefined
+                              }
+                              isApplyingClaudeAuthLocal={applyingClaudeAuthId === conn.id}
+                              onExportClaudeAuthFile={
+                                providerId === "claude"
+                                  ? () => handleExportClaudeAuthFile(conn.id)
+                                  : undefined
+                              }
+                              isExportingClaudeAuthFile={exportingClaudeAuthId === conn.id}
+                              onApplyGeminiAuthLocal={
+                                providerId === "gemini-cli"
+                                  ? () => setApplyGeminiModalConnectionId(conn.id)
+                                  : undefined
+                              }
+                              isApplyingGeminiAuthLocal={applyingGeminiAuthId === conn.id}
+                              onExportGeminiAuthFile={
+                                providerId === "gemini-cli"
+                                  ? () => handleExportGeminiAuthFile(conn.id)
+                                  : undefined
+                              }
+                              isExportingGeminiAuthFile={exportingGeminiAuthId === conn.id}
+                              onProxy={() =>
+                                setProxyTarget({
+                                  level: "key",
+                                  id: conn.id,
+                                  label: pickDisplayValue(
+                                    [conn.name, conn.email],
+                                    emailsVisible,
+                                    conn.id
+                                  ),
+                                })
+                              }
+                              hasProxy={!!connProxyMap[conn.id]?.proxy}
+                              proxySource={connProxyMap[conn.id]?.level || null}
+                              proxyHost={connProxyMap[conn.id]?.proxy?.host || null}
+                              proxyEnabled={readBooleanToggle(conn.proxyEnabled, true)}
+                              onToggleProxyEnabled={(enabled) =>
+                                handleToggleProxyEnabled(conn.id, enabled)
+                              }
+                              perKeyProxyEnabled={readBooleanToggle(conn.perKeyProxyEnabled, false)}
+                              onTogglePerKeyProxyEnabled={(enabled) =>
+                                handleTogglePerKeyProxyEnabled(conn.id, enabled)
+                              }
+                            />
+                          ))
+                        )}
+                      </div>
+                      {paginationBar}
+                    </>
+                  );
+                }
+
+                // Build ordered tag groups: untagged first, then alphabetically
+                const groupMap = new Map<string, ConnectionRowConnection[]>();
+                for (const conn of filtered) {
+                  const tag = (conn.providerSpecificData?.tag as string | undefined)?.trim() || "";
+                  if (!groupMap.has(tag)) groupMap.set(tag, []);
+                  groupMap.get(tag)!.push(conn);
+                }
+                const groupKeys = Array.from(groupMap.keys()).sort((a, b) => {
+                  if (a === "") return -1;
+                  if (b === "") return 1;
+                  return compareTr(a, b);
+                });
+
+                return (
+                  <>
+                    {selectedIds.size > 0 || connections.length > 0 ? (
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 px-3 py-2 bg-muted/50 rounded-t-lg border border-b-0 border-border">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={allSelected}
+                              ref={(el) => {
+                                if (el) el.indeterminate = someSelected;
+                              }}
+                              onChange={handleToggleSelectAll}
+                              className="w-4 h-4 rounded border-border text-primary focus:ring-primary/30 cursor-pointer"
+                            />
+                            <span className="text-sm font-medium text-text-muted">
+                              {selectedIds.size > 0
+                                ? providerCountText(
+                                    t,
+                                    "selectedCount",
+                                    selectedIds.size,
+                                    "{count} selected",
+                                    "{count} selected"
+                                  )
+                                : providerCountText(
+                                    t,
+                                    "accountsCount",
+                                    filtered.length,
+                                    "{count} account",
+                                    "{count} accounts"
+                                  )}
+                            </span>
+                          </label>
+                          {filterPills}
                         </div>
-                      );
-                    })}
-                  </div>
-                </>
-              );
-            })()
-          )}
-        </Card>
-      )}
+
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          {/* Distribute Proxies lives in the provider toolbar (top action bar);
+                            removed the duplicate here that rendered simultaneously when nothing
+                            was selected. Per-tag groups keep their own scoped button. */}
+                          {bulkActions}
+                        </div>
+                      </div>
+                    ) : null}
+                    <div className="flex flex-col gap-0 border border-t-0 border-border rounded-b-lg overflow-hidden">
+                      {groupKeys.map((tag, gi) => {
+                        const groupConns = groupMap.get(tag)!;
+                        return (
+                          <div
+                            key={tag || "__untagged__"}
+                            className={
+                              gi > 0
+                                ? "border-t border-black/[0.06] dark:border-white/[0.06] mt-1 pt-1"
+                                : ""
+                            }
+                          >
+                            {tag && (
+                              <div className="flex items-center gap-2 px-3 pt-2 pb-1">
+                                <span className="material-symbols-outlined text-[13px] text-text-muted/50">
+                                  label
+                                </span>
+                                <span className="text-[11px] font-semibold uppercase tracking-widest text-text-muted/60 select-none">
+                                  {tag}
+                                </span>
+                                <div className="flex-1 h-px bg-black/[0.04] dark:bg-white/[0.04]" />
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  icon="shield"
+                                  loading={distributingProxies}
+                                  onClick={() => handleDistributeProxies(tag)}
+                                >
+                                  Distribute Proxies
+                                </Button>
+                                <span className="text-[10px] text-text-muted/40">
+                                  {groupConns.length}
+                                </span>
+                              </div>
+                            )}
+                            <div className="flex flex-col divide-y divide-black/[0.03] dark:divide-white/[0.03]">
+                              {groupConns.map((conn, index) => (
+                                <ConnectionRow
+                                  key={conn.id}
+                                  connection={conn}
+                                  isOAuth={conn.authType === "oauth"}
+                                  isClaude={providerId === "claude"}
+                                  codexGlobalServiceMode={codexGlobalServiceMode}
+                                  isFirst={gi === 0 && index === 0}
+                                  isLast={
+                                    gi === groupKeys.length - 1 && index === groupConns.length - 1
+                                  }
+                                  isSelected={selectedIds.has(conn.id)}
+                                  onToggleSelect={() => handleToggleSelectOne(conn.id)}
+                                  onMoveUp={() =>
+                                    handleSwapPriority(conn, sorted[sorted.indexOf(conn) - 1])
+                                  }
+                                  onMoveDown={() =>
+                                    handleSwapPriority(conn, sorted[sorted.indexOf(conn) + 1])
+                                  }
+                                  onToggleActive={(isActive) =>
+                                    handleUpdateConnectionStatus(conn.id, isActive)
+                                  }
+                                  onToggleRateLimit={(enabled) =>
+                                    handleToggleRateLimit(conn.id, enabled)
+                                  }
+                                  onToggleClaudeExtraUsage={(enabled) =>
+                                    handleToggleClaudeExtraUsage(conn.id, enabled)
+                                  }
+                                  isCodex={providerId === "codex"}
+                                  isGeminiCli={providerId === "gemini-cli"}
+                                  isCcCompatible={isCcCompatible}
+                                  cliproxyapiEnabled={cpaProviderEnabled}
+                                  onToggleCodex5h={(enabled) =>
+                                    handleToggleCodexLimit(conn.id, "use5h", enabled)
+                                  }
+                                  onToggleCodexWeekly={(enabled) =>
+                                    handleToggleCodexLimit(conn.id, "useWeekly", enabled)
+                                  }
+                                  onRetest={() => handleRetestConnection(conn.id)}
+                                  isRetesting={retestingId === conn.id}
+                                  onEdit={() => {
+                                    setSelectedConnection(conn);
+                                    setShowEditModal(true);
+                                  }}
+                                  onDelete={() => handleDelete(conn.id)}
+                                  onReauth={
+                                    conn.authType === "oauth"
+                                      ? () =>
+                                          gateConnectionFlow(() => setShowOAuthModal(true, conn))
+                                      : undefined
+                                  }
+                                  onRefreshToken={
+                                    conn.authType === "oauth"
+                                      ? () => handleRefreshToken(conn.id)
+                                      : undefined
+                                  }
+                                  isRefreshing={refreshingId === conn.id}
+                                  onApplyCodexAuthLocal={
+                                    providerId === "codex"
+                                      ? () => setApplyCodexModalConnectionId(conn.id)
+                                      : undefined
+                                  }
+                                  isApplyingCodexAuthLocal={applyingCodexAuthId === conn.id}
+                                  onExportCodexAuthFile={
+                                    providerId === "codex"
+                                      ? () => handleExportCodexAuthFile(conn.id)
+                                      : undefined
+                                  }
+                                  isExportingCodexAuthFile={exportingCodexAuthId === conn.id}
+                                  onApplyClaudeAuthLocal={
+                                    providerId === "claude"
+                                      ? () => setApplyClaudeModalConnectionId(conn.id)
+                                      : undefined
+                                  }
+                                  isApplyingClaudeAuthLocal={applyingClaudeAuthId === conn.id}
+                                  onExportClaudeAuthFile={
+                                    providerId === "claude"
+                                      ? () => handleExportClaudeAuthFile(conn.id)
+                                      : undefined
+                                  }
+                                  isExportingClaudeAuthFile={exportingClaudeAuthId === conn.id}
+                                  onApplyGeminiAuthLocal={
+                                    providerId === "gemini-cli"
+                                      ? () => setApplyGeminiModalConnectionId(conn.id)
+                                      : undefined
+                                  }
+                                  isApplyingGeminiAuthLocal={applyingGeminiAuthId === conn.id}
+                                  onExportGeminiAuthFile={
+                                    providerId === "gemini-cli"
+                                      ? () => handleExportGeminiAuthFile(conn.id)
+                                      : undefined
+                                  }
+                                  isExportingGeminiAuthFile={exportingGeminiAuthId === conn.id}
+                                  onProxy={() =>
+                                    setProxyTarget({
+                                      level: "key",
+                                      id: conn.id,
+                                      label: pickDisplayValue(
+                                        [conn.name, conn.email],
+                                        emailsVisible,
+                                        conn.id
+                                      ),
+                                    })
+                                  }
+                                  hasProxy={!!connProxyMap[conn.id]?.proxy}
+                                  proxySource={connProxyMap[conn.id]?.level || null}
+                                  proxyHost={connProxyMap[conn.id]?.proxy?.host || null}
+                                  proxyEnabled={readBooleanToggle(conn.proxyEnabled, true)}
+                                  onToggleProxyEnabled={(enabled) =>
+                                    handleToggleProxyEnabled(conn.id, enabled)
+                                  }
+                                  perKeyProxyEnabled={readBooleanToggle(
+                                    conn.perKeyProxyEnabled,
+                                    false
+                                  )}
+                                  onTogglePerKeyProxyEnabled={(enabled) =>
+                                    handleTogglePerKeyProxyEnabled(conn.id, enabled)
+                                  }
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                );
+              })()
+            )}
+          </Card>
+        )}
 
       {isUpstreamProxyProvider && (
         <Card>

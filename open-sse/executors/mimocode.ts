@@ -34,7 +34,7 @@ const JWT_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const BOOTSTRAP_TIMEOUT_MS = 15_000;
 const COOLDOWN_BASE_MS = 5_000;
 const COOLDOWN_MAX_MS = 60_000;
-const INVALID_OUTPUT_CONTINUATION_LIMIT = 2;
+const STALLED_OUTPUT_CONTINUATION_LIMIT = 6;
 const INVALID_OUTPUT_REASONING_CHAR_LIMIT = 20_000;
 const MIMOCODE_OUTPUT_TOKEN_MAX = 128_000;
 
@@ -44,16 +44,20 @@ const MIMO_BOOTSTRAP_USER_AGENT = "Bun/1.3.11";
 const MIMO_USER_AGENT = "mimocode/local ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.11";
 const MIMOCODE_IDENTITY_PROMPT =
   "You are MiMoCode, an interactive CLI tool that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.";
-const MIMOCODE_TOOL_CONTINUATION_PROMPT =
-  "When caller-side tools are available and the user asks you to implement, fix, build, or verify code, use the tools immediately and continue tool calls until the work is complete, verified, or genuinely blocked. Do not end a turn with only a plan or a statement of intent.";
+const MIMOCODE_TOOL_CONTINUATION_PROMPT = [
+  "When caller-side tools are available and the user asks you to implement, fix, build, or verify code, use the tools immediately and continue tool calls until the work is complete, verified, or genuinely blocked.",
+  "If the next step requires a tool, emit that tool call in the same response.",
+  "A successful compile or build does not by itself prove an implementation task is complete; check the requested behavior and obvious runtime issues before summarizing.",
+  "Do not end a turn with only a plan, status update, or statement like 'let me continue', 'now I need to', 'now fix', 'now update', 'running', 'building', or 'creating'.",
+].join(" ");
 const MIMOCODE_PROVIDER_PROMPT = `${MIMOCODE_IDENTITY_PROMPT}\n\n${MIMOCODE_TOOL_CONTINUATION_PROMPT}`;
 const MIMOCODE_LEGACY_IDENTITY_PROMPT =
   "You are MiMoCode, an interactive CLI tool that helps users with software engineering tasks.";
-const MIMOCODE_INVALID_OUTPUT_REMINDER = [
+const MIMOCODE_STALLED_OUTPUT_REMINDER = [
   "<system-reminder>",
-  "Your previous response contained no usable answer (it had only reasoning, or was empty).",
-  "Provide a final answer to the user now, or call a valid tool to make progress on the task.",
-  "Do not respond with only reasoning/thinking.",
+  "Your previous response stopped before making actionable progress.",
+  "If work remains, call a valid tool now. If the task is complete, provide the final answer now.",
+  "Do not respond with only reasoning, a status update, or a statement of what you will do next.",
   "</system-reminder>",
 ].join("\n");
 
@@ -80,6 +84,7 @@ interface OutputSummary {
   hasVisibleText: boolean;
   hasToolCall: boolean;
   hasReasoning: boolean;
+  visibleText: string;
   reasoningText: string;
   finishReason: string | null;
   sawCompletion: boolean;
@@ -171,6 +176,7 @@ function emptyOutputSummary(): OutputSummary {
     hasVisibleText: false,
     hasToolCall: false,
     hasReasoning: false,
+    visibleText: "",
     reasoningText: "",
     finishReason: null,
     sawCompletion: false,
@@ -206,16 +212,32 @@ function isMimocodeIllegalAccessFailure(failure: BufferedFailure): boolean {
   );
 }
 
-function hasVisibleText(value: unknown): boolean {
-  if (typeof value === "string") return value.trim().length > 0;
-  if (!Array.isArray(value)) return false;
-  return value.some((part) => {
-    if (typeof part === "string") return part.trim().length > 0;
-    if (!isRecord(part)) return false;
+function collectVisibleText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (!Array.isArray(value)) return "";
+  const parts: string[] = [];
+  for (const part of value) {
+    if (typeof part === "string") {
+      if (part.trim().length > 0) parts.push(part);
+      continue;
+    }
+    if (!isRecord(part)) continue;
     const type = typeof part.type === "string" ? part.type : "";
-    if (type === "reasoning" || type === "thinking") return false;
-    return hasVisibleText(part.text) || hasVisibleText(part.content);
-  });
+    if (type === "reasoning" || type === "thinking") continue;
+    const text = collectVisibleText(part.text) || collectVisibleText(part.content);
+    if (text) parts.push(text);
+  }
+  return parts.join("\n");
+}
+
+function appendVisibleText(summary: OutputSummary, value: unknown): void {
+  const text = collectVisibleText(value);
+  if (!text.trim()) return;
+  summary.hasVisibleText = true;
+  summary.visibleText = `${summary.visibleText}${text}`.slice(
+    0,
+    INVALID_OUTPUT_REASONING_CHAR_LIMIT
+  );
 }
 
 function appendReasoning(summary: OutputSummary, value: unknown): void {
@@ -238,7 +260,7 @@ function inspectChatChoice(choice: unknown, summary: OutputSummary): void {
 
   for (const source of [delta, message]) {
     if (!source) continue;
-    if (hasVisibleText(source.content)) summary.hasVisibleText = true;
+    appendVisibleText(summary, source.content);
     if (Array.isArray(source.tool_calls) && source.tool_calls.length > 0) {
       summary.hasToolCall = true;
     }
@@ -294,6 +316,7 @@ function summarizeSsePayload(raw: string): OutputSummary {
     summary.hasVisibleText ||= next.hasVisibleText;
     summary.hasToolCall ||= next.hasToolCall;
     summary.hasReasoning ||= next.hasReasoning;
+    if (next.visibleText) appendVisibleText(summary, next.visibleText);
     if (next.finishReason) summary.finishReason = next.finishReason;
     summary.sawCompletion ||= next.sawCompletion;
     appendReasoning(summary, next.reasoningText);
@@ -301,10 +324,54 @@ function summarizeSsePayload(raw: string): OutputSummary {
   return summary;
 }
 
-function isInvalidOutput(summary: OutputSummary): boolean {
+function isProgressOnlyText(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized) return false;
+  const tail = normalized.slice(-700);
+  const hasPendingWrapUp =
+    /(?:^|[.!?]\s+)(?:(?:now|next)\s+)?(?:let me|i need to|i'll|i will|i'm going to|i am going to)\s+(?:update|finish|complete|review)\s+(?:the\s+)?plan\b/.test(
+      tail
+    ) ||
+    /(?:^|[.!?]\s+)(?:(?:now|next)\s+)?(?:let me|i need to|i'll|i will|i'm going to|i am going to)\s+(?:provide|write|give|prepare|share)\s+(?:the\s+)?(?:final\s+)?(?:summary|answer|response|report)\b/.test(
+      tail
+    );
+  if (hasPendingWrapUp) return true;
+  if (/\b(project|task|work|implementation|build)\s+(is\s+)?complete\b/.test(normalized)) {
+    return false;
+  }
+  if (
+    /\b(how to run|files created|summary|known limitations|controls:|verified|done)\b/.test(
+      normalized
+    )
+  ) {
+    return false;
+  }
+  const hasIntentStatement =
+    /(?:^|[.!?]\s+)(?:(?:now|next)\s+)?(?:let me|i need to|i'll|i will|i'm going to|i am going to|continuing|continue|running|building|creating|starting|checking|verifying|fixing|updating)\b/.test(
+      tail
+    );
+  const hasImperativeProgressStatement =
+    /(?:^|[.!?]\s+)(?:now|next)\s+(?:continue|fix|update|create|build|run|check|verify|finish|implement|write|add|remove|rewrite|start)\b/.test(
+      tail
+    );
+  return (
+    (hasIntentStatement || hasImperativeProgressStatement) &&
+    /(?:[:.]|now|next|build|create|run|verify|check|continue|finish|styles?|files?|components?|issues?|imports?)$/.test(
+      normalized
+    )
+  );
+}
+
+function needsStalledOutputContinuation(
+  summary: OutputSummary,
+  allowVisibleProgressContinuation: boolean
+): boolean {
   if (!summary.sawCompletion) return false;
-  if (summary.hasVisibleText || summary.hasToolCall) return false;
-  return summary.finishReason === null || summary.finishReason === "stop";
+  if (summary.hasToolCall) return false;
+  if (summary.finishReason !== null && summary.finishReason !== "stop") return false;
+  if (!summary.hasVisibleText) return true;
+  const progressText = [summary.reasoningText, summary.visibleText].filter(Boolean).join("\n");
+  return allowVisibleProgressContinuation && isProgressOnlyText(progressText);
 }
 
 function responseFromText(response: Response, body: string): Response {
@@ -473,7 +540,7 @@ function withMimocodeIdentityPrompt(body: Record<string, unknown>): Record<strin
   };
 }
 
-function appendInvalidOutputContinuation(
+function appendStalledOutputContinuation(
   body: unknown,
   summary: OutputSummary
 ): Record<string, unknown> | unknown {
@@ -481,7 +548,7 @@ function appendInvalidOutputContinuation(
 
   const assistant: Record<string, unknown> = {
     role: "assistant",
-    content: "",
+    content: summary.visibleText || "",
   };
   if (summary.reasoningText) assistant.reasoning_content = summary.reasoningText;
 
@@ -490,7 +557,7 @@ function appendInvalidOutputContinuation(
     messages: [
       ...body.messages,
       assistant,
-      { role: "user", content: MIMOCODE_INVALID_OUTPUT_REMINDER },
+      { role: "user", content: MIMOCODE_STALLED_OUTPUT_REMINDER },
     ],
   };
 }
@@ -736,7 +803,7 @@ export class MimocodeExecutor extends BaseExecutor {
     }
   }
 
-  private async autoContinueInvalidOutput(params: {
+  private async autoContinueStalledOutput(params: {
     response: Response;
     url: string;
     headers: Record<string, string>;
@@ -747,26 +814,32 @@ export class MimocodeExecutor extends BaseExecutor {
   }): Promise<Response> {
     let response = params.response;
     let requestBody = params.requestBody;
+    const hasCallerTools =
+      isRecord(params.requestBody) &&
+      Array.isArray(params.requestBody.tools) &&
+      params.requestBody.tools.length > 0;
 
-    for (let attempt = 0; attempt <= INVALID_OUTPUT_CONTINUATION_LIMIT; attempt++) {
+    for (let attempt = 0; attempt <= STALLED_OUTPUT_CONTINUATION_LIMIT; attempt++) {
       if (!response.ok) return response;
 
       const buffered = await this.bufferSuccessfulResponse(response, params.stream);
-      if (!isInvalidOutput(buffered.summary)) return buffered.response;
+      if (!needsStalledOutputContinuation(buffered.summary, hasCallerTools)) {
+        return buffered.response;
+      }
 
-      if (attempt >= INVALID_OUTPUT_CONTINUATION_LIMIT) {
+      if (attempt >= STALLED_OUTPUT_CONTINUATION_LIMIT) {
         return jsonErrorResponse(
           502,
-          "MiMo returned only reasoning and no usable answer or tool call after continuation retries",
+          "MiMo repeatedly stopped without a usable final answer or tool call",
           "INVALID_OUTPUT"
         );
       }
 
       params.log?.warn?.(
         "MIMOCODE",
-        `Auto-continuing invalid reasoning-only output (attempt ${attempt + 1})`
+        `Auto-continuing stalled output without a tool call (attempt ${attempt + 1})`
       );
-      requestBody = appendInvalidOutputContinuation(requestBody, buffered.summary);
+      requestBody = appendStalledOutputContinuation(requestBody, buffered.summary);
       response = await this.fetchChat(params.url, params.headers, requestBody, params.signal);
     }
 
@@ -945,7 +1018,7 @@ export class MimocodeExecutor extends BaseExecutor {
           };
         }
 
-        resp = await this.autoContinueInvalidOutput({
+        resp = await this.autoContinueStalledOutput({
           response: resp as unknown as Response,
           url,
           headers,

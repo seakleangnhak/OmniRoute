@@ -968,7 +968,10 @@ async function handleSingleModelChat(
         );
       }
 
-      const accountId = credentials.connectionId.slice(0, 8);
+      const accountId =
+        typeof credentials.connectionId === "string" && credentials.connectionId.length > 0
+          ? credentials.connectionId.slice(0, 8)
+          : "unknown";
       log.info("AUTH", `Using ${provider} account: ${accountId}...`);
       let requestBody = body;
       let injectedHandoff = null;
@@ -979,7 +982,11 @@ async function handleSingleModelChat(
         body?._omnirouteSkipContextRelay !== true
       ) {
         const handoff = getHandoff(runtimeOptions.sessionId, comboName);
-        if (handoff && handoff.fromAccount !== credentials.connectionId) {
+        if (
+          handoff &&
+          credentials.connectionId &&
+          handoff.fromAccount !== credentials.connectionId
+        ) {
           // Inject only after a real account switch. The combo loop itself cannot
           // reliably detect this because account selection happens inside auth.
           requestBody = injectHandoffIntoBody(body, handoff);
@@ -1308,7 +1315,10 @@ async function handleSingleModelChat(
         log.info(
           "MODEL_DAILY_QUOTA",
           JSON.stringify({
-            connection: credentials.connectionId.slice(0, 8),
+            connection:
+              typeof credentials.connectionId === "string"
+                ? credentials.connectionId.slice(0, 8)
+                : "unknown",
             model: limitedModel,
             cooldownMs: lockResult.cooldownMs,
             failureCount: lockResult.failureCount,
@@ -1356,6 +1366,11 @@ async function handleSingleModelChat(
                 result.status === 429 &&
                 (failureKind === "rate_limit" || failureKind === "transient")
               ),
+              headers: result.response?.headers ?? null,
+              structuredError: {
+                code: result.errorCode ?? null,
+                type: result.errorType ?? null,
+              },
             }
           );
 

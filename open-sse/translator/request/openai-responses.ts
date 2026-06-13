@@ -60,6 +60,58 @@ function toString(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
 
+function stringifyFunctionArguments(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return JSON.stringify(value ?? {});
+  }
+  if (!value.trim()) {
+    return "{}";
+  }
+  try {
+    JSON.parse(value);
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+function appendText(existing: string, next: string): string {
+  if (!existing) return next;
+  if (!next) return existing;
+  return `${existing}\n${next}`;
+}
+
+function extractResponsesReasoningText(item: JsonRecord): string {
+  const parts: string[] = [];
+
+  if (Array.isArray(item.summary)) {
+    for (const summaryValue of item.summary) {
+      const summary = toRecord(summaryValue);
+      const text = toString(summary.text);
+      if (text) parts.push(text);
+    }
+  }
+
+  const text = toString(item.text);
+  if (text) parts.push(text);
+
+  if (Array.isArray(item.content)) {
+    for (const contentValue of item.content) {
+      const content = toRecord(contentValue);
+      const contentText = toString(content.text);
+      if (contentText) parts.push(contentText);
+    }
+  }
+
+  return parts.join("");
+}
+
+function appendReasoningContent(message: JsonRecord, reasoning: string): void {
+  if (!reasoning) return;
+  const existing = toString(message.reasoning_content);
+  message.reasoning_content = appendText(existing, reasoning);
+}
+
 function imageUrlToText(value: unknown): string {
   if (typeof value === "string") return value;
   const record = toRecord(value);
@@ -164,6 +216,8 @@ export function openaiResponsesToOpenAIRequest(
   // Group items by conversation turn
   let currentAssistantMsg: JsonRecord | null = null;
   let pendingToolResults: JsonRecord[] = [];
+  let pendingReasoningContent = "";
+  let lastAssistantMessageForTrailingReasoning: JsonRecord | null = null;
 
   const inputItems = toInputItemsForChat(root.input);
   for (const itemValue of inputItems) {
@@ -178,6 +232,7 @@ export function openaiResponsesToOpenAIRequest(
       if (currentAssistantMsg) {
         messages.push(currentAssistantMsg);
         currentAssistantMsg = null;
+        lastAssistantMessageForTrailingReasoning = null;
       }
 
       // Flush pending tool results
@@ -186,6 +241,7 @@ export function openaiResponsesToOpenAIRequest(
           messages.push(toolResult);
         }
         pendingToolResults = [];
+        lastAssistantMessageForTrailingReasoning = null;
       }
 
       // Convert content: input_text -> text, output_text -> text
@@ -220,11 +276,25 @@ export function openaiResponsesToOpenAIRequest(
           })
         : item.content;
 
-      messages.push({ role: toString(item.role), content });
+      const role = toString(item.role);
+      const message: JsonRecord = { role, content };
+      if (role === "assistant") {
+        if (pendingReasoningContent) {
+          appendReasoningContent(message, pendingReasoningContent);
+          pendingReasoningContent = "";
+        }
+        lastAssistantMessageForTrailingReasoning = message;
+      } else {
+        pendingReasoningContent = "";
+        lastAssistantMessageForTrailingReasoning = null;
+      }
+
+      messages.push(message);
       continue;
     }
 
     if (itemType === "function_call") {
+      lastAssistantMessageForTrailingReasoning = null;
       // Skip tool calls with empty names to avoid infinite placeholder_tool loops
       const fnName = toString(item.name).trim();
       if (!fnName) {
@@ -237,6 +307,10 @@ export function openaiResponsesToOpenAIRequest(
       if (!toString(item.call_id).trim()) {
         continue;
       }
+      const args = stringifyFunctionArguments(item.arguments);
+      if (args === null) {
+        continue;
+      }
 
       // Start or append assistant message with tool_calls
       if (!currentAssistantMsg) {
@@ -245,6 +319,10 @@ export function openaiResponsesToOpenAIRequest(
           content: null,
           tool_calls: [],
         };
+      }
+      if (pendingReasoningContent) {
+        appendReasoningContent(currentAssistantMsg, pendingReasoningContent);
+        pendingReasoningContent = "";
       }
 
       const toolCalls = Array.isArray(currentAssistantMsg.tool_calls)
@@ -255,10 +333,7 @@ export function openaiResponsesToOpenAIRequest(
         type: "function",
         function: {
           name: fnName,
-          arguments:
-            typeof item.arguments === "string"
-              ? item.arguments
-              : JSON.stringify(item.arguments ?? {}),
+          arguments: args,
         },
       });
       currentAssistantMsg.tool_calls = toolCalls;
@@ -266,6 +341,7 @@ export function openaiResponsesToOpenAIRequest(
     }
 
     if (itemType === "function_call_output") {
+      lastAssistantMessageForTrailingReasoning = null;
       // Flush assistant message first if present
       if (currentAssistantMsg) {
         messages.push(currentAssistantMsg);
@@ -290,9 +366,18 @@ export function openaiResponsesToOpenAIRequest(
     }
 
     if (itemType === "reasoning") {
-      // Skip reasoning items - they are display-only metadata
+      const reasoning = extractResponsesReasoningText(item);
+      if (currentAssistantMsg) {
+        appendReasoningContent(currentAssistantMsg, reasoning);
+      } else if (lastAssistantMessageForTrailingReasoning) {
+        appendReasoningContent(lastAssistantMessageForTrailingReasoning, reasoning);
+      } else {
+        pendingReasoningContent = appendText(pendingReasoningContent, reasoning);
+      }
       continue;
     }
+
+    lastAssistantMessageForTrailingReasoning = null;
   }
 
   // Flush remainder

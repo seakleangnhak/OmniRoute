@@ -886,6 +886,40 @@ export function parseRetryAfterFromBody(responseBody: unknown): {
     };
   }
 
+  const retryAfterMs = error.retry_after_ms ?? body.retry_after_ms;
+  if (typeof retryAfterMs === "number" && Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+    return {
+      retryAfterMs,
+      reason: RateLimitReason.RATE_LIMIT_EXCEEDED,
+    };
+  }
+  if (typeof retryAfterMs === "string" && retryAfterMs.trim().length > 0) {
+    const parsed = Number(retryAfterMs);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return {
+        retryAfterMs: parsed,
+        reason: RateLimitReason.RATE_LIMIT_EXCEEDED,
+      };
+    }
+  }
+
+  const retryAfterSec = error.retry_after ?? body.retry_after ?? error.reset_seconds;
+  if (typeof retryAfterSec === "number" && Number.isFinite(retryAfterSec) && retryAfterSec > 0) {
+    return {
+      retryAfterMs: retryAfterSec * 1000,
+      reason: RateLimitReason.RATE_LIMIT_EXCEEDED,
+    };
+  }
+  if (typeof retryAfterSec === "string" && retryAfterSec.trim().length > 0) {
+    const parsed = Number(retryAfterSec);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return {
+        retryAfterMs: parsed * 1000,
+        reason: RateLimitReason.RATE_LIMIT_EXCEEDED,
+      };
+    }
+  }
+
   // Anthropic: error type classification
   const errorType = String(error.type || body.type || "");
   if (errorType === "rate_limit_error") {
@@ -1246,7 +1280,8 @@ export function checkFallbackError(
   }
 
   function getUpstreamRetryHintMs() {
-    if (!profile?.useUpstreamRetryHints) return null;
+    const allowInternalCooldownHint = structuredError?.code === "ACCOUNTS_COOLING_DOWN";
+    if (!profile?.useUpstreamRetryHints && !allowInternalCooldownHint) return null;
     const resetTime = parseResetFromHeaders(headers);
     if (resetTime) {
       const waitMs = Math.max(resetTime - Date.now(), 0);

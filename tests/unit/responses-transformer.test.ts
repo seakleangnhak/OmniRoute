@@ -122,6 +122,12 @@ test("createResponsesApiTransformStream handles native reasoning content and too
     .filter((event) => event.event === "response.output_item.added")
     .map((event) => JSON.parse(event.data).item)
     .filter((item) => item.type === "function_call");
+  const addedItems = events
+    .filter((event) => event.event === "response.output_item.added")
+    .map((event) => {
+      const data = JSON.parse(event.data);
+      return { type: data.item.type, output_index: data.output_index };
+    });
   const doneCalls = events
     .filter((event) => event.event === "response.output_item.done")
     .map((event) => JSON.parse(event.data).item)
@@ -130,6 +136,11 @@ test("createResponsesApiTransformStream handles native reasoning content and too
     events.find((event) => event.event === "response.completed").data
   ).response;
 
+  assert.deepEqual(addedItems, [
+    { type: "reasoning", output_index: 0 },
+    { type: "function_call", output_index: 1 },
+    { type: "function_call", output_index: 2 },
+  ]);
   assert.deepEqual(
     addedCalls.map((item) => ({ id: item.id, call_id: item.call_id, name: item.name })),
     [

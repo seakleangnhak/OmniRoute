@@ -115,6 +115,17 @@ function shouldPreserveQuotaSignalsFor429(provider?: string | null): boolean {
   return getProviderCategory(provider) === "oauth";
 }
 
+function isRecoverableMimocodeForbidden(
+  provider: string | null | undefined,
+  body: string
+): boolean {
+  const normalizedProvider = String(provider || "").toLowerCase();
+  return (
+    (normalizedProvider === "mimocode" || normalizedProvider === "mcode") &&
+    body.toLowerCase().includes("illegal access")
+  );
+}
+
 export function classifyProviderError(
   statusCode: number,
   responseBody: unknown,
@@ -160,6 +171,12 @@ export function classifyProviderError(
   if (statusCode === 403) {
     if (bodyStr.includes("has not been used in project")) {
       return PROVIDER_ERROR_TYPES.PROJECT_ROUTE_ERROR;
+    }
+    // MiMo can return this after bootstrap for a rejected fingerprint/proxy.
+    // It is recoverable on another account or request and must not permanently
+    // disable the configured connection.
+    if (isRecoverableMimocodeForbidden(provider, bodyStr)) {
+      return null;
     }
     if (provider && getProviderCategory(provider) === "apikey") {
       return null;
