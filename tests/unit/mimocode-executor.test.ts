@@ -656,6 +656,81 @@ describe("mimocode multi-account", () => {
     }
   });
 
+  it("auto-continues pseudo-final progress blocks from the TestMiMo log", async () => {
+    const autoContinueExecutor = new MimocodeExecutor();
+    const originalFetch = globalThis.fetch;
+    const chatBodies: Array<{ messages: Array<Record<string, unknown>> }> = [];
+    globalThis.fetch = async (url, init = {}) => {
+      if (String(url).includes("/api/free-ai/bootstrap")) {
+        return new Response(JSON.stringify({ jwt: "test-jwt" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      chatBodies.push(
+        JSON.parse(String(init.body)) as { messages: Array<Record<string, unknown>> }
+      );
+      if (chatBodies.length === 1) {
+        return new Response(
+          [
+            'data: {"id":"chatcmpl_mimo_progress","choices":[{"index":0,"delta":{"reasoning_content":"The user wants me to implement the full game. Let me continue building all the remaining files systematically."},"finish_reason":null}]}',
+            'data: {"id":"chatcmpl_mimo_progress","choices":[{"index":0,"delta":{"content":"I\'m continuing to build all the game files. I\'ve started with the foundational files."},"finish_reason":null}]}',
+            'data: {"id":"chatcmpl_mimo_progress","choices":[{"index":0,"delta":{"content":"\\n\\n<final>\\n\\nI\'m continuing through the remaining ~35 files in dependency order. The implementation will complete all phases: engine -> dungeon -> entities -> systems -> rendering -> UI -> audio -> data -> entry point.\\n\\n</final>"},"finish_reason":null}]}',
+            'data: {"id":"chatcmpl_mimo_progress","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+            "data: [DONE]",
+            "",
+          ].join("\n\n"),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } }
+        );
+      }
+
+      return new Response(
+        [
+          'data: {"id":"chatcmpl_mimo_tool","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_continue","type":"function","function":{"name":"exec_command","arguments":"{\\"cmd\\":\\"rg --files /Users/seakleang/WorkPlace/personal/TestMiMo\\"}"}}]},"finish_reason":null}]}',
+          'data: {"id":"chatcmpl_mimo_tool","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}',
+          "data: [DONE]",
+          "",
+        ].join("\n\n"),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } }
+      );
+    };
+
+    try {
+      const result = await autoContinueExecutor.execute({
+        model: "mimo-auto",
+        body: {
+          messages: [{ role: "user", content: "finish implementing the full project" }],
+          tools: [{ type: "function", function: { name: "exec_command", parameters: {} } }],
+          stream: true,
+        },
+        stream: true,
+        credentials: {
+          connectionId: "connection-mimo-pseudo-final",
+          providerSpecificData: { fingerprints: ["fingerprint-mimo-pseudo-final"] },
+        },
+        log: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+      });
+
+      assert.strictEqual(result.response.status, 200);
+      assert.strictEqual(chatBodies.length, 2);
+      assert.match(
+        String(chatBodies[1].messages.at(-2)?.content),
+        /remaining ~35 files in dependency order/
+      );
+      assert.ok(
+        String(chatBodies[1].messages.at(-1)?.content).includes(
+          "stopped before making actionable progress"
+        )
+      );
+      const text = await result.response.text();
+      assert.ok(text.includes('"name":"exec_command"'));
+      assert.ok(!text.includes("remaining ~35 files in dependency order"));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("returns a real final summary without auto-continuing it", async () => {
     const completedExecutor = new MimocodeExecutor();
     const originalFetch = globalThis.fetch;

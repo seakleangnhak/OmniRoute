@@ -60,6 +60,26 @@ const MIMOCODE_STALLED_OUTPUT_REMINDER = [
   "Do not respond with only reasoning, a status update, or a statement of what you will do next.",
   "</system-reminder>",
 ].join("\n");
+const MIMOCODE_COMPLETION_MARKERS = [
+  /\b(?:project|task|work|implementation|build)\s+(?:is\s+)?complete\b/,
+  /\bfully implemented\b/,
+  /\bhow to run\b/,
+  /\bto play\b/,
+  /\bknown limitations\b/,
+  /\bcontrols:\b/,
+  /\bverified\b/,
+  /\bsummary:\b/,
+  /\bbuild completed successfully\b/,
+];
+const MIMOCODE_PROGRESS_ONLY_PATTERNS = [
+  /\b(?:i['’]?m|i am)\s+continuing\b/,
+  /\bcontinu(?:e|ing)\s+(?:through|building|writing|implementing|creating|working through)\b/,
+  /\bremaining\s+[~]?\d+(?:\+)?\s+files?\b/,
+  /\bstarted\s+with\s+the\s+(?:foundational|utility)\s+files?\b/,
+  /\bworking\s+through\s+the\s+(?:engine|dungeon|entities|systems|rendering|ui|audio|data)\b/,
+  /\bimplementation\s+will\s+complete\s+all\s+phases\b/,
+  /<final>[\s\S]*\b(?:continuing|remaining\s+[~]?\d+(?:\+)?\s+files?|working through|all phases)\b/,
+];
 
 const TEXT_ENCODER = new TextEncoder();
 
@@ -327,6 +347,12 @@ function summarizeSsePayload(raw: string): OutputSummary {
 function isProgressOnlyText(text: string): boolean {
   const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
   if (!normalized) return false;
+  if (MIMOCODE_COMPLETION_MARKERS.some((pattern) => pattern.test(normalized))) {
+    return false;
+  }
+  if (MIMOCODE_PROGRESS_ONLY_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return true;
+  }
   const tail = normalized.slice(-700);
   const hasPendingWrapUp =
     /(?:^|[.!?]\s+)(?:(?:now|next)\s+)?(?:let me|i need to|i'll|i will|i'm going to|i am going to)\s+(?:update|finish|complete|review)\s+(?:the\s+)?plan\b/.test(
@@ -340,9 +366,7 @@ function isProgressOnlyText(text: string): boolean {
     return false;
   }
   if (
-    /\b(how to run|files created|summary|known limitations|controls:|verified|done)\b/.test(
-      normalized
-    )
+    /\b(how to run|files created|summary|known limitations|controls:|verified)\b/.test(normalized)
   ) {
     return false;
   }
