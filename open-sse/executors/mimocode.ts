@@ -28,6 +28,42 @@ const COOLDOWN_MAX_MS = 60_000;
 
 const MIMO_SOURCE = "mimocode-cli-free";
 
+/**
+ * Anti-abuse gate marker required by the Xiaomi free endpoint.
+ *
+ * `/api/free-ai/openai/chat` returns `403 "Illegal access"` unless the request body
+ * contains a recognized MiMoCode prompt signature as a substring inside a `system`-role
+ * message (verified empirically — headers, fingerprint, and JWT are not what is checked).
+ * This is the canonical MiMoCode agent opener the official CLI sends, and it is on the
+ * upstream allowlist. We inject it as a leading system message so user requests pass the
+ * gate. The string MUST stay byte-for-byte identical — the check is case-sensitive and
+ * truncations are rejected.
+ */
+export const MIMO_SYSTEM_MARKER =
+  "You are MiMoCode, an interactive CLI tool that helps users with software engineering tasks.";
+
+/**
+ * Ensure the outgoing body carries the MiMoCode anti-abuse marker in a system message.
+ * Idempotent: if any system message already contains the marker, the body is returned
+ * unchanged. Bodies without a `messages` array are left untouched.
+ */
+function injectSystemMarker(body: Record<string, unknown>): Record<string, unknown> {
+  const messages = body.messages;
+  if (!Array.isArray(messages)) return body;
+
+  const hasMarker = messages.some(
+    (m) =>
+      m != null &&
+      typeof m === "object" &&
+      (m as { role?: unknown }).role === "system" &&
+      typeof (m as { content?: unknown }).content === "string" &&
+      (m as { content: string }).content.includes(MIMO_SYSTEM_MARKER)
+  );
+  if (hasMarker) return body;
+
+  return { ...body, messages: [{ role: "system", content: MIMO_SYSTEM_MARKER }, ...messages] };
+}
+
 const USER_AGENTS = [
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -249,7 +285,8 @@ export class MimocodeExecutor extends BaseExecutor {
     _credentials?: ProviderCredentials | null
   ): unknown {
     if (typeof body === "object" && body !== null) {
-      return { ...(body as Record<string, unknown>), model: rewriteModelName(model) };
+      const withModel = { ...(body as Record<string, unknown>), model: rewriteModelName(model) };
+      return injectSystemMarker(withModel);
     }
     return body;
   }
@@ -269,11 +306,13 @@ export class MimocodeExecutor extends BaseExecutor {
           Authorization: `Bearer ${jwt}`,
           "X-Mimo-Source": MIMO_SOURCE,
         },
-        body: JSON.stringify({
-          model: "mimo-auto",
-          messages: [{ role: "user", content: "ping" }],
-          stream: false,
-        }),
+        body: JSON.stringify(
+          injectSystemMarker({
+            model: "mimo-auto",
+            messages: [{ role: "user", content: "ping" }],
+            stream: false,
+          })
+        ),
         signal: _signal ?? undefined,
       });
       return resp.status === 200;

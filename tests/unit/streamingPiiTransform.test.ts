@@ -476,3 +476,48 @@ test.after(async () => {
   coreDb.resetDbInstance();
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+test("createPiiSseTransform preserves tool call arguments without buffering", async () => {
+  const transform = (createPiiSseTransform as any)({ windowSize: 10 });
+  const payload = {
+    choices: [
+      {
+        delta: {
+          tool_calls: [
+            {
+              index: 0,
+              function: {
+                arguments: JSON.stringify({ command: "find /tmp -name test.txt" }),
+              },
+            },
+          ],
+        },
+      },
+    ],
+  };
+
+  const input = `data: ${JSON.stringify(payload)}\n\n`;
+  const done = `data: [DONE]\n\n`;
+  const output = await testTransform(transform, [input, done]);
+
+  assert.ok(output.includes("find /tmp -name test.txt"));
+  assert.ok(!output.includes("REDACTED"));
+});
+test("createPiiSseTransform preserves Claude partial_json without buffering", async () => {
+  const transform = (createPiiSseTransform as any)({ windowSize: 10 });
+  const payload = {
+    type: "content_block_delta",
+    index: 1,
+    delta: {
+      type: "input_json_delta",
+      partial_json: JSON.stringify({ command: "grep -r pattern /var" }),
+    },
+  };
+
+  const input = `event: content_block_delta\ndata: ${JSON.stringify(payload)}\n\n`;
+  const done = `data: [DONE]\n\n`;
+  const output = await testTransform(transform, [input, done]);
+
+  assert.ok(output.includes("grep -r pattern /var"));
+  assert.ok(!output.includes("REDACTED"));
+});

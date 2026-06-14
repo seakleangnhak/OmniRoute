@@ -175,6 +175,11 @@ export function createSseTextTransform(
               if (typeof obj[key] === "string") {
                 const val = obj[key];
                 const field: FieldCategory = getFieldCategory(key);
+                if (field === "toolArgs" || field === "partialJson") {
+                  obj[key] = val;
+                  matched = true;
+                  continue;
+                }
                 obj[key] = processor(val, field, isStopSignal, compositeKey, isSnapshot);
                 matched = true;
               } else if (typeof obj[key] === "object") {

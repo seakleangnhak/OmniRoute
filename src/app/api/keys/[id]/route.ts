@@ -62,6 +62,7 @@ export async function PATCH(request, { params }) {
     const {
       name,
       allowedModels,
+      blockedModels,
       allowedCombos,
       allowedConnections,
       noLog,
@@ -82,6 +83,7 @@ export async function PATCH(request, { params }) {
     const payload: Parameters<typeof updateApiKeyPermissions>[1] = {};
     if (name !== undefined) payload.name = name;
     if (allowedModels !== undefined) payload.allowedModels = allowedModels;
+    if (blockedModels !== undefined) payload.blockedModels = blockedModels;
     if (allowedCombos !== undefined) payload.allowedCombos = allowedCombos;
     if (allowedConnections !== undefined) payload.allowedConnections = allowedConnections;
     if (noLog !== undefined) payload.noLog = noLog;
@@ -114,6 +116,7 @@ export async function PATCH(request, { params }) {
       ...(key ? toSafeApiKeyMetadata(key) : {}),
       ...(name !== undefined && { name }),
       ...(allowedModels !== undefined && { allowedModels }),
+      ...(blockedModels !== undefined && { blockedModels }),
       ...(allowedCombos !== undefined && { allowedCombos }),
       ...(allowedConnections !== undefined && { allowedConnections }),
       ...(noLog !== undefined && { noLog }),

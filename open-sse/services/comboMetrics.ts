@@ -4,6 +4,8 @@
  * Provides API for reading metrics from the dashboard.
  */
 
+import { recordProviderUsage } from "./autoCombo/providerDiversity";
+
 interface ModelMetrics {
   requests: number;
   successes: number;
@@ -196,7 +198,10 @@ function evictOldestMetric(targetMap: Map<string, { lastUsedAt: string | null }>
   let oldestTime = Infinity;
   for (const [name, entry] of targetMap) {
     const t = entry.lastUsedAt ? new Date(entry.lastUsedAt).getTime() : Date.now();
-    if (t < oldestTime) { oldestTime = t; oldest = name; }
+    if (t < oldestTime) {
+      oldestTime = t;
+      oldest = name;
+    }
   }
   if (oldest) {
     metrics.delete(oldest);
@@ -204,23 +209,26 @@ function evictOldestMetric(targetMap: Map<string, { lastUsedAt: string | null }>
   }
 }
 
-const _metricsCleanupTimer = setInterval(() => {
-  const now = Date.now();
-  for (const [name, entry] of metrics) {
-    const lastUsed = entry.lastUsedAt ? new Date(entry.lastUsedAt).getTime() : now;
-    if (now - lastUsed > METRICS_TTL_MS) {
-      metrics.delete(name);
-      shadowMetrics.delete(name);
+const _metricsCleanupTimer = setInterval(
+  () => {
+    const now = Date.now();
+    for (const [name, entry] of metrics) {
+      const lastUsed = entry.lastUsedAt ? new Date(entry.lastUsedAt).getTime() : now;
+      if (now - lastUsed > METRICS_TTL_MS) {
+        metrics.delete(name);
+        shadowMetrics.delete(name);
+      }
     }
-  }
-  for (const [name, entry] of shadowMetrics) {
-    const lastUsed = entry.lastUsedAt ? new Date(entry.lastUsedAt).getTime() : now;
-    if (now - lastUsed > METRICS_TTL_MS) {
-      metrics.delete(name);
-      shadowMetrics.delete(name);
+    for (const [name, entry] of shadowMetrics) {
+      const lastUsed = entry.lastUsedAt ? new Date(entry.lastUsedAt).getTime() : now;
+      if (now - lastUsed > METRICS_TTL_MS) {
+        metrics.delete(name);
+        shadowMetrics.delete(name);
+      }
     }
-  }
-}, 5 * 60 * 1000); // every 5 minutes
+  },
+  5 * 60 * 1000
+); // every 5 minutes
 _metricsCleanupTimer.unref?.(); // Don't prevent process exit
 
 /**
@@ -270,6 +278,12 @@ export function recordComboRequest(
 
   if (success) {
     combo.totalSuccesses++;
+    // Feed the provider-diversity report (/api/analytics/diversity): record the
+    // provider that actually served this request. recordComboRequest is the
+    // single chokepoint every combo strategy funnels through, so one call here
+    // covers priority / round-robin / weighted / auto / etc.
+    const usedProvider = toNonEmptyString(target?.provider);
+    if (usedProvider) recordProviderUsage(usedProvider);
   } else {
     combo.totalFailures++;
   }

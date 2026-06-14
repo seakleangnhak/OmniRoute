@@ -15,7 +15,12 @@ import tseslint from "typescript-eslint";
 /** @type {import("eslint").Linter.Config[]} */
 const complexityConfig = [
   {
-    files: ["src/**/*.{ts,tsx}", "open-sse/**/*.{ts,tsx}"],
+    files: [
+      "src/**/*.{ts,tsx}",
+      "open-sse/**/*.{ts,tsx}",
+      "electron/**/*.{ts,tsx}",
+      "bin/**/*.{ts,tsx}",
+    ],
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: {
@@ -41,8 +46,8 @@ const complexityConfig = [
       "max-lines-per-function": ["error", { max: 80, skipBlankLines: true, skipComments: true }],
     },
   },
-  // Ignore everything that is not first-party src/open-sse production code so the count
-  // is not polluted by tests, type declarations, or build output.
+  // Ignore everything that is not first-party src/open-sse/electron/bin production code so
+  // the count is not polluted by tests, type declarations, or build output.
   {
     ignores: [
       "**/*.test.ts",
@@ -50,6 +55,8 @@ const complexityConfig = [
       "**/__tests__/**",
       "**/*.d.ts",
       "node_modules/**",
+      "electron/node_modules/**",
+      "electron/dist-electron/**",
       ".next/**",
       ".build/**",
       "dist/**",

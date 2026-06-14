@@ -4,6 +4,12 @@
 
 ---
 
+## [3.8.24] — TBD
+
+_See English CHANGELOG for v3.8.24 details._
+
+---
+
 ## [3.8.22] — TBD
 
 _See English CHANGELOG for v3.8.22 details._
@@ -385,6 +391,12 @@ must be a response to a preceding message with 'tool_calls'` when a Codex
 ---
 
 ## [Unreleased]
+
+---
+
+## [3.8.23] — TBD
+
+---
 
 ### ✨ New Features
 

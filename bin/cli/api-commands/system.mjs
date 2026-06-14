@@ -434,12 +434,20 @@ export function register_system(parent) {
   tag
     .command("get-api-compliance-audit-log")
     .description("Get compliance audit log")
+    .option("--level <level>", "high = Activity feed events only; all = all audit events")
+    .option("--action <action>", 'Filter by exact action string (e.g. "provider.added")')
+    .option("--actor <actor>", "Filter by actor identifier")
     .option("--limit <limit>", "")
+    .option("--offset <offset>", "")
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/compliance/audit-log";
       const qs = new URLSearchParams();
+      if (opts.level != null) qs.set("level", String(opts.level));
+      if (opts.action != null) qs.set("action", String(opts.action));
+      if (opts.actor != null) qs.set("actor", String(opts.actor));
       if (opts.limit != null) qs.set("limit", String(opts.limit));
+      if (opts.offset != null) qs.set("offset", String(opts.offset));
       if (qs.toString()) url += "?" + qs.toString();
       const res = await apiFetch(url, {
         method: "GET",

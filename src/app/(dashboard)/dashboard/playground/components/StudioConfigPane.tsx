@@ -2,7 +2,7 @@
 
 // src/app/(dashboard)/dashboard/playground/components/StudioConfigPane.tsx
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ParamSliders, { type PlaygroundParams } from "./ParamSliders";
 import type { PlaygroundEndpoint } from "@/lib/playground/codeExport";
 import { endpointToPath } from "@/lib/playground/codeExport";
@@ -10,6 +10,12 @@ import PresetPicker from "./PresetPicker";
 import ImprovePromptButton from "./ImprovePromptButton";
 import { useProviderOptions } from "@/app/(dashboard)/dashboard/translator/hooks/useProviderOptions";
 import { useAvailableModels } from "@/app/(dashboard)/dashboard/translator/hooks/useAvailableModels";
+import {
+  ANTHROPIC_COMPATIBLE_PREFIX,
+  CLAUDE_CODE_COMPATIBLE_PREFIX,
+  OPENAI_COMPATIBLE_PREFIX,
+} from "@/shared/constants/providers";
+import { pickDefaultModel, resolveModelFilterKey } from "./modelSelection";
 
 export interface ConfigState {
   endpoint: PlaygroundEndpoint;
@@ -61,8 +67,28 @@ export default function StudioConfigPane({ configState, setConfigState }: Studio
   const selectedProviderOption = providerOptions.find(
     (opt: { value: string; modelPrefix?: string }) => opt.value === provider
   );
-  const modelFilterKey = selectedProviderOption?.modelPrefix || provider || undefined;
+  // #3731: a custom OpenAI/Anthropic-compatible connection emits catalog models under a
+  // node prefix, NOT under its connection id. When the prefix doesn't resolve, filtering
+  // by the raw connection id matched nothing and emptied the selector ("NONE shown").
+  const isCompatibleConnectionId =
+    provider.startsWith(OPENAI_COMPATIBLE_PREFIX) ||
+    provider.startsWith(ANTHROPIC_COMPATIBLE_PREFIX) ||
+    provider.startsWith(CLAUDE_CODE_COMPATIBLE_PREFIX);
+  const modelFilterKey = resolveModelFilterKey(
+    provider,
+    selectedProviderOption?.modelPrefix,
+    isCompatibleConnectionId
+  );
   const { availableModels, loading: loadingModels } = useAvailableModels(modelFilterKey);
+
+  // #3731: selecting a provider resets the model to "", and nothing picked a default —
+  // so the active model stayed empty and the chat failed with "Set a model". Auto-select
+  // the first available model once the list resolves (mirrors the provider-detail chat).
+  useEffect(() => {
+    const next = pickDefaultModel(configState.model, availableModels);
+    if (next !== null) setConfigState({ ...configState, model: next });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableModels, configState.model]);
 
   function update<K extends keyof ConfigState>(key: K, value: ConfigState[K]) {
     setConfigState({ ...configState, [key]: value });

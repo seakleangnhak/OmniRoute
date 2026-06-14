@@ -39,6 +39,9 @@ export function createPiiSseTransform(options?: PiiTransformOptions): TransformS
     index: string | number = "0_0",
     isSnapshot = false
   ): string => {
+    if (field === "toolArgs" || field === "partialJson") {
+      return text;
+    }
     if (isSnapshot) {
       return sanitizePII(text).text;
     }

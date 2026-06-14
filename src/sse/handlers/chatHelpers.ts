@@ -384,7 +384,6 @@ export async function executeChatWithBreaker({
           isCombo,
           comboStepId,
           comboExecutionKey,
-          disableEmergencyFallback: isCombo,
           cachedSettings,
           skipUpstreamRetry,
           trafficType: normalizedTrafficType,
@@ -431,7 +430,8 @@ export async function executeChatWithBreaker({
               String(failure?.message || failure?.code || "stream failure"),
               provider,
               model,
-              providerProfile
+              providerProfile,
+              { isCombo }
             );
           },
         })
@@ -582,16 +582,38 @@ export function handleNoCredentials(
   );
 }
 
+/**
+ * Proxy-resolution failure policy. Default: fail-closed (rethrow) so a request
+ * with an assigned-but-unresolvable proxy never silently egresses on the real IP.
+ * Opt back into the legacy DIRECT fallback with PROXY_FAIL_OPEN=true.
+ */
+export function decideProxyResolutionFailure(
+  err: unknown,
+  env: { PROXY_FAIL_OPEN?: string } = process.env
+): null {
+  if ((env.PROXY_FAIL_OPEN ?? "").trim().toLowerCase() === "true") {
+    log.warn(
+      "PROXY",
+      `Proxy resolution failed — PROXY_FAIL_OPEN=true, falling back to DIRECT: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+    return null;
+  }
+  throw err instanceof Error ? err : new Error(String(err));
+}
+
 export async function safeResolveProxy(connectionId: string, apiKeyId?: string) {
   try {
     return await resolveProxyForConnection(connectionId, apiKeyId);
-  } catch (proxyErr: any) {
-    log.debug("PROXY", `Failed to resolve proxy: ${proxyErr.message}`);
-    return null;
+  } catch (proxyErr) {
+    return decideProxyResolutionFailure(proxyErr);
   }
 }
 
-export function safeLogEvents({
+// Async because the egress-IP lookup lazy-imports proxyEgress; callers treat
+// this as fire-and-forget logging (the internal try/catch swallows everything).
+export async function safeLogEvents({
   result,
   proxyInfo,
   proxyLatency,
@@ -613,6 +635,20 @@ export function safeLogEvents({
     const rawIpValue = Array.isArray(rawIp) ? rawIp[0] : rawIp;
     const clientIp = typeof rawIpValue === "string" ? rawIpValue.split(",")[0].trim() : null;
 
+    // Resolve the egress IP (the IP the upstream actually saw) from cache — never
+    // blocking the request. Warm it in the background for next time. null until
+    // the first warm completes; direct (no proxy) is also tracked.
+    let egressIp: string | null = null;
+    try {
+      const { getCachedEgressIp, warmEgressIp } = await import("../../lib/proxyEgress");
+      const { proxyConfigToUrl } = await import("@omniroute/open-sse/utils/proxyDispatcher.ts");
+      const proxyUrl = proxyInfo?.proxy ? proxyConfigToUrl(proxyInfo.proxy) : null;
+      egressIp = getCachedEgressIp(proxyUrl);
+      warmEgressIp(proxyUrl);
+    } catch {
+      // egress visibility is best-effort; never break the request path
+    }
+
     logProxyEvent({
       status: result.success
         ? "success"
@@ -625,6 +661,7 @@ export function safeLogEvents({
       provider,
       targetUrl: `${provider}/${model}`,
       clientIp,
+      egressIp,
       latencyMs: proxyLatency,
       error: result.success ? null : result.error || null,
       connectionId: credentials.connectionId,

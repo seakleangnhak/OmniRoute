@@ -1,3 +1,4 @@
+import { appendToolCallArgumentDelta } from "../utils/toolCallArguments.ts";
 /**
  * Convert OpenAI-style SSE chunks into a single non-streaming JSON response.
  * Used as a fallback when upstream returns text/event-stream for stream=false.
@@ -181,7 +182,10 @@ export function parseSSEToOpenAIResponse(rawSSE, fallbackModel) {
             existing.function.name = tc.function.name;
           }
           existing.function = existing.function || {};
-          existing.function.arguments = `${existing.function.arguments || ""}${deltaArgs}`;
+          existing.function.arguments = appendToolCallArgumentDelta(
+            existing.function.arguments,
+            deltaArgs
+          );
           accumulatedToolCalls.set(key, existing);
         }
       }

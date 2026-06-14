@@ -10,6 +10,7 @@
  */
 
 import { createConnection } from "node:net";
+import { stripIpv6Brackets } from "@omniroute/open-sse/utils/proxyFamily";
 
 // Configurable via env vars
 const FAST_FAIL_TIMEOUT_MS = parseInt(process.env.PROXY_FAST_FAIL_TIMEOUT_MS ?? "2000", 10);
@@ -102,7 +103,7 @@ export async function isProxyReachable(
     return false;
   }
 
-  const healthy = await tcpCheck(target.host, target.port, timeoutMs);
+  const healthy = await tcpCheck(stripIpv6Brackets(target.host), target.port, timeoutMs);
   proxyHealthCache.set(proxyUrl, { healthy, checkedAt: Date.now(), ttlMs: cacheTtlMs });
   return healthy;
 }

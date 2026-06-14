@@ -53,21 +53,33 @@ test("processor receives 'content' field category for delta.content", async () =
   assert.equal(fields[0], "content");
 });
 
-test("processor receives tool_calls function.arguments", async () => {
+test("processor does not mutate tool_calls function.arguments", async () => {
   const received: string[] = [];
   const transform = createSseTextTransform((text, field) => {
-    received.push(text);
-    return text;
+    received.push(`${field}:${text}`);
+    return "MUTATED";
   });
+  const payload = {
+    choices: [
+      {
+        delta: {
+          tool_calls: [
+            {
+              function: {
+                arguments: JSON.stringify({ command: "find /tmp -name test.txt" }),
+              },
+            },
+          ],
+        },
+      },
+    ],
+  };
 
-  await testTransform(transform, [
-    `data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"{\\"email\\":\\"test@example.com\\"}"}}]}}]}\n\n`,
-  ]);
+  const output = await testTransform(transform, [`data: ${JSON.stringify(payload)}\n\n`]);
 
-  assert.ok(
-    received.some((t) => t.includes("test@example.com")),
-    "should extract tool call arguments"
-  );
+  assert.equal(received.length, 0, "tool call arguments must bypass text processors");
+  assert.ok(output.includes("find /tmp -name test.txt"), "arguments should pass through unchanged");
+  assert.ok(!output.includes("MUTATED"), "processor output must not replace tool JSON");
 });
 
 test("processor receives delta.reasoning_content with 'reasoning' category", async () => {

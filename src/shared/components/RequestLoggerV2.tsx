@@ -34,6 +34,12 @@ import {
   resolveInitialVisibility,
   shouldAutoRefresh,
 } from "./requestLoggerSignature";
+import {
+  DEFAULT_REFRESH_INTERVAL_SEC,
+  clampRefreshIntervalSec,
+  readSavedRefreshIntervalSec,
+  writeSavedRefreshIntervalSec,
+} from "./requestLoggerPreferences";
 
 // Number of call-log rows fetched per page. The viewer grows its window by this
 // amount on "Load more" / infinite scroll so users can browse past the first
@@ -133,8 +139,9 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
     const [detailLoggingLoading, setDetailLoggingLoading] = useState(false);
     const [limit, setLimit] = useState(PAGE_SIZE);
     const [hasMore, setHasMore] = useState(false);
-    const [refreshIntervalSec, setRefreshIntervalSec] = useState(10);
+    const [refreshIntervalSec, setRefreshIntervalSec] = useState(DEFAULT_REFRESH_INTERVAL_SEC);
     const intervalRef = useRef(null);
+    const refreshIntervalSecRef = useRef(DEFAULT_REFRESH_INTERVAL_SEC);
     const hasLoadedRef = useRef(false);
     const logsSignatureRef = useRef("");
     const scrollContainerRef = useRef(null);
@@ -163,6 +170,29 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
         return next;
       });
     }, []);
+
+    useEffect(() => {
+      const saved = readSavedRefreshIntervalSec();
+      refreshIntervalSecRef.current = saved;
+      setRefreshIntervalSec(saved);
+    }, []);
+
+    useEffect(() => {
+      refreshIntervalSecRef.current = refreshIntervalSec;
+    }, [refreshIntervalSec]);
+
+    const updateRefreshIntervalSec = useCallback(
+      (valueOrUpdater: number | ((current: number) => number)) => {
+        const current = refreshIntervalSecRef.current;
+        const rawValue =
+          typeof valueOrUpdater === "function" ? valueOrUpdater(current) : valueOrUpdater;
+        const next = clampRefreshIntervalSec(rawValue);
+        refreshIntervalSecRef.current = next;
+        writeSavedRefreshIntervalSec(next);
+        setRefreshIntervalSec(next);
+      },
+      []
+    );
 
     const fetchLogs = useCallback(
       async (showLoading = false) => {
@@ -766,7 +796,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
           {/* Refresh interval */}
           <div className="flex items-center gap-1">
             <button
-              onClick={() => setRefreshIntervalSec((v) => Math.max(1, v - 1))}
+              onClick={() => updateRefreshIntervalSec((v) => v - 1)}
               className="w-6 h-6 flex items-center justify-center rounded hover:bg-bg-subtle text-text-muted hover:text-text-primary transition-colors text-sm font-bold"
               title="Decrease interval"
             >
@@ -779,13 +809,13 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
               value={refreshIntervalSec}
               onChange={(e) => {
                 const v = Number.parseInt(e.target.value, 10);
-                if (!Number.isNaN(v) && v >= 1 && v <= 300) setRefreshIntervalSec(v);
+                if (!Number.isNaN(v)) updateRefreshIntervalSec(v);
               }}
               className="w-12 text-center text-[11px] bg-transparent border border-border rounded px-1 py-0.5 text-text-primary [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
               title="Auto-refresh interval in seconds"
             />
             <button
-              onClick={() => setRefreshIntervalSec((v) => Math.min(300, v + 1))}
+              onClick={() => updateRefreshIntervalSec((v) => v + 1)}
               className="w-6 h-6 flex items-center justify-center rounded hover:bg-bg-subtle text-text-muted hover:text-text-primary transition-colors text-sm font-bold"
               title="Increase interval"
             >
@@ -1001,7 +1031,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
                       <tr
                         key={log.id}
                         onClick={() => openDetail(log)}
-                        className={`cursor-pointer hover:bg-primary/5 transition-colors ${isError ? "bg-red-500/5" : ""}`}
+                        className={`cursor-pointer hover:bg-sky-500/10 dark:hover:bg-sky-400/10 transition-colors ${isError ? "bg-red-500/5" : ""}`}
                       >
                         {visibleColumns.status && (
                           <td className="px-3 py-2">

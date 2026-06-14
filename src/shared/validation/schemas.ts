@@ -646,6 +646,7 @@ const comboRuntimeConfigSchema = z
     maxMessagesForSummary: z.coerce.number().int().min(5).max(100).optional(),
     maxComboDepth: z.coerce.number().int().min(1).max(10).optional(),
     trackMetrics: z.boolean().optional(),
+    reasoningTokenBufferEnabled: z.boolean().optional(),
     compressionMode: compressionModeSchema.optional(),
     failoverBeforeRetry: z.boolean().optional(),
     maxSetRetries: z.coerce.number().int().min(0).max(10).optional(),
@@ -1235,6 +1236,12 @@ export const pricingSyncRequestSchema = z
   })
   .strict();
 
+export const intelligenceSyncRequestSchema = z
+  .object({
+    dryRun: z.boolean().optional(),
+  })
+  .strict();
+
 const taskRoutingModelMapSchema = z
   .object({
     coding: z.string().max(200).optional(),
@@ -1570,6 +1577,9 @@ const proxyRegistryFieldsSchema = z
     notes: z.string().trim().max(1000).nullable().optional(),
     status: z.enum(["active", "inactive"]).optional().default("active"),
     source: z.enum(["manual", "oneproxy", "dashboard-custom", "vercel-relay"]).optional(),
+    // Address-family egress policy (#3777): "auto" keeps the prior dual-stack behavior;
+    // "ipv4"/"ipv6" pin the connection to that family (no v4 leak under an IPv6-only proxy).
+    family: z.enum(["auto", "ipv4", "ipv6"]).optional().default("auto"),
   })
   .strict();
 
@@ -1904,6 +1914,7 @@ export const updateKeyPermissionsSchema = z
   .object({
     name: z.string().trim().min(1).max(200).optional(),
     allowedModels: z.array(z.string().trim().min(1)).max(1000).optional(),
+    blockedModels: z.array(z.string().trim().min(1)).max(1000).optional(),
     allowedCombos: z.array(z.string().trim().min(1).max(200)).max(500).optional(),
     allowedConnections: z.array(z.string().uuid()).max(100).optional(),
     noLog: z.boolean().optional(),
@@ -1933,6 +1944,7 @@ export const updateKeyPermissionsSchema = z
     if (
       value.name === undefined &&
       value.allowedModels === undefined &&
+      value.blockedModels === undefined &&
       value.allowedCombos === undefined &&
       value.allowedConnections === undefined &&
       value.noLog === undefined &&
