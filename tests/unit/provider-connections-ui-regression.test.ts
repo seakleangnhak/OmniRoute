@@ -5,13 +5,19 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PROVIDER_PAGE = path.resolve(
-  __dirname,
-  "../../src/app/(dashboard)/dashboard/providers/[id]/page.tsx"
-);
+const PROVIDER_DIR = path.resolve(__dirname, "../../src/app/(dashboard)/dashboard/providers/[id]");
 const EN_MESSAGES = path.resolve(__dirname, "../../src/i18n/messages/en.json");
 
-const providerPageSrc = readFileSync(PROVIDER_PAGE, "utf-8");
+// #3501 strangler-fig decomposition: the provider-detail god-component (page.tsx)
+// was split into helpers + per-section components. The defensive count labels and
+// proxy-toggle markup now live in these files — scan their union.
+const providerPageSrc = [
+  "providerPageHelpers.ts",
+  "components/ConnectionsListPanel.tsx",
+  "components/ConnectionRow.tsx",
+]
+  .map((rel) => readFileSync(path.join(PROVIDER_DIR, rel), "utf-8"))
+  .join("\n");
 const enMessages = JSON.parse(readFileSync(EN_MESSAGES, "utf-8"));
 
 describe("provider connections UI regression", () => {
@@ -43,15 +49,14 @@ describe("provider connections UI regression", () => {
   });
 
   it("keeps proxy toggle text accessible without repeating active/default labels visually", () => {
-    assert.ok(
-      providerPageSrc.includes(
-        'aria-label={proxyEnabled ? t("proxyEnabledTitle") : t("proxyDisabledTitle")}'
-      )
+    // Whitespace-tolerant: Prettier may format these aria-labels across multiple lines.
+    assert.match(
+      providerPageSrc,
+      /aria-label=\{\s*proxyEnabled\s*\?\s*t\("proxyEnabledTitle"\)\s*:\s*t\("proxyDisabledTitle"\)\s*\}/
     );
-    assert.ok(
-      providerPageSrc.includes(
-        'aria-label={perKeyProxyEnabled ? t("perKeyProxyEnabledTitle") : t("perKeyProxyDisabledTitle")}'
-      )
+    assert.match(
+      providerPageSrc,
+      /aria-label=\{\s*perKeyProxyEnabled\s*\?\s*t\("perKeyProxyEnabledTitle"\)\s*:\s*t\("perKeyProxyDisabledTitle"\)\s*\}/
     );
     assert.ok(providerPageSrc.includes('<span className="sr-only">{t("proxyOn")}</span>'));
     assert.ok(providerPageSrc.includes('<span className="sr-only">{t("perKeyProxyOff")}</span>'));

@@ -1,6 +1,7 @@
 import { handleChat } from "@/sse/handlers/chat";
 import { withEarlyStreamKeepalive } from "@omniroute/open-sse/utils/earlyStreamKeepalive";
 import { enforceClientApiAuth } from "../_helpers/clientApiAuth";
+import { withInjectionGuard } from "@/middleware/promptInjectionGuard";
 import { resolveResponsesApiModel } from "@/app/api/internal/codex-responses-ws/modelResolution";
 import { getModelInfo } from "@/sse/services/model";
 import { getComboByName } from "@/lib/db/combos";
@@ -62,10 +63,9 @@ export async function withCodexPreferredModel(request: Request): Promise<Request
  * POST /v1/responses - OpenAI Responses API format
  * Handled by the unified chat handler (openai-responses format auto-detected).
  */
-export async function POST(request) {
+async function postHandler(request) {
   const authRejection = await enforceClientApiAuth(request);
   if (authRejection) return authRejection;
-
   // Codex CLI (wire_api="responses") consumes this endpoint over SSE and its reqwest
   // client drops the connection if no bytes arrive within ~5s. Keep the connection
   // warm with early keepalives while the upstream produces its first token (#2544).
@@ -91,3 +91,5 @@ export async function POST(request) {
   }
   return await handleChat(resolved);
 }
+
+export const POST = withInjectionGuard(postHandler);

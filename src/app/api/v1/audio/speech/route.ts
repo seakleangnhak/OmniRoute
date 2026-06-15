@@ -1,4 +1,5 @@
 import { handleAudioSpeech } from "@omniroute/open-sse/handlers/audioSpeech.ts";
+import { withInjectionGuard } from "@/middleware/promptInjectionGuard";
 import { getProviderCredentials, clearRecoveredProviderState } from "@/sse/services/auth";
 import {
   parseSpeechModel,
@@ -34,10 +35,9 @@ export async function OPTIONS() {
  * POST /v1/audio/speech — text-to-speech
  * OpenAI TTS API compatible. Returns audio stream.
  */
-export async function POST(request) {
+async function postHandler(request) {
   const authRejection = await enforceClientApiAuth(request);
   if (authRejection) return authRejection;
-
   let rawBody;
   try {
     rawBody = await request.json();
@@ -114,3 +114,5 @@ export async function POST(request) {
   }
   return response;
 }
+
+export const POST = withInjectionGuard(postHandler);

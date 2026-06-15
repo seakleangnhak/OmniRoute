@@ -2,6 +2,7 @@ import {
   handleImageEdit,
   handleOpenAIImageEdit,
 } from "@omniroute/open-sse/handlers/imageGeneration.ts";
+import { withInjectionGuard } from "@/middleware/promptInjectionGuard";
 import { getProviderCredentials, clearRecoveredProviderState } from "@/sse/services/auth";
 import { parseImageModel, getImageProvider } from "@omniroute/open-sse/config/imageRegistry.ts";
 import { errorResponse, unavailableResponse } from "@omniroute/open-sse/utils/error.ts";
@@ -171,10 +172,9 @@ function jsonResponse(data: unknown, status = 200): Response {
   });
 }
 
-export async function POST(request: Request) {
+async function postHandler(request: Request) {
   const authRejection = await enforceClientApiAuth(request);
   if (authRejection) return authRejection;
-
   const input = await readEditInput(request);
   if (!input) {
     return errorResponse(
@@ -332,3 +332,5 @@ export async function POST(request: Request) {
     (result as any).status
   );
 }
+
+export const POST = withInjectionGuard(postHandler);

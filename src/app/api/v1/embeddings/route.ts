@@ -9,6 +9,7 @@ import { enforceApiKeyPolicy } from "@/shared/utils/apiKeyPolicy";
 import { v1EmbeddingsSchema } from "@/shared/validation/schemas";
 import { isValidationFailure, validateBody } from "@/shared/validation/helpers";
 import { enforceClientApiAuth } from "../_helpers/clientApiAuth";
+import { withInjectionGuard } from "@/middleware/promptInjectionGuard";
 
 import { getAllCustomModels } from "@/lib/localDb";
 import { createEmbeddingResponse, type EmbeddingHandlerOptions } from "@/lib/embeddings/service";
@@ -74,10 +75,9 @@ export async function handleValidatedEmbeddingRequestBody(
   return createEmbeddingResponse(body, options);
 }
 
-export async function POST(request) {
+async function postHandler(request) {
   const authRejection = await enforceClientApiAuth(request);
   if (authRejection) return authRejection;
-
   let rawBody;
   try {
     rawBody = await request.json();
@@ -113,3 +113,5 @@ export async function POST(request) {
     connectionId: null,
   });
 }
+
+export const POST = withInjectionGuard(postHandler);

@@ -317,7 +317,7 @@ export const OAUTH_PROVIDERS = {
     subscriptionRisk: true,
     riskNoticeVariant: "oauth",
     authHint:
-      "Sign in at windsurf.com to get your token. Visit windsurf.com/show-auth-token after logging in and paste it here, or use the device-code login flow.",
+      'In the Windsurf / VS Code IDE, open the command palette and run `Windsurf: Provide Auth Token` (or click the Jupyter "Get Windsurf Authentication Token" button), then copy the shown token and paste it here. Note: opening windsurf.com/show-auth-token directly only renders a "Redirecting" page — the IDE must initiate the flow (it adds a `?state=...` param) for the token to appear.',
     website: "https://windsurf.com",
   },
   "devin-cli": {

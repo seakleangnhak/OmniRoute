@@ -199,7 +199,7 @@ export const FEATURE_FLAG_DEFINITIONS: FeatureFlagDefinition[] = [
     warningLevel: "info",
   },
 
-  // ──────────────── Runtime (9) ────────────────
+  // ──────────────── Runtime (10) ────────────────
   {
     key: "OMNIROUTE_MCP_ENFORCE_SCOPES",
     label: "MCP Enforce Scopes",
@@ -259,7 +259,7 @@ export const FEATURE_FLAG_DEFINITIONS: FeatureFlagDefinition[] = [
     key: "OMNIROUTE_ENABLE_LIVE_WS",
     label: "Live Dashboard WebSocket",
     description:
-      "Start the real-time dashboard WebSocket server on import (port 20129 by default).",
+      "Start the real-time dashboard WebSocket server on import (port 20129, loopback-bound by default). Default: enabled. Set to '0' or 'false' to disable. LAN exposure requires LIVE_WS_HOST=0.0.0.0 + LIVE_WS_ALLOWED_ORIGINS.",
     descriptionI18nKey: "featureFlagOmnirouteEnableLiveWsDescription",
     category: "runtime",
     defaultValue: "true",
@@ -296,6 +296,17 @@ export const FEATURE_FLAG_DEFINITIONS: FeatureFlagDefinition[] = [
     description:
       "Include display-friendly name fields in /v1/models responses. Disable for clients that expect model IDs only.",
     descriptionI18nKey: "settings.featureFlags.modelCatalogIncludeNames",
+    category: "runtime",
+    defaultValue: "true",
+    type: "boolean",
+    requiresRestart: false,
+    warningLevel: "info",
+  },
+  {
+    key: "ARENA_ELO_SYNC_ENABLED",
+    label: "Arena ELO Sync",
+    description: "Enable periodic Arena AI leaderboard ELO sync for model intelligence rankings.",
+    descriptionI18nKey: "featureFlagArenaEloSyncEnabledDescription",
     category: "runtime",
     defaultValue: "true",
     type: "boolean",

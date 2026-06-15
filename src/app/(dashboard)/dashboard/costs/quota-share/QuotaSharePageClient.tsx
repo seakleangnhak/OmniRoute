@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/shared/components";
-import EmailPrivacyToggle from "@/shared/components/EmailPrivacyToggle";
 import useEmailPrivacyStore from "@/store/emailPrivacyStore";
 import { maskEmailLikeValue } from "@/shared/utils/maskEmail";
 import type { QuotaPool } from "@/lib/quota/dimensions";
@@ -149,6 +148,7 @@ export default function QuotaSharePageClient() {
   // ── Fetch side data once on mount ─────────────────────────────────────────
 
   useEffect(() => {
+    let cancelled = false;
     Promise.all([
       fetch("/api/providers/client")
         .then((r) => (r.ok ? r.json() : null))
@@ -161,6 +161,8 @@ export default function QuotaSharePageClient() {
         .catch(() => null),
     ])
       .then(([connsData, keysData, plansData]) => {
+        if (cancelled) return;
+
         const conns: Connection[] = Array.isArray(connsData?.connections)
           ? connsData.connections
           : [];
@@ -184,37 +186,39 @@ export default function QuotaSharePageClient() {
       .catch(() => {
         // fail open — side data not critical
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // ── Fetch groups ──────────────────────────────────────────────────────────
 
-  const loadGroups = useCallback(async (): Promise<QuotaGroup[]> => {
+  const fetchGroups = useCallback(async (options?: { signal?: AbortSignal }) => {
     try {
-      const res = await fetch("/api/quota/groups");
+      const res = await fetch("/api/quota/groups", { signal: options?.signal });
       if (res.ok) {
         const data = (await res.json()) as { groups: QuotaGroup[] };
-        return Array.isArray(data.groups) ? data.groups : [];
+        if (options?.signal?.aborted) return;
+        setGroups(Array.isArray(data.groups) ? data.groups : []);
       }
     } catch {
+      if (options?.signal?.aborted) return;
       // fail open — groups list not critical
     }
-    return [];
   }, []);
 
   const refreshGroups = useCallback(async () => {
-    const nextGroups = await loadGroups();
-    setGroups(nextGroups);
-  }, [loadGroups]);
+    await fetchGroups();
+  }, [fetchGroups]);
 
   useEffect(() => {
-    let cancelled = false;
-    void loadGroups().then((nextGroups) => {
-      if (!cancelled) setGroups(nextGroups);
-    });
+    const controller = new AbortController();
+    void Promise.resolve().then(() => fetchGroups({ signal: controller.signal }));
     return () => {
-      cancelled = true;
+      controller.abort();
     };
-  }, [loadGroups]);
+  }, [fetchGroups]);
 
   // ── Group actions ─────────────────────────────────────────────────────────
 
@@ -398,7 +402,6 @@ export default function QuotaSharePageClient() {
           <p className="text-sm text-text-muted mt-0.5">{t("description")}</p>
         </div>
         <div className="flex items-center gap-2">
-          <EmailPrivacyToggle />
           <Button variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
             <span className="material-symbols-outlined text-[14px] mr-1">add</span>
             {t("newPool")}

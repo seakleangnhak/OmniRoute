@@ -27,6 +27,7 @@ import {
   type RateLimitedCredentials,
 } from "@/app/api/v1/_shared/rateLimit";
 import { enforceClientApiAuth } from "../_helpers/clientApiAuth";
+import { withInjectionGuard } from "@/middleware/promptInjectionGuard";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -102,10 +103,9 @@ function buildDomainFilter(filters?: {
 /**
  * POST /v1/search — execute a web search
  */
-export async function POST(request: Request) {
+async function postHandler(request: Request) {
   const authRejection = await enforceClientApiAuth(request);
   if (authRejection) return authRejection;
-
   let rawBody: unknown;
   try {
     rawBody = await request.json();
@@ -323,3 +323,5 @@ class SearchError extends Error {
     this.statusCode = statusCode;
   }
 }
+
+export const POST = withInjectionGuard(postHandler);

@@ -148,7 +148,9 @@ test("getUsageForProvider returns message for invalid OpenCode Go API keys", asy
     })) as { message: string };
     assert.equal(
       result.message,
-      "OpenCode Go quota endpoint rejected this API key. Chat requests still work."
+      "OpenCode Go does not expose a public quota API. Chat requests still work. " +
+        "Set OMNIROUTE_OPENCODE_GO_QUOTA_URL to a working endpoint, or follow " +
+        "https://github.com/anomalyco/opencode/issues/16017 for upstream status."
     );
   } finally {
     globalThis.fetch = originalFetch;
@@ -171,7 +173,9 @@ test("getUsageForProvider returns message when OpenCode Go quota API returns 200
     })) as { message: string };
     assert.equal(
       result.message,
-      "OpenCode Go quota endpoint rejected this API key. Chat requests still work."
+      "OpenCode Go does not expose a public quota API. Chat requests still work. " +
+        "Set OMNIROUTE_OPENCODE_GO_QUOTA_URL to a working endpoint, or follow " +
+        "https://github.com/anomalyco/opencode/issues/16017 for upstream status."
     );
   } finally {
     globalThis.fetch = originalFetch;

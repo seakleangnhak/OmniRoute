@@ -44,10 +44,14 @@ describe("LMArena Credential Requirements", () => {
     const req = getWebSessionCredentialRequirement("lmarena");
     assert.ok(req, "Should have credential requirement");
     assert.equal(req.kind, "cookie");
-    assert.equal(req.credentialName, "session");
+    // #3810: lmarena.ai's real auth cookie is `arena-auth-prod-v1`, not `session`
+    assert.equal(req.credentialName, "arena-auth-prod-v1");
+    assert.ok(req.placeholder.includes("arena-auth-prod-v1"));
     assert.ok(req.placeholder.includes("lmarena.ai"));
     assert.equal(req.acceptsFullCookieHeader, true);
     assert.ok(req.storageKeys.includes("cookie"));
+    assert.ok(req.storageKeys.includes("arena-auth-prod-v1"));
+    // legacy `session` key retained for back-compat with already-saved credentials
     assert.ok(req.storageKeys.includes("session"));
   });
 

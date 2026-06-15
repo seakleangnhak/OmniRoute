@@ -201,6 +201,7 @@ export {
   backupDbFile,
   cleanupDbBackups,
   getDbBackupMaxFiles,
+  setDbBackupMaxFiles,
   getDbBackupRetentionDays,
   listDbBackups,
   restoreDbBackup,

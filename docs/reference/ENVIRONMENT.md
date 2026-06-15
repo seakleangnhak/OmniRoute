@@ -79,27 +79,27 @@ echo "OMNIROUTE_WS_BRIDGE_SECRET=$(openssl rand -base64 32)"
 
 OmniRoute uses **SQLite** (via `better-sqlite3`) for all persistence. These variables control data location, encryption, and lifecycle.
 
-| Variable                               | Default              | Source File                                           | Description                                                                                                                       |
-| -------------------------------------- | -------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `DATA_DIR`                             | `~/.omniroute/`      | `src/lib/db/core.ts`                                  | Root directory for SQLite DB, backups, and data files. Override for Docker volumes or custom paths.                               |
-| `SQLITE_MAX_SIZE_MB`                   | `2048`               | `src/lib/db/core.ts`                                  | SQLite database file size cap in MB, applied via `max_page_count` on startup. Increase for larger deployments.                    |
-| `STORAGE_ENCRYPTION_KEY`               | _(empty = disabled)_ | `src/lib/db/encryption.ts`                            | AES key for full SQLite database encryption at rest. Generate with `openssl rand -hex 32`.                                        |
-| `STORAGE_ENCRYPTION_KEY_VERSION`       | `v1`                 | `scripts/build/bootstrap-env.mjs`, `electron/main.js` | Version label for the encryption key. Increment when performing key rotation to support decryption of old backups.                |
-| `DISABLE_SQLITE_AUTO_BACKUP`           | `false`              | `src/lib/db/backup.ts`                                | When `true`, skips the automatic database backup that runs before migrations on every startup.                                    |
-| `OMNIROUTE_CRYPT_KEY`                  | _(unset)_            | `src/lib/db/encryption.ts`                            | **Legacy alias** for `STORAGE_ENCRYPTION_KEY`. Accepted as a fallback when the primary variable is absent.                        |
-| `OMNIROUTE_API_KEY_BASE64`             | _(unset)_            | `src/lib/db/encryption.ts`                            | **Legacy alias** (Base64-encoded form) accepted as a fallback. Decoded automatically before use.                                  |
-| `OMNIROUTE_DB_HEALTHCHECK_INTERVAL_MS` | _(unset)_            | `src/lib/db/core.ts`                                  | Override the periodic SQLite healthcheck interval (ms). When unset, defaults are derived from `NODE_ENV`.                         |
-| `OMNIROUTE_SKIP_DB_HEALTHCHECK`        | `0`                  | `src/lib/db/core.ts`, `src/lib/db/healthCheck.ts`     | Set to `1` to skip the DB healthcheck entirely on startup. Useful for short-lived tasks and integration tests.                    |
-| `OMNIROUTE_FORCE_DB_HEALTHCHECK`       | `0`                  | `src/lib/db/core.ts`                                  | Set to `1` to force the DB healthcheck loop on, even when it would normally be skipped (e.g., short-lived tasks).                 |
-| `OMNIROUTE_SKIP_POSTINSTALL`           | `0`                  | `scripts/postinstall.mjs`                             | Set to `1` to skip the native-runtime warm-up during `npm install`. Useful in CI/headless installs where sqlite is already built. |
-| `OMNIROUTE_MIGRATIONS_DIR`             | _(auto-detect)_      | `src/lib/db/migrationRunner.ts`                       | Override the directory that the migration runner scans. Useful when shipping bundled migrations in custom builds.                 |
-| `OMNIROUTE_SPEND_FLUSH_INTERVAL_MS`    | _(default in code)_  | `src/lib/spend/batchWriter.ts`                        | Flush interval (ms) for the batched spend/cost writer. Lower values reduce write coalescing; higher values reduce DB contention.  |
-| `OMNIROUTE_SPEND_MAX_BUFFER_SIZE`      | _(default in code)_  | `src/lib/spend/batchWriter.ts`                        | Max buffered spend entries before a forced flush. Raise on high-QPS deployments; lower when bounded memory matters more.          |
-| `OMNIROUTE_PROXY_FETCH_DEBUG`          | _(unset)_            | `open-sse/utils/proxyFetch.ts`                        | Set to `"true"` to emit `[ProxyFetch]` debug logs on the Vercel relay path. Off by default to avoid leaking routing hints.        |
-| `BATCH_RETRY_DURATION_MS`              | `86400000` (24h)     | `open-sse/services/batchProcessor.ts`                 | Maximum retry window for individual batch items (ms). Items exceeding this duration are marked failed.                            |
-| `BATCH_BACKOFF_BASE_MS`                | `5000`               | `open-sse/services/batchProcessor.ts`                 | Base delay (ms) for exponential backoff on batch item retries.                                                                    |
-| `BATCH_BACKOFF_MAX_MS`                 | `3600000` (1h)       | `open-sse/services/batchProcessor.ts`                 | Cap (ms) for exponential backoff between batch item retries.                                                                      |
-| `BATCH_MAX_CONCURRENT`                 | `1`                  | `open-sse/services/batchProcessor.ts`                 | Maximum number of batches processed concurrently. Raise to increase throughput; keep low to avoid rate-limit storms.              |
+| Variable                               | Default              | Source File                                           | Description                                                                                                                                                                                       |
+| -------------------------------------- | -------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATA_DIR`                             | `~/.omniroute/`      | `src/lib/db/core.ts`                                  | Root directory for SQLite DB, backups, and data files. Override for Docker volumes or custom paths.                                                                                               |
+| `STORAGE_ENCRYPTION_KEY`               | _(empty = disabled)_ | `src/lib/db/encryption.ts`                            | AES key for full SQLite database encryption at rest. Generate with `openssl rand -hex 32`.                                                                                                        |
+| `STORAGE_ENCRYPTION_KEY_VERSION`       | `v1`                 | `scripts/build/bootstrap-env.mjs`, `electron/main.js` | Version label for the encryption key. Increment when performing key rotation to support decryption of old backups.                                                                                |
+| `DISABLE_SQLITE_AUTO_BACKUP`           | `false`              | `src/lib/db/backup.ts`                                | When `true`, skips the automatic database backup that runs before migrations on every startup.                                                                                                    |
+| `OMNIROUTE_CRYPT_KEY`                  | _(unset)_            | `src/lib/db/encryption.ts`                            | **Legacy alias** for `STORAGE_ENCRYPTION_KEY`. Accepted as a fallback when the primary variable is absent.                                                                                        |
+| `OMNIROUTE_API_KEY_BASE64`             | _(unset)_            | `src/lib/db/encryption.ts`                            | **Legacy alias** (Base64-encoded form) accepted as a fallback. Decoded automatically before use.                                                                                                  |
+| `OMNIROUTE_DB_HEALTHCHECK_INTERVAL_MS` | _(unset)_            | `src/lib/db/core.ts`                                  | Override the periodic SQLite healthcheck interval (ms). When unset, defaults are derived from `NODE_ENV`.                                                                                         |
+| `OMNIROUTE_SKIP_DB_HEALTHCHECK`        | `0`                  | `src/lib/db/core.ts`, `src/lib/db/healthCheck.ts`     | Set to `1` to skip the DB healthcheck entirely on startup. Useful for short-lived tasks and integration tests.                                                                                    |
+| `OMNIROUTE_FORCE_DB_HEALTHCHECK`       | `0`                  | `src/lib/db/core.ts`                                  | Set to `1` to force the DB healthcheck loop on, even when it would normally be skipped (e.g., short-lived tasks).                                                                                 |
+| `OMNIROUTE_SKIP_POSTINSTALL`           | `0`                  | `scripts/postinstall.mjs`                             | Set to `1` to skip the native-runtime warm-up during `npm install`. Useful in CI/headless installs where sqlite is already built.                                                                 |
+| `OMNIROUTE_MIGRATIONS_DIR`             | _(auto-detect)_      | `src/lib/db/migrationRunner.ts`                       | Override the directory that the migration runner scans. Useful when shipping bundled migrations in custom builds.                                                                                 |
+| `OMNIROUTE_MAX_PENDING_MIGRATIONS`     | `50`                 | `src/lib/db/migrationRunner.ts`                       | Mass-pending-migrations safety threshold. Startup aborts when more than this many migrations are pending on an existing DB. Raise it to restore an older backup; set to `0` to disable the check. |
+| `OMNIROUTE_SPEND_FLUSH_INTERVAL_MS`    | _(default in code)_  | `src/lib/spend/batchWriter.ts`                        | Flush interval (ms) for the batched spend/cost writer. Lower values reduce write coalescing; higher values reduce DB contention.                                                                  |
+| `OMNIROUTE_SPEND_MAX_BUFFER_SIZE`      | _(default in code)_  | `src/lib/spend/batchWriter.ts`                        | Max buffered spend entries before a forced flush. Raise on high-QPS deployments; lower when bounded memory matters more.                                                                          |
+| `OMNIROUTE_PROXY_FETCH_DEBUG`          | _(unset)_            | `open-sse/utils/proxyFetch.ts`                        | Set to `"true"` to emit `[ProxyFetch]` debug logs on the Vercel relay path. Off by default to avoid leaking routing hints.                                                                        |
+| `BATCH_RETRY_DURATION_MS`              | `86400000` (24h)     | `open-sse/services/batchProcessor.ts`                 | Maximum retry window for individual batch items (ms). Items exceeding this duration are marked failed.                                                                                            |
+| `BATCH_BACKOFF_BASE_MS`                | `5000`               | `open-sse/services/batchProcessor.ts`                 | Base delay (ms) for exponential backoff on batch item retries.                                                                                                                                    |
+| `BATCH_BACKOFF_MAX_MS`                 | `3600000` (1h)       | `open-sse/services/batchProcessor.ts`                 | Cap (ms) for exponential backoff between batch item retries.                                                                                                                                      |
+| `BATCH_MAX_CONCURRENT`                 | `1`                  | `open-sse/services/batchProcessor.ts`                 | Maximum number of batches processed concurrently. Raise to increase throughput; keep low to avoid rate-limit storms.                                                                              |
 
 ### Scenarios
 
@@ -126,7 +126,7 @@ OmniRoute uses **SQLite** (via `better-sqlite3`) for all persistence. These vari
 | `LIVE_WS_PORT`                              | `20129`                         | `src/server/ws/liveServer.ts`                                            | Port for the real-time WebSocket live monitoring server.                                                                                                       |
 | `LIVE_WS_HOST`                              | `127.0.0.1`                     | `src/server/ws/liveServer.ts`                                            | Bind address for the live WebSocket server. Set to `0.0.0.0` to expose on LAN (also configure `LIVE_WS_ALLOWED_ORIGINS`).                                      |
 | `LIVE_WS_ALLOWED_ORIGINS`                   | _(unset)_                       | `src/server/ws/liveServer.ts`                                            | Comma-separated extra origins allowed to open a live WebSocket. Loopback dashboard origins are already permitted by default.                                   |
-| `OMNIROUTE_ENABLE_LIVE_WS`                  | `false`                         | `src/server/ws/liveServer.ts`                                            | Set to `1` or `true` to enable the real-time WebSocket server (disabled by default).                                                                           |
+| `OMNIROUTE_ENABLE_LIVE_WS`                  | `true`                          | `src/server/ws/liveServer.ts`                                            | Set to `0` or `false` to disable the real-time WebSocket server (enabled by default, loopback-bound).                                                          |
 | `OMNIROUTE_DISABLE_LIVE_WS`                 | `false`                         | `scripts/start-ws-server.mjs`                                            | CI/harness toggle that disables the standalone live WebSocket helper script.                                                                                   |
 | `RELAY_IP_PER_MINUTE`                       | `30`                            | `src/app/api/v1/relay/chat/completions/route.ts`                         | Per-(token, IP) relay rate limit, requests/minute. In-memory, per instance. `0` or negative disables the IP-dimension gate (per-token DB limit still applies). |
 | `NODE_ENV`                                  | `production`                    | Next.js core                                                             | Controls logging verbosity, caching, error detail exposure, and Next.js optimizations.                                                                         |
@@ -549,30 +549,29 @@ REQUEST_TIMEOUT_MS (global override)
 │   ├── FETCH_CONNECT_TIMEOUT_MS (independent, default: 10000)
 │   └── FETCH_KEEPALIVE_TIMEOUT_MS (independent, default: 4000)
 ├─→ STREAM_IDLE_TIMEOUT_MS (inherits from REQUEST_TIMEOUT_MS, default: 10000)
-└── STREAM_READINESS_TIMEOUT_MS (independent, default: 10000)
-
-API_BRIDGE_PROXY_TIMEOUT_MS (independent, default: 10000)
-├─→ API_BRIDGE_STREAM_PROXY_TIMEOUT_MS (chat/responses streams, default: max 300000 / stream timeouts)
-├─→ API_BRIDGE_SERVER_REQUEST_TIMEOUT_MS (inherits API bridge proxy timeout, default: 10000)
-├── API_BRIDGE_SERVER_HEADERS_TIMEOUT_MS (default: 60000)
-├── API_BRIDGE_SERVER_KEEPALIVE_TIMEOUT_MS (default: 5000)
-└── API_BRIDGE_SERVER_SOCKET_TIMEOUT_MS (default: 0 = disabled)
+├─→ STREAM_READINESS_TIMEOUT_MS (inherits from REQUEST_TIMEOUT_MS, default: 10000)
+└─→ API_BRIDGE_PROXY_TIMEOUT_MS (independent, default: 10000)
+    ├─→ API_BRIDGE_STREAM_PROXY_TIMEOUT_MS (chat/responses streams, default: max 300000 / stream timeouts)
+    ├─→ API_BRIDGE_SERVER_REQUEST_TIMEOUT_MS (inherits API bridge proxy timeout, default: 10000)
+    ├── API_BRIDGE_SERVER_HEADERS_TIMEOUT_MS (default: 60000)
+    ├── API_BRIDGE_SERVER_KEEPALIVE_TIMEOUT_MS (default: 5000)
+    └── API_BRIDGE_SERVER_SOCKET_TIMEOUT_MS (default: 0 = disabled)
 ```
 
 | Variable                                 | Default              | Description                                                                                                                                                    |
 | ---------------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `REQUEST_TIMEOUT_MS`                     | _(unset)_            | Global shortcut — overrides both `FETCH_TIMEOUT_MS` and `STREAM_IDLE_TIMEOUT_MS` defaults.                                                                     |
-| `FETCH_TIMEOUT_MS`                       | `600000`             | Total HTTP request timeout for upstream provider calls.                                                                                                        |
-| `STREAM_IDLE_TIMEOUT_MS`                 | `600000`             | Max silence between SSE chunks before aborting. Extended-thinking models rarely pause >90s.                                                                    |
-| `STREAM_READINESS_TIMEOUT_MS`            | `10000`              | Time to first useful SSE event before fallback.                                                                                                                |
+| `FETCH_TIMEOUT_MS`                       | `10000`              | Total HTTP request timeout for upstream provider calls.                                                                                                        |
+| `STREAM_IDLE_TIMEOUT_MS`                 | `10000`              | Max silence between SSE chunks before aborting.                                                                                                                |
+| `STREAM_READINESS_TIMEOUT_MS`            | `10000`              | Time to first useful SSE event before fallback. Inherits `REQUEST_TIMEOUT_MS` when set.                                                                        |
 | `FETCH_HEADERS_TIMEOUT_MS`               | = `FETCH_TIMEOUT_MS` | Time to receive response headers.                                                                                                                              |
 | `FETCH_BODY_TIMEOUT_MS`                  | = `FETCH_TIMEOUT_MS` | Time to receive the full response body.                                                                                                                        |
-| `FETCH_CONNECT_TIMEOUT_MS`               | `30000`              | TCP connection establishment timeout.                                                                                                                          |
+| `FETCH_CONNECT_TIMEOUT_MS`               | `10000`              | TCP connection establishment timeout.                                                                                                                          |
 | `FETCH_KEEPALIVE_TIMEOUT_MS`             | `4000`               | Keep-alive socket idle timeout.                                                                                                                                |
 | `TLS_CLIENT_TIMEOUT_MS`                  | = `FETCH_TIMEOUT_MS` | TLS fingerprint proxy (wreq-js) timeout.                                                                                                                       |
-| `API_BRIDGE_PROXY_TIMEOUT_MS`            | `30000`              | Non-streaming proxy hop timeout for `/v1` bridge requests.                                                                                                     |
+| `API_BRIDGE_PROXY_TIMEOUT_MS`            | `10000`              | Proxy hop timeout for `/v1` bridge requests.                                                                                                                   |
 | `API_BRIDGE_STREAM_PROXY_TIMEOUT_MS`     | `300000+`            | Proxy hop timeout for streaming chat/responses routes. Defaults to at least 300s and follows longer `STREAM_IDLE_TIMEOUT_MS` / `FETCH_BODY_TIMEOUT_MS` values. |
-| `API_BRIDGE_SERVER_REQUEST_TIMEOUT_MS`   | `300000`             | Overall server request timeout for the bridge.                                                                                                                 |
+| `API_BRIDGE_SERVER_REQUEST_TIMEOUT_MS`   | `10000`              | Overall server request timeout for the bridge.                                                                                                                 |
 | `API_BRIDGE_SERVER_HEADERS_TIMEOUT_MS`   | `60000`              | Time to send response headers via the bridge.                                                                                                                  |
 | `API_BRIDGE_SERVER_KEEPALIVE_TIMEOUT_MS` | `5000`               | Bridge keep-alive idle timeout.                                                                                                                                |
 | `API_BRIDGE_SERVER_SOCKET_TIMEOUT_MS`    | `0`                  | Raw socket timeout (0 = disabled).                                                                                                                             |
@@ -708,10 +707,10 @@ Automatic model pricing data synchronization from external sources.
 
 ## Arena ELO Sync
 
-| Variable                  | Default       | Source File               | Description                                                                 |
-| ------------------------- | ------------- | ------------------------- | --------------------------------------------------------------------------- |
-| `ARENA_ELO_SYNC_ENABLED`  | `true`        | `src/lib/arenaEloSync.ts` | Periodic Arena AI leaderboard ELO sync (on by default; `false` to opt out). |
-| `ARENA_ELO_SYNC_INTERVAL` | `86400` (24h) | `src/lib/arenaEloSync.ts` | Sync interval in seconds.                                                   |
+| Variable                  | Default       | Source File                                      | Description                                                                                                   |
+| ------------------------- | ------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `ARENA_ELO_SYNC_ENABLED`  | `true`        | `src/shared/constants/featureFlagDefinitions.ts` | Periodic Arena AI leaderboard ELO sync, configurable from Dashboard Feature Flags or with `false` to opt out. |
+| `ARENA_ELO_SYNC_INTERVAL` | `86400` (24h) | `src/lib/arenaEloSync.ts`                        | Sync interval in seconds.                                                                                     |
 
 ---
 

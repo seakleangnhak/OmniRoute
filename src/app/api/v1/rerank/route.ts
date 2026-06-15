@@ -1,5 +1,6 @@
 import { handleRerank } from "@omniroute/open-sse/handlers/rerank.ts";
 import { getProviderCredentials, clearRecoveredProviderState } from "@/sse/services/auth";
+import { withInjectionGuard } from "@/middleware/promptInjectionGuard";
 import { parseRerankModel, getRerankProvider } from "@omniroute/open-sse/config/rerankRegistry.ts";
 import { errorResponse } from "@omniroute/open-sse/utils/error.ts";
 import { HTTP_STATUS } from "@omniroute/open-sse/config/constants.ts";
@@ -49,10 +50,9 @@ function buildDynamicRerankProvider(node: any) {
  * Supports cloud providers (Cohere, Together, NVIDIA, Fireworks)
  * and local provider_nodes (oMLX, vLLM, etc.) via dynamic routing.
  */
-export async function POST(request) {
+async function postHandler(request) {
   const authRejection = await enforceClientApiAuth(request);
   if (authRejection) return authRejection;
-
   let rawBody;
   try {
     rawBody = await request.json();
@@ -186,3 +186,5 @@ export async function POST(request) {
     `Invalid rerank model: ${body.model}. Use format: provider/model`
   );
 }
+
+export const POST = withInjectionGuard(postHandler);

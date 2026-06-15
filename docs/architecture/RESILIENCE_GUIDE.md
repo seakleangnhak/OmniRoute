@@ -144,6 +144,22 @@ Provider-specific stealth (JA3/JA4, CCH, obfuscation) is separately documented �
 
 ---
 
+## Resilience testing (Fase 8 · Bloco C)
+
+Além dos unit tests da lógica de resiliência, três testes exercitam o runtime sob
+estresse/falha real (todos integração/nightly — nenhum bloqueia PR):
+
+| Teste       | O quê                                                                                                                                                                   | Rodar                                    |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Chaos       | Fake-upstream node injeta latência/reset/timeout/503 reais; valida que o circuit breaker abre/recupera e `checkFallbackError` classifica 503 como fallback recuperável. | `RUN_CHAOS_INT=1 npm run test:chaos`     |
+| Heap-growth | ~500 streams por `createSSEStream` sob `--expose-gc`; falha se o heap crescer além do teto (guarda OOM #3069).                                                          | `npm run test:heap`                      |
+| k6 soak     | Carga sustentada contra `/api/monitoring/health`; thresholds p95/erro.                                                                                                  | `k6 run tests/load/k6-soak.js` (nightly) |
+
+Orquestrados por `.github/workflows/nightly-resilience.yml` (cron + dispatch). No
+`test:integration` default, chaos e heap se auto-skipam (sem `RUN_CHAOS_INT`/`--expose-gc`).
+
+---
+
 ## See Also
 
 - [Architecture Guide](./ARCHITECTURE.md) — System architecture and internals

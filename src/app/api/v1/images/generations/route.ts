@@ -1,4 +1,5 @@
 import { handleImageGeneration } from "@omniroute/open-sse/handlers/imageGeneration.ts";
+import { withInjectionGuard } from "@/middleware/promptInjectionGuard";
 import { getProviderCredentials, clearRecoveredProviderState } from "@/sse/services/auth";
 import {
   parseImageModel,
@@ -252,7 +253,7 @@ export function shouldRetryImageGenerationWithNextAccount(
   return status === HTTP_STATUS.FORBIDDEN && /\b(?:sentinel|turnstile)\b/i.test(message);
 }
 
-export async function POST(request: Request) {
+async function postHandler(request: Request) {
   const authRejection = await enforceClientApiAuth(request);
   if (authRejection) return authRejection;
 
@@ -447,3 +448,5 @@ export async function POST(request: Request) {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+export const POST = withInjectionGuard(postHandler);

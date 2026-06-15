@@ -1,4 +1,5 @@
 import { handleMusicGeneration } from "@omniroute/open-sse/handlers/musicGeneration.ts";
+import { withInjectionGuard } from "@/middleware/promptInjectionGuard";
 import { getProviderCredentials, clearRecoveredProviderState } from "@/sse/services/auth";
 import {
   parseMusicModel,
@@ -55,10 +56,9 @@ export async function GET() {
 /**
  * POST /v1/music/generations — generate music
  */
-export async function POST(request) {
+async function postHandler(request) {
   const authRejection = await enforceClientApiAuth(request);
   if (authRejection) return authRejection;
-
   let rawBody;
   try {
     rawBody = await request.json();
@@ -124,3 +124,5 @@ export async function POST(request) {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+export const POST = withInjectionGuard(postHandler);

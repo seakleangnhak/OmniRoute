@@ -1,6 +1,7 @@
 import { handleChat } from "@/sse/handlers/chat";
 import { initTranslators } from "@omniroute/open-sse/translator/index.ts";
 import { enforceClientApiAuth } from "../_helpers/clientApiAuth";
+import { withInjectionGuard } from "@/middleware/promptInjectionGuard";
 
 let initialized = false;
 
@@ -30,10 +31,11 @@ export async function OPTIONS() {
 /**
  * POST /v1/messages - Claude format (auto convert via handleChat)
  */
-export async function POST(request) {
+async function postHandler(request) {
   const authRejection = await enforceClientApiAuth(request);
   if (authRejection) return authRejection;
-
   await ensureInitialized();
   return await handleChat(request);
 }
+
+export const POST = withInjectionGuard(postHandler);
