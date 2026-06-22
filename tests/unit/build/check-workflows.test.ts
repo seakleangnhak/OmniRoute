@@ -17,13 +17,22 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-// @ts-expect-error — .mjs helper has no type declarations; runtime shape is known.
 import {
   parseActionlintOutput,
   parseZizmorOutput,
   collectWorkflowFiles,
   isBinaryAvailable,
+  evaluateZizmorRatchet,
+  readBaselineZizmorValue,
+  // @ts-expect-error — .mjs helper has no type declarations; runtime shape is known.
 } from "../../../scripts/check/check-workflows.mjs";
+
+type RatchetVerdict = { regressed: boolean; improved: boolean };
+const evaluateZizmor = evaluateZizmorRatchet as (
+  current: number,
+  baseline: number
+) => RatchetVerdict;
+const readZizmorBaseline = readBaselineZizmorValue as (p?: string) => number | null;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // parseActionlintOutput
@@ -226,4 +235,76 @@ test("isBinaryAvailable: returns boolean (not null/undefined)", () => {
 test("isBinaryAvailable: node is available (sanity check for test environment)", () => {
   // node must be in PATH for this test suite to even run.
   assert.equal(isBinaryAvailable("node"), true);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// evaluateZizmorRatchet — ratchet direction:down, zizmorFindings ONLY (Etapa 2)
+// Regression when measured > baseline. actionlint is reported, not ratcheted.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("evaluateZizmorRatchet: measured == baseline passes (192 vs 192)", () => {
+  const r = evaluateZizmor(192, 192);
+  assert.equal(r.regressed, false);
+  assert.equal(r.improved, false);
+});
+
+test("evaluateZizmorRatchet: one more than baseline is a regression (193 vs 192)", () => {
+  const r = evaluateZizmor(193, 192);
+  assert.equal(r.regressed, true, "a single new zizmor finding must block");
+  assert.equal(r.improved, false);
+});
+
+test("evaluateZizmorRatchet: fewer than baseline is an improvement (190 vs 192)", () => {
+  const r = evaluateZizmor(190, 192);
+  assert.equal(r.regressed, false);
+  assert.equal(r.improved, true);
+});
+
+test("evaluateZizmorRatchet: strict integer comparison — any increase regresses", () => {
+  assert.equal(evaluateZizmor(193, 192).regressed, true);
+  assert.equal(evaluateZizmor(192, 192).regressed, false);
+  assert.equal(evaluateZizmor(191, 192).regressed, false);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// readBaselineZizmorValue — tolerant read of quality-baseline.json
+// ─────────────────────────────────────────────────────────────────────────────
+
+function withTmpBaseline(content: string | null, fn: (p: string) => void) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "workflows-baseline-"));
+  const p = path.join(dir, "quality-baseline.json");
+  if (content !== null) fs.writeFileSync(p, content);
+  try {
+    fn(p);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("readBaselineZizmorValue: reads metrics.zizmorFindings.value", () => {
+  withTmpBaseline(JSON.stringify({ metrics: { zizmorFindings: { value: 192 } } }), (p) => {
+    assert.equal(readZizmorBaseline(p), 192);
+  });
+});
+
+test("readBaselineZizmorValue: missing file returns null (graceful SKIP)", () => {
+  assert.equal(readZizmorBaseline("/tmp/does-not-exist-88888/quality-baseline.json"), null);
+});
+
+test("readBaselineZizmorValue: missing metric returns null", () => {
+  withTmpBaseline(JSON.stringify({ metrics: {} }), (p) => {
+    assert.equal(readZizmorBaseline(p), null);
+  });
+});
+
+test("readBaselineZizmorValue: non-numeric value returns null", () => {
+  withTmpBaseline(JSON.stringify({ metrics: { zizmorFindings: { value: "192" } } }), (p) => {
+    assert.equal(readZizmorBaseline(p), null);
+  });
+});
+
+test("readBaselineZizmorValue: invalid JSON returns null (does not throw)", () => {
+  withTmpBaseline("{ broken", (p) => {
+    assert.equal(readZizmorBaseline(p), null);
+  });
 });

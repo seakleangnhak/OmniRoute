@@ -1,5 +1,5 @@
 /**
- * Single-use, short-lived tickets for the public "Adicionar Externo" Codex link.
+ * Single-use, short-lived tickets for the public external Codex connection link.
  *
  * The dashboard generates a ticket and shares a public URL
  * (`/connect/codex/{token}`). A third party opens it and completes the Codex

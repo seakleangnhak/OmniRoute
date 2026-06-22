@@ -214,7 +214,7 @@ export default function ProviderCatalog({
             data-testid={`filter-${kind}`}
           >
             {kind === "all"
-              ? `Todos (${providers.length})`
+              ? `All (${providers.length})`
               : kind === "search"
                 ? `Search (${searchCount})`
                 : `Fetch (${fetchCount})`}
@@ -224,9 +224,9 @@ export default function ProviderCatalog({
 
       {filtered.length === 0 && (
         <div className="text-xs text-text-muted py-4 text-center">
-          Nenhum provider encontrado.{" "}
+          No provider found.{" "}
           <Link href="/dashboard/providers" className="text-accent hover:underline">
-            Configurar providers →
+            Configure providers →
           </Link>
         </div>
       )}

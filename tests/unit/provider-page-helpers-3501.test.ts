@@ -202,9 +202,10 @@ test("getCodexRequestDefaults returns reasoningEffort (transitive import guard)"
   assert.equal(typeof result.reasoningEffort, "string");
 });
 
-test("getClaudeCodeCompatibleRequestDefaults returns context1m boolean", () => {
+test("getClaudeCodeCompatibleRequestDefaults returns CC-compatible booleans", () => {
   const result = getClaudeCodeCompatibleRequestDefaults(null);
   assert.equal(typeof result.context1m, "boolean");
+  assert.equal(typeof result.redactThinking, "boolean");
 });
 
 test("compatProtocolLabelKey maps protocol strings to i18n keys", () => {

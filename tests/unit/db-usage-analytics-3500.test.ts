@@ -115,6 +115,21 @@ test("#3500 buildUnifiedSource — raw-only branch when sinceIso is recent", () 
   assert.ok("since" in result.unifiedParams, "unifiedParams has since key");
 });
 
+test("#3500 buildUnifiedSource — raw-only branch for same cutoff date ISO", () => {
+  const rawCutoffDate = "2026-06-21";
+  const result = mod.buildUnifiedSource({
+    sinceIso: "2026-06-21T01:00:00.000Z",
+    untilIso: null,
+    rawCutoffDate,
+    apiKeyWhere: "",
+    apiKeyParams: {},
+  });
+
+  assert.ok(!result.unifiedSource.includes("daily_usage_summary"), "no same-day agg table");
+  assert.equal(result.unifiedParams.since, "2026-06-21T01:00:00.000Z");
+  assert.ok(!("rawCutoffDate" in result.unifiedParams), "rawCutoffDate not needed");
+});
+
 // ---------------------------------------------------------------------------
 // buildUnifiedSource — UNION branch (agg needed)
 // ---------------------------------------------------------------------------

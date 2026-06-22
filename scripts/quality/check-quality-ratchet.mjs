@@ -12,8 +12,12 @@ function getArg(name, fallback) {
   const i = process.argv.indexOf(name);
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
-const BASELINE = path.resolve(getArg("--baseline", path.join(cwd, "quality-baseline.json")));
-const METRICS = path.resolve(getArg("--metrics", path.join(cwd, "quality-metrics.json")));
+const BASELINE = path.resolve(
+  getArg("--baseline", path.join(cwd, "config/quality/quality-baseline.json"))
+);
+const METRICS = path.resolve(
+  getArg("--metrics", path.join(cwd, "config/quality/quality-metrics.json"))
+);
 const SUMMARY = getArg("--summary", null);
 const UPDATE = process.argv.includes("--update");
 // --allow-missing: pula métricas do baseline ausentes do metrics (em vez de falhar).
@@ -55,8 +59,9 @@ for (const [key, spec] of Object.entries(baseline.metrics)) {
   const tightenSlack = spec.tightenSlack !== undefined ? spec.tightenSlack : eps;
 
   if (current === undefined) {
-    if (ALLOW_MISSING) {
-      rows.push([key, base, "—", "SKIP (ausente)"]);
+    if (ALLOW_MISSING || spec.dedicatedGate === true) {
+      const reason = spec.dedicatedGate === true ? "SKIP (dedicated gate)" : "SKIP (ausente)";
+      rows.push([key, base, "—", reason]);
     } else {
       failures.push(`métrica "${key}" ausente em ${path.basename(METRICS)}`);
       rows.push([key, base, "—", "MISSING"]);

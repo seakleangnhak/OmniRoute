@@ -22,7 +22,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const ROOT = process.cwd();
-const ALLOWLIST_PATH = path.join(ROOT, ".license-allowlist.json");
+const ALLOWLIST_PATH = path.join(ROOT, "config/quality/.license-allowlist.json");
 const CHECKER_BIN = path.join(ROOT, "node_modules", ".bin", "license-checker-rseidelsohn");
 
 const VERBOSE = process.argv.includes("--verbose");

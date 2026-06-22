@@ -60,7 +60,7 @@ test("6A.8: discoverManifests does NOT include node_modules, .next, or deep refe
 });
 
 test("6A.8: all workspace package deps are in the allowlist (gate exits 0 with expanded scope)", () => {
-  const allowlistPath = path.join(repoRoot, "dependency-allowlist.json");
+  const allowlistPath = path.join(repoRoot, "config/quality/dependency-allowlist.json");
   const allowlist = new Set(JSON.parse(fs.readFileSync(allowlistPath, "utf8")).allowed || []);
   const manifests = discoverManifests(repoRoot);
   const allDeps: string[] = [];

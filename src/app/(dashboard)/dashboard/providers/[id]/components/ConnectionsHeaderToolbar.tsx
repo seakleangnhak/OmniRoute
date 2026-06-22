@@ -289,7 +289,7 @@ export default function ConnectionsHeaderToolbar({
                     icon="menu_book"
                     onClick={() => onOpenCodexCliGuide()}
                   >
-                    Codex CLI Guide
+                    {providerText(t, "codexCliGuideButton", "Codex CLI Guide")}
                   </Button>
                 )}
                 {providerId === "codex" && (
@@ -299,7 +299,7 @@ export default function ConnectionsHeaderToolbar({
                     icon="share"
                     onClick={() => gateConnectionFlow(openExternalLinkFlow)}
                   >
-                    Adicionar Externo
+                    {providerText(t, "codexExternalLinkButton", "External Codex link")}
                   </Button>
                 )}
                 {providerId === "codex" && (

@@ -15,7 +15,7 @@ const ROOT = process.cwd();
 const BASELINE_PATH = path.resolve(
   process.argv.includes("--baseline")
     ? process.argv[process.argv.indexOf("--baseline") + 1]
-    : path.join(ROOT, "duplication-baseline.json")
+    : path.join(ROOT, "config/quality/duplication-baseline.json")
 );
 const UPDATE = process.argv.includes("--update");
 const EPS = 0.05; // tolerância de ruído de float (jscpd é determinístico; isto é margem)

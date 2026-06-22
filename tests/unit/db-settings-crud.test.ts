@@ -66,6 +66,7 @@ test("getSettings exposes defaults and updateSettings persists typed values", as
   assert.equal(defaults.cloudEnabled, true);
   assert.equal(defaults.requireLogin, true);
   assert.deepEqual(defaults.hiddenSidebarItems, []);
+  assert.deepEqual(defaults.hiddenSidebarGroupLabels, []);
   assert.equal(defaults.idempotencyWindowMs, 5000);
   assert.equal(defaults.requestRetry, 3);
   assert.equal(defaults.maxRetryIntervalSec, 30);

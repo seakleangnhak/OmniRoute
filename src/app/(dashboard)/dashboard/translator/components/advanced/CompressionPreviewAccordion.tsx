@@ -109,7 +109,7 @@ function CompressionPreviewContent({ inputContent = "" }: { inputContent?: strin
           </span>
           <span>
             {t("compressionEmptyHint") ||
-              "Preencha o campo de entrada na aba Translate (Simple Controls ou Raw JSON) para habilitar o preview."}
+              "Fill in the input field on the Translate tab (Simple Controls or Raw JSON) to enable the preview."}
           </span>
         </div>
       )}
@@ -121,7 +121,7 @@ function CompressionPreviewContent({ inputContent = "" }: { inputContent?: strin
           onChange={(e) => setCompressionMode(e.target.value)}
           options={COMPRESSION_MODES}
           className="text-sm"
-          aria-label={t("compressionModeLabel") || "Modo de compressão"}
+          aria-label={t("compressionModeLabel") || "Compression mode"}
         />
         <Button
           icon="play_arrow"

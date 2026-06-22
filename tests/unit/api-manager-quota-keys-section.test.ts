@@ -1,7 +1,7 @@
 /**
  * tests/unit/api-manager-quota-keys-section.test.ts
  *
- * Source-level assertions for the API Manager "two separate tables" layout:
+ * Source-level assertions for the API Keys "two separate tables" layout:
  * quota keys (allowedQuotas non-empty) render in their own section, visually
  * differentiated from normal keys (QUOTA pill + group chips + qtSd-only mode).
  * Pattern mirrors api-manager-page-static.test.ts (source-scan + i18n parity).

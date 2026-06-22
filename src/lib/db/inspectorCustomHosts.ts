@@ -3,8 +3,8 @@
  * CRUD operations for inspector_custom_hosts table.
  */
 
-import { getDbInstance } from "./core";
-import type { InspectorCustomHostRow } from "./_rowTypes";
+import { getDbInstance } from "./core.ts";
+import type { InspectorCustomHostRow } from "./_rowTypes.ts";
 
 // SQLite stores booleans as integers
 interface InspectorCustomHostDbRow {

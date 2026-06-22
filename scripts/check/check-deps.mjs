@@ -29,7 +29,7 @@ import { execFileSync } from "node:child_process";
 import { assertNoStale } from "./lib/allowlist.mjs";
 
 const ROOT = process.cwd();
-const ALLOWLIST_PATH = path.join(ROOT, "dependency-allowlist.json");
+const ALLOWLIST_PATH = path.join(ROOT, "config/quality/dependency-allowlist.json");
 
 // Directories to exclude when discovering package.json files.
 // Using a set of path segment prefixes (relative to ROOT, forward slashes).

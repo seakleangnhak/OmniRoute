@@ -8,7 +8,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 // @ts-expect-error — .mjs helper has no type declarations; runtime shape is known.
-import { parseCodeQLAlerts } from "../../../scripts/check/check-codeql-ratchet.mjs";
+import {
+  parseCodeQLAlerts,
+  evaluateCodeqlRatchet,
+} from "../../../scripts/check/check-codeql-ratchet.mjs";
+
+type RatchetVerdict = { regressed: boolean; improved: boolean };
+const evaluate = evaluateCodeqlRatchet as (current: number, baseline: number) => RatchetVerdict;
 
 // ---------------------------------------------------------------------------
 // Fixtures — synthetic GitHub code-scanning/alerts API responses
@@ -282,4 +288,40 @@ test("parseCodeQLAlerts: dismissed com mesmo ruleId que open — dismissed não 
   const result = parseCodeQLAlerts(alerts);
   assert.equal(result.alertCount, 1);
   assert.equal(result.byRule["js/sql-injection"], 1, "only the open alert should appear in byRule");
+});
+
+// ---------------------------------------------------------------------------
+// evaluateCodeqlRatchet — ratchet direction:down (Task 7.3 promote to blocking)
+// Mirror of evaluateDeadCode: regression when measured > baseline; the baseline
+// is 0 (clean), so ANY open CodeQL alert is a regression that blocks.
+// ---------------------------------------------------------------------------
+
+test("evaluateCodeqlRatchet: equal to baseline passes (0 vs 0 — clean)", () => {
+  const r = evaluate(0, 0);
+  assert.equal(r.regressed, false);
+  assert.equal(r.improved, false);
+});
+
+test("evaluateCodeqlRatchet: one more alert than baseline 0 is a regression", () => {
+  const r = evaluate(1, 0);
+  assert.equal(r.regressed, true, "a single new open CodeQL alert must block");
+  assert.equal(r.improved, false);
+});
+
+test("evaluateCodeqlRatchet: fewer alerts than a non-zero baseline is an improvement", () => {
+  const r = evaluate(2, 5);
+  assert.equal(r.regressed, false);
+  assert.equal(r.improved, true);
+});
+
+test("evaluateCodeqlRatchet: zero alerts against a non-zero baseline is a maximum improvement", () => {
+  const r = evaluate(0, 5);
+  assert.equal(r.regressed, false);
+  assert.equal(r.improved, true);
+});
+
+test("evaluateCodeqlRatchet: strict integer comparison — any increase regresses", () => {
+  assert.equal(evaluate(6, 5).regressed, true);
+  assert.equal(evaluate(5, 5).regressed, false);
+  assert.equal(evaluate(4, 5).regressed, false);
 });

@@ -10,6 +10,7 @@ process.env.DATA_DIR = TEST_DATA_DIR;
 
 const core = await import("../../src/lib/db/core.ts");
 const settingsDb = await import("../../src/lib/db/settings.ts");
+const { invalidateDbCache } = await import("../../src/lib/db/readCache.ts");
 const { invalidateCacheControlSettingsCache } =
   await import("../../src/lib/cacheControlSettings.ts");
 const { clearCache } = await import("../../src/lib/semanticCache.ts");
@@ -59,11 +60,22 @@ async function resetStorage() {
   clearInflight();
   clearModelLock();
   core.resetDbInstance();
+  // A full reset must also drop the settings read-cache. Otherwise the cached
+  // value (e.g. call_log_pipeline_enabled=true seeded earlier) survives the DB
+  // wipe and silently masks the fact that the fresh DB has the default. In CI
+  // under load this cache is evicted at unpredictable times, so tests that rely
+  // on the stale cache flake. Make the reset honest and deterministic here.
+  invalidateDbCache("settings");
   fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
 }
 
-test.before(async () => {
+// Re-seed per test, NOT once: every `afterEach` runs resetStorage(), which wipes
+// the DB and drops the settings cache. A run-once `before` only guaranteed the
+// flag for the first test; later tests depended on a stale cache surviving the
+// wipe, which flakes under CI load. beforeEach re-establishes it deterministically.
+test.beforeEach(async () => {
+  await resetStorage();
   await settingsDb.updateSettings({ call_log_pipeline_enabled: true });
 });
 

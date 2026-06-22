@@ -2518,7 +2518,13 @@ test("chatCore returns streaming responses without waiting for upstream completi
 
   const raceResult = await Promise.race([
     invocation.then(() => "returned"),
-    new Promise((resolve) => setTimeout(() => resolve("blocked"), 1000)),
+    // 10s ceiling: a non-buffering streaming impl resolves the invocation as soon
+    // as the Response is returned (upstream still open), but on a starved CI event
+    // loop that legitimate early return can exceed a 1s wall-clock budget (flake
+    // repro: 5/8 runs returned at 1.3–2.2s under CPU contention → false "blocked").
+    // The ceiling only bounds the buffered-failure case: a buffering impl never
+    // resolves until closeUpstream() fires below, so it still trips "blocked".
+    new Promise((resolve) => setTimeout(() => resolve("blocked"), 10000)),
   ]);
 
   if (raceResult !== "returned") {

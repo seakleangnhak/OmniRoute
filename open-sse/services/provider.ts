@@ -6,6 +6,7 @@ import {
   CLAUDE_CODE_COMPATIBLE_DEFAULT_CHAT_PATH,
   joinClaudeCodeCompatibleUrl,
 } from "./claudeCodeCompatible.ts";
+import { getClaudeCodeCompatibleRequestDefaults } from "@/lib/providers/requestDefaults";
 
 const OPENAI_COMPATIBLE_PREFIX = "openai-compatible-";
 const OPENAI_COMPATIBLE_DEFAULTS = {
@@ -122,6 +123,15 @@ export function detectFormatFromEndpoint(body, endpointPath = "") {
 
   if (/\/messages(?=\/|$)/i.test(path) || /^messages(?=\/|$)/i.test(path)) {
     return "claude";
+  }
+
+  // Antigravity/cloudcode-compatible inbound endpoint (D4): the AgentBridge
+  // proxy forwards the IDE's cloudcode envelope here. Path-based detection
+  // (mirrors /messages → claude) makes the pipeline translate the request
+  // antigravity→openai and the response openai→antigravity, so the IDE gets
+  // a cloudcode reply regardless of which provider actually served it.
+  if (/\/antigravity(?=\/|:|$)/i.test(path) || /^antigravity(?=\/|:|$)/i.test(path)) {
+    return "antigravity";
   }
 
   if (
@@ -341,10 +351,14 @@ export function buildProviderHeaders(provider, credentials, stream = true, body 
   // Specific override for Anthropic Compatible
   if (isClaudeCodeCompatible(provider)) {
     const token = credentials.apiKey || credentials.accessToken || "";
+    const ccRequestDefaults = getClaudeCodeCompatibleRequestDefaults(
+      credentials?.providerSpecificData
+    );
     return buildClaudeCodeCompatibleHeaders(
       token,
       stream,
-      credentials?.providerSpecificData?.ccSessionId
+      credentials?.providerSpecificData?.ccSessionId,
+      { redactThinking: ccRequestDefaults.redactThinking === true }
     );
   }
   if (isAnthropicCompatible(provider)) {

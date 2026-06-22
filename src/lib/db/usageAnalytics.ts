@@ -60,16 +60,14 @@ export interface UnifiedSourceResult {
  */
 export function buildUnifiedSource(opts: BuildUnifiedSourceOptions): UnifiedSourceResult {
   const { sinceIso, untilIso, rawCutoffDate, apiKeyWhere, apiKeyParams } = opts;
+  const sinceDate = sinceIso?.split("T")[0] ?? null;
 
-  // daily_usage_summary rows are included only when the query window extends
-  // before rawCutoffDate AND no api_key filter is active (summary rows don't
-  // carry api_key/connection, so including them under a key filter leaks usage).
-  const needsAggregated = (!sinceIso || sinceIso < rawCutoffDate) && !apiKeyWhere;
+  // Include summaries only when the window starts before rawCutoffDate and no api_key filter is active.
+  const needsAggregated = (!sinceDate || sinceDate < rawCutoffDate) && !apiKeyWhere;
 
   const unifiedParams: AnalyticsParams = {};
 
-  // Raw leg lower bound: when agg rows are also included, floor at rawCutoffDate
-  // so the two legs never overlap (prevents double-counting).
+  // Floor raw rows at rawCutoffDate when summary rows are included to avoid double-counting.
   const rawConditions: string[] = [];
   if (needsAggregated) {
     rawConditions.push("timestamp >= @rawCutoff");
@@ -93,7 +91,7 @@ export function buildUnifiedSource(opts: BuildUnifiedSourceOptions): UnifiedSour
   if (needsAggregated) {
     if (sinceIso) {
       aggConditions.push("date >= @sinceDate");
-      unifiedParams.sinceDate = sinceIso.split("T")[0];
+      unifiedParams.sinceDate = sinceDate!;
     }
     if (untilIso) {
       aggConditions.push("date <= @untilDate");
@@ -161,8 +159,9 @@ export function buildUnifiedSource(opts: BuildUnifiedSourceOptions): UnifiedSour
  */
 export function buildPresetUnifiedSource(opts: BuildUnifiedSourceOptions): UnifiedSourceResult {
   const { sinceIso, untilIso, rawCutoffDate, apiKeyWhere, apiKeyParams } = opts;
+  const sinceDate = sinceIso?.split("T")[0] ?? null;
 
-  const needsAggregated = (!sinceIso || sinceIso < rawCutoffDate) && !apiKeyWhere;
+  const needsAggregated = (!sinceDate || sinceDate < rawCutoffDate) && !apiKeyWhere;
 
   const presetParams: AnalyticsParams = {};
 
@@ -184,7 +183,7 @@ export function buildPresetUnifiedSource(opts: BuildUnifiedSourceOptions): Unifi
   if (needsAggregated) {
     if (sinceIso) {
       aggConditions.push("date >= @presetSinceDate");
-      presetParams.presetSinceDate = sinceIso.split("T")[0];
+      presetParams.presetSinceDate = sinceDate!;
     }
     aggConditions.push("date < @presetRawCutoffDate");
     presetParams.presetRawCutoffDate = rawCutoffDate;

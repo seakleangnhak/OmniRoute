@@ -1,18 +1,18 @@
 ---
 title: "OmniRoute MCP Server Documentation"
-version: 3.8.8
-lastUpdated: 2026-05-30
+version: 3.8.31
+lastUpdated: 2026-06-20
 ---
 
 # OmniRoute MCP Server Documentation
 
-> Model Context Protocol server with 43 tools across routing, cache, compression, memory, skills, proxy, and context source operations.
+> Model Context Protocol server with 87 tools across routing, cache, compression, memory, skills, proxy, and context source operations.
 >
-> Source of truth: `open-sse/mcp-server/schemas/tools.ts` (30 tools) + `open-sse/mcp-server/tools/memoryTools.ts` (3 tools) + `open-sse/mcp-server/tools/skillTools.ts` (4 tools) + `open-sse/mcp-server/tools/notionTools.ts` (6 tools). Tool registration and scope wiring lives in `open-sse/mcp-server/server.ts`.
+> Source of truth: `open-sse/mcp-server/schemas/tools.ts` (33 base) + `memoryTools.ts` (3) + `skillTools.ts` (4) + `agentSkillTools.ts` (3) + `gamificationTools.ts` (8) + `pluginTools.ts` (8) + `notionTools.ts` (6) + `obsidianTools.ts` (22) = **87** (`TOTAL_MCP_TOOL_COUNT`). Tool registration and scope wiring lives in `open-sse/mcp-server/server.ts`.
 
-![MCP tool inventory (43 tools by category)](../diagrams/exported/mcp-tools-43.svg)
+![MCP tool inventory (87 tools by category)](../diagrams/exported/mcp-tools-87.svg)
 
-> Source: [diagrams/mcp-tools-43.mmd](../diagrams/mcp-tools-43.mmd) (regenerate via `npm run docs:render-diagrams`).
+> Source: [diagrams/mcp-tools-87.mmd](../diagrams/mcp-tools-87.mmd) (regenerate via `npm run docs:render-diagrams`).
 
 ## Installation
 
@@ -46,7 +46,7 @@ The active HTTP transport (`sse` or `streamable-http`) is selected by the `mcpTr
 `/api/mcp/*` is in the LOCAL_ONLY tier (`src/server/authz/routeGuard.ts`) — by default only loopback hosts (`localhost`, `127.0.0.1`, `::1`) can reach it. Since v3.8.2, non-loopback clients may connect if they present an `Authorization: Bearer <api-key>` whose key carries the `manage` scope. This is the only way to reach the remote MCP server through a tunnel, reverse proxy, or public hostname.
 
 ```bash
-# Grant manage scope: open the dashboard API Manager and toggle
+# Grant manage scope: open the dashboard API Keys page and toggle
 # "Management Access" on the key, or POST scopes:["manage"] when creating.
 
 # Then connect from a remote MCP client:
@@ -217,7 +217,7 @@ See [AGENT-SKILLS.md](./AGENT-SKILLS.md) for the full catalog and how external a
 
 ## Related Frameworks (v3.8.0)
 
-The MCP tool inventory above (43 tools = 30 core + 3 memory + 4 skills + 6 notion) is intentionally
+The MCP tool inventory above (87 tools = 33 core + 3 memory + 4 skills + 3 agent-skills + 8 gamification + 8 plugins + 6 notion + 22 obsidian) is intentionally
 scoped to runtime routing/cache/compression/memory/skills/proxy/context-source operations. Two adjacent
 frameworks ship alongside the MCP server in v3.8.0 and are documented separately:
 
@@ -310,6 +310,8 @@ Wildcard scopes are supported: `read:*` grants all read-scopes, `*` grants full 
 | `OMNIROUTE_MCP_SCOPES`                  | (empty)                            | Comma-separated allowlist of scopes considered "available" by default (used when caller does not provide its own scopes) |
 | `OMNIROUTE_MCP_COMPRESS_DESCRIPTIONS`   | (unset = on)                       | When set to `0/false/off/no`, disables MCP description compression at registration time                                  |
 | `OMNIROUTE_MCP_DESCRIPTION_COMPRESSION` | (unset = on)                       | Alternate alias for the same toggle as above                                                                             |
+| `MCP_TOOL_DENY`                         | (unset = no filter)                | Comma-separated tool names to drop from `tools/list` (tool-cardinality reduction — see below)                            |
+| `MCP_TOOL_ALLOW`                        | (unset = no filter)                | Comma-separated tool names to keep exclusively (allow-list mode — see below)                                             |
 | `DATA_DIR`                              | `~/.omniroute`                     | Heartbeat file is written to `${DATA_DIR}/runtime/mcp-heartbeat.json`                                                    |
 
 ---
@@ -322,6 +324,33 @@ MCP tool, prompt, and resource registries can compress descriptions at registrat
 - Toggle per-deployment via the `compression.mcpDescriptionCompressionEnabled` value in the `key_value` settings table (default: enabled) — exposed in the UI as **Analytics → MCP description compression**.
 - Toggle process-wide via either `OMNIROUTE_MCP_COMPRESS_DESCRIPTIONS=false` or `OMNIROUTE_MCP_DESCRIPTION_COMPRESSION=false`.
 - Realtime stats are surfaced via `omniroute_compression_status` under `analytics.mcpDescriptionCompression` and tagged `source: "mcp_metadata_estimate"` to disambiguate from real provider usage receipts.
+
+---
+
+## Tool Cardinality Reduction (F4.3)
+
+Description compression shrinks each tool's metadata; **tool-cardinality reduction** goes one step further by reducing _how many_ tools are announced at all. Advertising fewer tools in the `tools/list` manifest cuts the per-request token cost the client's model pays for the tool catalog ("layer 5" compression). The implementation is a pure, stateless filter in `open-sse/mcp-server/toolCardinality.ts` (`reduceToolManifest`), wired into the registration loop in `createMcpServer()` (`open-sse/mcp-server/server.ts`).
+
+**Opt-in, off by default.** The filter only runs when at least one of two environment variables is set; with neither set, all 87 tools are announced unchanged.
+
+| Variable         | Mode                                                                                    |
+| :--------------- | :-------------------------------------------------------------------------------------- |
+| `MCP_TOOL_DENY`  | Blacklist — comma-separated tool names that are always dropped from `tools/list`        |
+| `MCP_TOOL_ALLOW` | Allow-list — comma-separated tool names; only these survive, everything else is dropped |
+
+`deny` takes priority over `allow`. Names are comma-separated, trimmed, and empty entries are ignored. Examples:
+
+```bash
+# Drop two tools from the catalog
+MCP_TOOL_DENY="omniroute_get_health,omniroute_list_combos" omniroute --mcp
+
+# Announce only the routing + quota tools (allow-list mode)
+MCP_TOOL_ALLOW="omniroute_route_request,omniroute_check_quota" omniroute --mcp
+```
+
+**How filtered tools are removed:** registration always succeeds; a tool the profile rejects is then `.disable()`d on the MCP SDK handle, so it never appears in `tools/list` but the wiring stays intact (clean enable/disable, no re-registration). The profile parser is `readMcpToolProfileFromEnv(process.env)`, which returns `null` (no filtering) when both vars are empty.
+
+The richer `ToolProfile` shape behind `reduceToolManifest` also supports scope-intersection filtering (`allowScopes`, with `read:*`-style wildcard matching) and a deterministic `maxTools` cap, but those two knobs need the full manifest at registration time and are **not** exposed through the environment variables today (a `tools/list`-level hook is a tracked follow-up). `estimateManifestTokens()` is available to compare the manifest token cost before and after reduction.
 
 ---
 

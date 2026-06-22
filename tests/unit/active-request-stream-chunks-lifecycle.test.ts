@@ -547,7 +547,65 @@ test("createRequestLogger and trackPendingRequest with matching model propagate 
   assert.equal(apiChunks?.provider[0], 'data: {"chunk":"hello"}');
 });
 
-test("streamChunks in completedDetails survives 5-second TTL window", async () => {
+test("finalizePendingRequestById completes the exact stream when same model requests overlap", () => {
+  usageHistory.clearPendingRequests();
+
+  const model = "gpt-4";
+  const provider = "openai";
+  const connectionId = "conn-overlap-1";
+
+  const firstId = usageHistory.trackPendingRequest(model, provider, connectionId, true, {
+    clientRequest: { messages: [{ role: "user", content: "first" }] },
+  });
+  const secondId = usageHistory.trackPendingRequest(model, provider, connectionId, true, {
+    clientRequest: { messages: [{ role: "user", content: "second" }] },
+  });
+
+  const completed = usageHistory.finalizePendingRequestById(firstId, {
+    providerResponse: { id: "first-response" },
+    clientResponse: { id: "first-response" },
+  });
+
+  assert.equal(completed, true);
+  assert.ok(usageHistory.getCompletedDetails().has(firstId));
+  assert.equal(usageHistory.getCompletedDetails().has(secondId), false);
+  assert.equal(usageHistory.getPendingById().has(firstId), false);
+  assert.equal(usageHistory.getPendingById().has(secondId), true);
+
+  const pending = usageHistory.getPendingRequests();
+  const details = pending.details[connectionId]?.[`${model} (${provider})`] ?? [];
+  assert.equal(details.length, 1);
+  assert.equal(details[0].id, secondId);
+  assert.equal(pending.byModel[`${model} (${provider})`], 1);
+  assert.equal(pending.byAccount[connectionId]?.[`${model} (${provider})`], 1);
+});
+
+test("completedDetails cache evicts oldest entries when bounded", () => {
+  usageHistory.clearPendingRequests();
+
+  const model = "gpt-4";
+  const provider = "openai";
+  const connectionId = "conn-completed-bound";
+  const ids: string[] = [];
+
+  for (let i = 0; i < 260; i++) {
+    const id = usageHistory.trackPendingRequest(model, provider, connectionId, true);
+    ids.push(id!);
+    const completed = usageHistory.finalizePendingRequestById(id, {
+      clientResponse: { choices: [{ message: { content: `done ${i}` } }] },
+    });
+    assert.equal(completed, true);
+  }
+
+  assert.ok(
+    usageHistory.getCompletedDetails().size <= 256,
+    "completedDetails should remain bounded"
+  );
+  assert.equal(usageHistory.getCompletedDetails().has(ids[0]), false);
+  assert.equal(usageHistory.getCompletedDetails().has(ids[ids.length - 1]), true);
+});
+
+test("streamChunks in completedDetails survives beyond the logs polling window", async () => {
   usageHistory.clearPendingRequests();
 
   const model = "gpt-4";
@@ -584,10 +642,9 @@ test("streamChunks in completedDetails survives 5-second TTL window", async () =
     "streamChunks should be in completedDetails"
   );
 
-  // The completedDetails TTL is 5000ms. We verify by saving to DB first, then
-  // waiting for the TTL to expire, then verifying the data is gone from
-  // completedDetails but still accessible from the DB (via getCallLogById).
-  // Save to DB
+  // Save to DB as the normal durable path, but keep the completedDetails cache
+  // long enough that a slow Logs-page poll does not see the row disappear
+  // between pending removal and DB/detail refresh.
   await callLogs.saveCallLog({
     id: requestId,
     method: "POST",
@@ -619,18 +676,17 @@ test("streamChunks in completedDetails survives 5-second TTL window", async () =
   const dbEntry1 = await callLogs.getCallLogById(requestId);
   assert.ok(dbEntry1, "DB should have the entry after saveCallLog");
 
-  // Wait for TTL to expire
+  // This used to expire after 5 seconds. Keep it visible beyond that window so
+  // a slow client poll can still resolve the completed row/details.
   await new Promise((r) => setTimeout(r, 5100));
 
-  // completedDetails should be cleared
   assert.ok(
-    !usageHistory.getCompletedDetails().has(requestId),
-    "completedDetails should have been cleared after TTL"
+    usageHistory.getCompletedDetails().has(requestId),
+    "completedDetails should still be available after a 5-second polling gap"
   );
 
-  // But DB should still have it
   const dbEntry2 = await callLogs.getCallLogById(requestId);
-  assert.ok(dbEntry2, "DB should still have the entry after TTL expiry");
+  assert.ok(dbEntry2, "DB should still have the entry after the polling gap");
   assert.equal(
     (dbEntry2 as Record<string, unknown>).id,
     requestId,

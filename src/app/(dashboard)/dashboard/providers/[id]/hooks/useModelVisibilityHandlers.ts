@@ -117,7 +117,7 @@ export function useModelVisibilityHandlers({
   const [modelTestStatus, setModelTestStatus] = useState<Record<string, "ok" | "error">>({});
   const [testingAll, setTestingAll] = useState(false);
   const [testProgress, setTestProgress] = useState<{ done: number; total: number } | null>(null);
-  const [autoHideFailed, setAutoHideFailed] = useState(true);
+  const [autoHideFailed, setAutoHideFailed] = useState(false);
   const [visibilityFilter, setVisibilityFilter] = useState<"all" | "visible" | "hidden">("all");
 
   const providerAliasEntries = useMemo(
@@ -313,16 +313,10 @@ export function useModelVisibilityHandlers({
       } else {
         notify.error(data.error || "Model test failed");
         setModelTestStatus((prev) => ({ ...prev, [modelId]: "error" }));
-        // Hidden flag keyed by providerId — same as the manual eye toggle and the read
-        // (fetchProviderModelMeta). providerStorageAlias wrote it under the alias while the
-        // read looked under the canonical id, so auto-hide never reflected.
-        await handleToggleModelHidden(providerId, modelId, true);
       }
     } catch (err) {
       notify.error("Network error testing model");
       setModelTestStatus((prev) => ({ ...prev, [modelId]: "error" }));
-      // Hidden flag keyed by providerId (see the test-failure branch above).
-      await handleToggleModelHidden(providerId, modelId, true);
     } finally {
       setTestingModelId(null);
     }

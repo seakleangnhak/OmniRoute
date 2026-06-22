@@ -2,18 +2,18 @@
 
 // src/app/(dashboard)/dashboard/playground/PlaygroundStudio.tsx
 
-import { useState } from "react";
+import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
+import { useState } from "react";
+import type { StreamMetrics } from "@/shared/schemas/playground";
 import StudioTopBar, { type StudioTab } from "./components/StudioTopBar";
 import StudioConfigPane, { type ConfigState } from "./components/StudioConfigPane";
 import { DEFAULT_PARAMS } from "./components/ParamSliders";
-import dynamic from "next/dynamic";
-import type { StreamMetrics } from "@/shared/schemas/playground";
+import CompareTab from "./components/tabs/CompareTab";
 
 // Lazy-load tabs to reduce initial bundle size
 const ChatTab = dynamic(() => import("./components/tabs/ChatTab"), { ssr: false });
 const ApiTab = dynamic(() => import("./components/tabs/ApiTab"), { ssr: false });
-const CompareTab = dynamic(() => import("./components/tabs/CompareTab"), { ssr: false });
 const BuildTab = dynamic(() => import("./components/tabs/BuildTab"), { ssr: false });
 
 const INITIAL_METRICS: StreamMetrics = {

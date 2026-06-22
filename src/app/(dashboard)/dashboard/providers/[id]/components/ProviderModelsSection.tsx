@@ -11,8 +11,10 @@
  * Cycle-safe: no import from ProviderDetailPageClient.
  */
 
+import { useState } from "react";
 import { Button } from "@/shared/components";
 import { matchesModelCatalogQuery } from "@/shared/utils/modelCatalogSearch";
+import { isFreeModel, sortModelsFreeFirst } from "@/shared/utils/freeModels";
 import { providerText, type ProviderMessageTranslator } from "../providerPageHelpers";
 import ModelRow, { ModelVisibilityToolbar } from "./ModelRow";
 import PassthroughModelsSection from "./PassthroughModelsSection";
@@ -162,6 +164,8 @@ export default function ProviderModelsSection({
   getUpstreamHeadersRecordForModel,
   t,
 }: ProviderModelsSectionProps) {
+  const [freeFilter, setFreeFilter] = useState<"all" | "free" | "paid">("all");
+  const [sortFreeFirst, setSortFreeFirst] = useState(false);
   const autoSyncToggle = compatibleSupportsModelImport && canImportModels && (
     <button
       onClick={handleToggleAutoSync}
@@ -367,6 +371,7 @@ export default function ProviderModelsSection({
   const modelsWithVisibility = models.map((model) => ({
     ...model,
     isHidden: effectiveModelHidden(model.id),
+    isFree: isFreeModel(providerId, { id: model.id }),
   }));
   const filteredModels = modelsWithVisibility.filter((model) => {
     const matchesQuery = matchesModelCatalogQuery(modelFilter, {
@@ -380,8 +385,13 @@ export default function ProviderModelsSection({
         : visibilityFilter === "visible"
           ? !model.isHidden
           : model.isHidden;
-    return matchesQuery && matchesVisibility;
+    const matchesFreeFilter =
+      freeFilter === "all" ? true : freeFilter === "free" ? model.isFree : !model.isFree;
+    return matchesQuery && matchesVisibility && matchesFreeFilter;
   });
+  const displayModels = sortFreeFirst
+    ? sortModelsFreeFirst(filteredModels, { isFree: (m) => m.isFree, key: (m) => m.id })
+    : filteredModels;
   const activeCount = modelsWithVisibility.filter((m) => !m.isHidden).length;
   const hiddenFilteredCount = filteredModels.filter((m) => m.isHidden).length;
   const visibleFilteredCount = filteredModels.length - hiddenFilteredCount;
@@ -422,10 +432,14 @@ export default function ProviderModelsSection({
           onVisibilityFilterChange={setVisibilityFilter}
           autoHideFailed={autoHideFailed}
           onAutoHideFailedChange={setAutoHideFailed}
+          freeFilter={freeFilter}
+          onFreeFilterChange={setFreeFilter}
+          sortFreeFirst={sortFreeFirst}
+          onSortFreeFirstChange={setSortFreeFirst}
         />
       )}
       <div className="flex flex-wrap gap-3">
-        {filteredModels.map((model) => {
+        {displayModels.map((model) => {
           return (
             <ModelRow
               key={model.id}
