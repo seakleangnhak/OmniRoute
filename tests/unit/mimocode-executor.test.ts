@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
+import { createServer } from "node:net";
 import {
   MimocodeExecutor,
   generateFingerprint,
@@ -8,6 +9,27 @@ import {
 } from "../../open-sse/executors/mimocode.ts";
 
 const executor = new MimocodeExecutor();
+const testLog = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
+
+async function withReachableTcpEndpoint<T>(fn: (port: number) => Promise<T>): Promise<T> {
+  const server = createServer((socket) => socket.destroy());
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("failed to allocate reachable TCP endpoint for proxy test");
+  }
+
+  try {
+    return await fn(address.port);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
 
 describe("MimocodeExecutor", () => {
   it("generateFingerprint returns a 64-char hex string", () => {
@@ -157,7 +179,7 @@ describe("MimocodeExecutor", () => {
       stream: false,
       signal: controller.signal,
       credentials: {},
-      log: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+      log: testLog,
     });
 
     assert.strictEqual((result as any).response.status, 499);
@@ -298,6 +320,7 @@ describe("mimocode per-account proxy", () => {
 
     const credentials = {
       providerSpecificData: {
+        fingerprints: [fp1, fp2],
         accountProxies: [
           { fingerprint: fp1, proxy: { type: "http", host: "p1.example.com", port: 1080 } },
           { fingerprint: fp2, proxy: null },
@@ -311,6 +334,74 @@ describe("mimocode per-account proxy", () => {
     const acct2 = accounts.find((a: any) => a.fingerprint === fp2);
     assert.deepStrictEqual(acct1.proxy, { type: "http", host: "p1.example.com", port: 1080 });
     assert.strictEqual(acct2.proxy, null);
+  });
+
+  it("syncAccountsFromCredentials replaces the default direct account when fingerprints are configured", () => {
+    const testExec = new MimocodeExecutor();
+    const defaultFingerprint = (testExec as any).defaultFingerprint;
+
+    (testExec as any).syncAccountsFromCredentials({
+      providerSpecificData: {
+        fingerprints: ["managed-fp-1", "managed-fp-2"],
+        accountProxies: [
+          {
+            fingerprint: "managed-fp-1",
+            proxy: { type: "socks5", host: "managed.proxy", port: 1080 },
+          },
+        ],
+      },
+    });
+
+    const accounts = (testExec as any).accounts;
+    assert.deepStrictEqual(
+      accounts.map((account: any) => account.fingerprint),
+      ["managed-fp-1", "managed-fp-2"]
+    );
+    assert.ok(
+      !accounts.some((account: any) => account.fingerprint === defaultFingerprint),
+      "default direct fingerprint should not remain active once managed fingerprints exist"
+    );
+    assert.deepStrictEqual(accounts[0].proxy, {
+      type: "socks5",
+      host: "managed.proxy",
+      port: 1080,
+    });
+  });
+
+  it("syncAccountsFromCredentials removes stale fingerprints and restores the default fallback when cleared", () => {
+    const testExec = new MimocodeExecutor();
+    const defaultFingerprint = (testExec as any).defaultFingerprint;
+
+    (testExec as any).syncAccountsFromCredentials({
+      providerSpecificData: {
+        fingerprints: ["managed-fp-1", "managed-fp-2"],
+      },
+    });
+    assert.deepStrictEqual(
+      (testExec as any).accounts.map((account: any) => account.fingerprint),
+      ["managed-fp-1", "managed-fp-2"]
+    );
+
+    (testExec as any).syncAccountsFromCredentials({
+      providerSpecificData: {
+        fingerprints: ["managed-fp-2"],
+      },
+    });
+    assert.deepStrictEqual(
+      (testExec as any).accounts.map((account: any) => account.fingerprint),
+      ["managed-fp-2"]
+    );
+
+    (testExec as any).syncAccountsFromCredentials({
+      providerSpecificData: {
+        fingerprints: [],
+      },
+    });
+    assert.deepStrictEqual(
+      (testExec as any).accounts.map((account: any) => account.fingerprint),
+      [defaultFingerprint]
+    );
+    assert.strictEqual((testExec as any).accounts[0].proxy, null);
   });
 
   it("syncAccountsFromCredentials skips when accountProxies absent", () => {
@@ -362,6 +453,7 @@ describe("mimocode per-account proxy", () => {
     ];
     (testExec as any).syncAccountsFromCredentials({
       providerSpecificData: {
+        fingerprints: [fp1, fp2],
         accountProxies: [
           { fingerprint: fp1, proxy: { type: "http", host: "a.com", port: 8080 } },
           { fingerprint: fp2, proxy: { type: "socks5", host: "b.com", port: 1080 } },
@@ -416,6 +508,7 @@ describe("mimocode per-account proxy", () => {
     const proxy1 = { type: "http", host: "first.proxy", port: 8080 };
     (testExec as any).syncAccountsFromCredentials({
       providerSpecificData: {
+        fingerprints: [fp],
         accountProxies: [{ fingerprint: fp, proxy: proxy1 }],
       },
     });
@@ -424,9 +517,142 @@ describe("mimocode per-account proxy", () => {
     const proxy2 = { type: "socks5", host: "second.proxy", port: 1080 };
     (testExec as any).syncAccountsFromCredentials({
       providerSpecificData: {
+        fingerprints: [fp],
         accountProxies: [{ fingerprint: fp, proxy: proxy2 }],
       },
     });
     assert.deepStrictEqual((testExec as any).accounts[0].proxy, proxy2);
+  });
+
+  it("execute short-circuits additional fingerprints that share a failing proxy", async () => {
+    await withReachableTcpEndpoint(async (port) => {
+      const testExec = new MimocodeExecutor();
+      const originalFetch = globalThis.fetch;
+      let fetchCalls = 0;
+
+      globalThis.fetch = (async () => {
+        fetchCalls++;
+        throw new Error("fetch failed");
+      }) as typeof fetch;
+
+      try {
+        const result = await testExec.execute({
+          model: "mimo-auto",
+          body: { messages: [{ role: "user", content: "hello" }], stream: false },
+          stream: false,
+          signal: null,
+          credentials: {
+            providerSpecificData: {
+              fingerprints: ["fp-shared-1", "fp-shared-2", "fp-shared-3"],
+              accountProxies: [
+                {
+                  fingerprint: "fp-shared-1",
+                  proxy: {
+                    type: "socks5",
+                    host: "127.0.0.1",
+                    port,
+                    username: "user",
+                    password: "pass",
+                  },
+                },
+                {
+                  fingerprint: "fp-shared-2",
+                  proxy: {
+                    type: "socks5",
+                    host: "127.0.0.1",
+                    port,
+                    username: "user",
+                    password: "pass",
+                  },
+                },
+                {
+                  fingerprint: "fp-shared-3",
+                  proxy: {
+                    type: "socks5",
+                    host: "127.0.0.1",
+                    port,
+                    username: "user",
+                    password: "pass",
+                  },
+                },
+              ],
+            },
+          },
+          log: testLog,
+        });
+
+        assert.strictEqual(fetchCalls, 1, "shared proxy failure should only be attempted once");
+        assert.strictEqual(result.response.status, 502);
+        const text = await result.response.text();
+        assert.match(
+          text,
+          new RegExp(`Proxy request failed via socks5://127\\.0\\.0\\.1:${port}: fetch failed`)
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
+
+  it("bootstrap HTTP errors still fall through to the next fingerprint on the same proxy", async () => {
+    await withReachableTcpEndpoint(async (port) => {
+      const testExec = new MimocodeExecutor();
+      const originalFetch = globalThis.fetch;
+      let fetchCalls = 0;
+
+      globalThis.fetch = (async () => {
+        fetchCalls++;
+        if (fetchCalls === 1) {
+          return new Response(JSON.stringify({ error: { message: "Too many requests" } }), {
+            status: 429,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (fetchCalls === 2) {
+          return new Response(JSON.stringify({ jwt: "jwt-second-account" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }) as typeof fetch;
+
+      try {
+        const result = await testExec.execute({
+          model: "mimo-auto",
+          body: { messages: [{ role: "user", content: "hello" }], stream: false },
+          stream: false,
+          signal: null,
+          credentials: {
+            providerSpecificData: {
+              fingerprints: ["fp-http-1", "fp-http-2"],
+              accountProxies: [
+                {
+                  fingerprint: "fp-http-1",
+                  proxy: { type: "socks5", host: "127.0.0.1", port },
+                },
+                {
+                  fingerprint: "fp-http-2",
+                  proxy: { type: "socks5", host: "127.0.0.1", port },
+                },
+              ],
+            },
+          },
+          log: testLog,
+        });
+
+        assert.strictEqual(
+          fetchCalls,
+          3,
+          "bootstrap 429 must not short-circuit shared proxy peers"
+        );
+        assert.strictEqual(result.response.status, 200);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 });

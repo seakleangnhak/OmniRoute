@@ -12,19 +12,34 @@ interface NoAuthAccountCardProps {
   dataKey?: string;
   description?: string;
   addLabel?: string;
+  allowDeleteAll?: boolean;
 }
 
 interface Connection {
   id: string;
   provider: string;
+  authType?: string;
+  name?: string;
   apiKey?: string;
   providerSpecificData?: Record<string, any>;
   isActive?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 interface AccountProxyConfig {
   fingerprint: string;
-  proxy: { type: string; host: string; port: number; username?: string; password?: string } | null;
+  proxy: {
+    type: string;
+    host: string;
+    port: number;
+    username?: string;
+    password?: string;
+    proxyId?: string;
+    proxyName?: string;
+    family?: string;
+    relayAuth?: string;
+  } | null;
 }
 
 const PROXY_TYPES = [
@@ -32,6 +47,8 @@ const PROXY_TYPES = [
   { value: "https", label: "HTTPS" },
   { value: "socks5", label: "SOCKS5" },
 ];
+const MAX_BULK_ACCOUNT_CREATE = 100;
+const MAX_BULK_CONNECTION_DELETE = 100;
 
 function getAccountProxies(conn: Connection | undefined): AccountProxyConfig[] {
   return (conn?.providerSpecificData?.accountProxies as AccountProxyConfig[]) || [];
@@ -41,6 +58,161 @@ function getProxyForFingerprint(proxies: AccountProxyConfig[], fp: string) {
   return proxies.find((p) => p.fingerprint === fp)?.proxy ?? null;
 }
 
+function getProxyDisplayLabel(proxy: AccountProxyConfig["proxy"]): string {
+  if (!proxy) return "Proxy";
+  if (typeof proxy.proxyName === "string" && proxy.proxyName.trim().length > 0) {
+    return proxy.proxyName.trim();
+  }
+  if (typeof proxy.proxyId === "string" && proxy.proxyId.trim().length > 0) {
+    return `${proxy.type}://${proxy.host} (${proxy.proxyId.trim().slice(0, 8)})`;
+  }
+  return `${proxy.type}://${proxy.host}`;
+}
+
+function getProxyDisplayTitle(proxy: AccountProxyConfig["proxy"]): string {
+  if (!proxy) return "Configure proxy";
+  const parts = [`${proxy.type}://${proxy.host}:${proxy.port}`];
+  if (typeof proxy.proxyName === "string" && proxy.proxyName.trim().length > 0) {
+    parts.push(proxy.proxyName.trim());
+  }
+  if (typeof proxy.proxyId === "string" && proxy.proxyId.trim().length > 0) {
+    parts.push(proxy.proxyId.trim());
+  }
+  return parts.join(" | ");
+}
+
+function getAccountIds(conn: Connection | undefined, dataKey: string): string[] {
+  const raw = conn?.providerSpecificData?.[dataKey];
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (value): value is string => typeof value === "string" && value.trim().length > 0
+  );
+}
+
+function getUniqueAccountIds(connections: Connection[], dataKey: string): string[] {
+  return Array.from(new Set(connections.flatMap((conn) => getAccountIds(conn, dataKey))));
+}
+
+function mergeAccountProxies(connections: Connection[]): AccountProxyConfig[] {
+  const merged = new Map<string, AccountProxyConfig["proxy"]>();
+  for (const conn of connections) {
+    for (const entry of getAccountProxies(conn)) {
+      if (!entry?.fingerprint || typeof entry.fingerprint !== "string") continue;
+      merged.set(entry.fingerprint, entry.proxy ?? null);
+    }
+  }
+  return Array.from(merged.entries()).map(([fingerprint, proxy]) => ({ fingerprint, proxy }));
+}
+
+function compareIsoDateAsc(a?: string, b?: string): number {
+  const left = typeof a === "string" ? Date.parse(a) : Number.NaN;
+  const right = typeof b === "string" ? Date.parse(b) : Number.NaN;
+  const safeLeft = Number.isFinite(left) ? left : Number.MAX_SAFE_INTEGER;
+  const safeRight = Number.isFinite(right) ? right : Number.MAX_SAFE_INTEGER;
+  return safeLeft - safeRight;
+}
+
+function pickPrimaryConnection(connections: Connection[], dataKey: string): Connection | undefined {
+  if (connections.length === 0) return undefined;
+
+  return [...connections].sort((left, right) => {
+    const leftActive = left.isActive !== false ? 1 : 0;
+    const rightActive = right.isActive !== false ? 1 : 0;
+    if (leftActive !== rightActive) return rightActive - leftActive;
+
+    const leftApiKey = left.authType === "apikey" ? 1 : 0;
+    const rightApiKey = right.authType === "apikey" ? 1 : 0;
+    if (leftApiKey !== rightApiKey) return rightApiKey - leftApiKey;
+
+    const leftAccounts = getAccountIds(left, dataKey).length;
+    const rightAccounts = getAccountIds(right, dataKey).length;
+    if (leftAccounts !== rightAccounts) return rightAccounts - leftAccounts;
+
+    return compareIsoDateAsc(left.createdAt, right.createdAt);
+  })[0];
+}
+
+function buildMergedProviderSpecificData(
+  connections: Connection[],
+  primary: Connection | undefined,
+  dataKey: string
+): Record<string, any> {
+  const base =
+    primary?.providerSpecificData && typeof primary.providerSpecificData === "object"
+      ? { ...primary.providerSpecificData }
+      : {};
+  const accountIds = getUniqueAccountIds(connections, dataKey);
+  const accountProxies = mergeAccountProxies(connections);
+
+  if (accountIds.length > 0) {
+    base[dataKey] = accountIds;
+  } else {
+    delete base[dataKey];
+  }
+
+  if (accountProxies.length > 0) {
+    base.accountProxies = accountProxies;
+  } else {
+    delete base.accountProxies;
+  }
+
+  return base;
+}
+
+function promptForAccountCount(providerName: string): number | null {
+  const raw = window.prompt(`How many ${providerName} accounts do you want to create?`, "1");
+  if (raw === null) return null;
+
+  const value = raw.trim();
+  if (!value) return 1;
+
+  const count = Number.parseInt(value, 10);
+  if (!Number.isInteger(count) || count < 1 || count > MAX_BULK_ACCOUNT_CREATE) {
+    window.alert(`Enter a whole number between 1 and ${MAX_BULK_ACCOUNT_CREATE}.`);
+    return null;
+  }
+
+  return count;
+}
+
+function generateUniqueAccountIds(
+  count: number,
+  generateAccountId: () => string,
+  existingAccountIds: string[]
+): string[] {
+  const uniqueIds = new Set(existingAccountIds);
+  const newAccountIds: string[] = [];
+
+  while (newAccountIds.length < count) {
+    const accountId = generateAccountId();
+    if (!accountId || uniqueIds.has(accountId)) continue;
+    uniqueIds.add(accountId);
+    newAccountIds.push(accountId);
+  }
+
+  return newAccountIds;
+}
+
+async function deleteConnectionsInBatches(ids: string[]) {
+  for (let index = 0; index < ids.length; index += MAX_BULK_CONNECTION_DELETE) {
+    const chunk = ids.slice(index, index + MAX_BULK_CONNECTION_DELETE);
+    const res = await fetch("/api/providers", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: chunk }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const errorMessage =
+        typeof data?.error === "string"
+          ? data.error
+          : "Failed to remove duplicate provider connections";
+      throw new Error(errorMessage);
+    }
+  }
+}
+
 export default function NoAuthAccountCard({
   providerId,
   providerName,
@@ -48,10 +220,12 @@ export default function NoAuthAccountCard({
   dataKey = "fingerprints",
   description = "Ready to use — no signup needed. Add accounts for rate-limit rotation.",
   addLabel = "Add Account",
+  allowDeleteAll = false,
 }: NoAuthAccountCardProps) {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
   const [proxyAccountId, setProxyAccountId] = useState<string | null>(null);
   const [proxyType, setProxyType] = useState("socks5");
   const [proxyHost, setProxyHost] = useState("");
@@ -60,6 +234,8 @@ export default function NoAuthAccountCard({
   const [proxyPassword, setProxyPassword] = useState("");
   const [savingProxy, setSavingProxy] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const addRequestInFlightRef = useRef(false);
+  const consolidationAttemptRef = useRef<string>("");
 
   const fetchConnections = useCallback(async () => {
     try {
@@ -94,33 +270,96 @@ export default function NoAuthAccountCard({
     }
   }, [proxyAccountId]);
 
-  const allAccountIds = connections.flatMap((c) => c.providerSpecificData?.[dataKey] || []);
+  const conn = pickPrimaryConnection(connections, dataKey);
+  const allAccountIds = getUniqueAccountIds(connections, dataKey);
+  const accountProxies = mergeAccountProxies(connections);
 
-  const conn = connections[0];
-  const accountProxies = getAccountProxies(conn);
+  const consolidateLegacyConnections = useCallback(async () => {
+    const primary = pickPrimaryConnection(connections, dataKey);
+    if (!primary) return;
+
+    const duplicateIds = connections
+      .filter((candidate) => candidate.id !== primary.id)
+      .map((c) => c.id);
+    if (duplicateIds.length === 0) return;
+
+    const mergedProviderSpecificData = buildMergedProviderSpecificData(
+      connections,
+      primary,
+      dataKey
+    );
+    const updateRes = await fetch(`/api/providers/${primary.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        providerSpecificData: mergedProviderSpecificData,
+      }),
+    });
+    if (!updateRes.ok) {
+      throw new Error(`Failed to consolidate ${providerName} accounts`);
+    }
+
+    await deleteConnectionsInBatches(duplicateIds);
+
+    await fetchConnections();
+  }, [connections, dataKey, fetchConnections, providerName]);
+
+  useEffect(() => {
+    if (loading || connections.length <= 1) return;
+
+    const signature = connections
+      .map((connection) => connection.id)
+      .sort()
+      .join(",");
+    if (consolidationAttemptRef.current === signature) return;
+    consolidationAttemptRef.current = signature;
+
+    void consolidateLegacyConnections().catch((error) => {
+      console.error(`Failed to consolidate duplicate ${providerName} connections:`, error);
+      consolidationAttemptRef.current = "";
+    });
+  }, [loading, connections, consolidateLegacyConnections, providerName]);
 
   const handleAddAccount = async () => {
+    if (adding || deletingAll || addRequestInFlightRef.current) return;
+
+    const accountCount = promptForAccountCount(providerName);
+    if (accountCount === null) return;
+
+    if (addRequestInFlightRef.current) return;
+    addRequestInFlightRef.current = true;
     setAdding(true);
     try {
-      const accountId = generateAccountId();
-      if (connections.length === 0) {
+      const newAccountIds = generateUniqueAccountIds(
+        accountCount,
+        generateAccountId,
+        allAccountIds
+      );
+      if (!conn) {
         const res = await fetch("/api/providers", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             provider: providerId,
             name: `${providerName} Account 1`,
-            providerSpecificData: { [dataKey]: [accountId] },
+            providerSpecificData: { [dataKey]: newAccountIds },
           }),
         });
         if (!res.ok) throw new Error("Failed to create connection");
       } else {
-        const updated = [...allAccountIds, accountId];
+        const mergedProviderSpecificData = buildMergedProviderSpecificData(
+          connections,
+          conn,
+          dataKey
+        );
         const res = await fetch(`/api/providers/${conn.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            providerSpecificData: { [dataKey]: updated },
+            providerSpecificData: {
+              ...mergedProviderSpecificData,
+              [dataKey]: Array.from(new Set([...allAccountIds, ...newAccountIds])),
+            },
           }),
         });
         if (!res.ok) throw new Error("Failed to update connection");
@@ -129,6 +368,7 @@ export default function NoAuthAccountCard({
     } catch (err) {
       console.error("Failed to add account:", err);
     } finally {
+      addRequestInFlightRef.current = false;
       setAdding(false);
     }
   };
@@ -137,12 +377,14 @@ export default function NoAuthAccountCard({
     if (!conn) return;
     const updated = allAccountIds.filter((id) => id !== accountId);
     const updatedProxies = accountProxies.filter((p) => p.fingerprint !== accountId);
+    const mergedProviderSpecificData = buildMergedProviderSpecificData(connections, conn, dataKey);
     try {
       const res = await fetch(`/api/providers/${conn.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           providerSpecificData: {
+            ...mergedProviderSpecificData,
             [dataKey]: updated,
             accountProxies: updatedProxies,
           },
@@ -151,6 +393,44 @@ export default function NoAuthAccountCard({
       if (res.ok) await fetchConnections();
     } catch (err) {
       console.error("Failed to remove account:", err);
+    }
+  };
+
+  const handleDeleteAllAccounts = async () => {
+    if (!conn || allAccountIds.length === 0 || deletingAll) return;
+
+    const confirmed = window.confirm(
+      `Delete all ${allAccountIds.length} ${providerName} account(s)? This will also remove their saved proxy assignments.`
+    );
+    if (!confirmed) return;
+
+    setDeletingAll(true);
+    setProxyAccountId(null);
+
+    try {
+      const mergedProviderSpecificData = buildMergedProviderSpecificData(
+        connections,
+        conn,
+        dataKey
+      );
+      const res = await fetch(`/api/providers/${conn.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          providerSpecificData: {
+            ...mergedProviderSpecificData,
+            [dataKey]: [],
+            accountProxies: [],
+          },
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to delete all accounts");
+
+      await fetchConnections();
+    } catch (err) {
+      console.error("Failed to delete all accounts:", err);
+    } finally {
+      setDeletingAll(false);
     }
   };
 
@@ -191,12 +471,20 @@ export default function NoAuthAccountCard({
       const updatedProxies = newProxy
         ? [...existing, { fingerprint: proxyAccountId, proxy: newProxy }]
         : existing;
+      const mergedProviderSpecificData = buildMergedProviderSpecificData(
+        connections,
+        conn,
+        dataKey
+      );
 
       const res = await fetch(`/api/providers/${conn.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          providerSpecificData: { accountProxies: updatedProxies },
+          providerSpecificData: {
+            ...mergedProviderSpecificData,
+            accountProxies: updatedProxies,
+          },
         }),
       });
       if (res.ok) {
@@ -212,37 +500,19 @@ export default function NoAuthAccountCard({
 
   const handleDistributeProxies = async () => {
     if (!conn || allAccountIds.length === 0) return;
-
-    const proxiesRes = await fetch("/api/settings/proxies");
-    if (!proxiesRes.ok) throw new Error("Failed to fetch proxies");
-    const proxiesData = await proxiesRes.json();
-    const savedProxies = (proxiesData?.items || []).filter((p: any) => p.status === "active");
-    if (savedProxies.length === 0) {
-      throw new Error("No saved proxies found. Add proxies in Settings → Proxy first.");
-    }
-
-    const updatedProxies: AccountProxyConfig[] = allAccountIds.map((fp, i) => {
-      const proxy = savedProxies[i % savedProxies.length];
-      return {
-        fingerprint: fp,
-        proxy: {
-          type: proxy.type || "socks5",
-          host: proxy.host,
-          port: proxy.port,
-          ...(proxy.username ? { username: proxy.username } : {}),
-          ...(proxy.password ? { password: proxy.password } : {}),
-        },
-      };
-    });
-
-    const res = await fetch(`/api/providers/${conn.id}`, {
-      method: "PUT",
+    const res = await fetch(`/api/providers/${conn.id}/account-proxies/distribute`, {
+      method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        providerSpecificData: { accountProxies: updatedProxies },
-      }),
+      body: JSON.stringify({ dataKey }),
     });
-    if (!res.ok) throw new Error("Failed to update connection");
+    if (!res.ok) {
+      const payload = await res.json().catch(() => null);
+      const message =
+        payload && typeof payload.error === "string"
+          ? payload.error
+          : "Failed to distribute proxies";
+      throw new Error(message);
+    }
 
     await fetchConnections();
   };
@@ -264,15 +534,31 @@ export default function NoAuthAccountCard({
           <span className="text-sm font-medium">
             Accounts ({loading ? "..." : allAccountIds.length})
           </span>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {!loading && allAccountIds.length > 0 && (
               <DistributeProxiesButton
                 onDistribute={handleDistributeProxies}
-                disabled={adding}
+                disabled={adding || deletingAll}
                 size="sm"
               />
             )}
-            <Button size="sm" icon="add" onClick={handleAddAccount} disabled={adding}>
+            {allowDeleteAll && !loading && allAccountIds.length > 0 && (
+              <Button
+                size="sm"
+                variant="danger"
+                icon="delete_sweep"
+                onClick={handleDeleteAllAccounts}
+                disabled={adding || deletingAll}
+              >
+                {deletingAll ? "Deleting..." : "Delete All"}
+              </Button>
+            )}
+            <Button
+              size="sm"
+              icon="add"
+              onClick={handleAddAccount}
+              disabled={adding || deletingAll}
+            >
               {adding ? "Adding..." : addLabel}
             </Button>
           </div>
@@ -303,9 +589,7 @@ export default function NoAuthAccountCard({
                       <button
                         onClick={() => openProxyConfig(id)}
                         className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium transition-colors"
-                        title={
-                          proxy ? `${proxy.type}://${proxy.host}:${proxy.port}` : "Configure proxy"
-                        }
+                        title={getProxyDisplayTitle(proxy)}
                       >
                         <span
                           className={`material-symbols-outlined text-[14px] ${proxy ? "text-blue-400" : "text-text-muted"}`}
@@ -313,7 +597,7 @@ export default function NoAuthAccountCard({
                           {proxy ? "shield" : "shield"}
                         </span>
                         <span className={proxy ? "text-blue-400" : "text-text-muted"}>
-                          {proxy ? `${proxy.type}://${proxy.host}` : "Proxy"}
+                          {getProxyDisplayLabel(proxy)}
                         </span>
                       </button>
                       <button

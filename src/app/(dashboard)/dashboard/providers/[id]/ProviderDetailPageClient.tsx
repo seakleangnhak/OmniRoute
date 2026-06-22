@@ -2476,6 +2476,7 @@ export default function ProviderDetailPageClient() {
           providerId={providerId}
           providerName="MiMoCode"
           generateAccountId={() => crypto.randomUUID().replace(/-/g, "")}
+          allowDeleteAll
         />
       )}
       {!isUpstreamProxyProvider && isFreeNoAuth && providerId === "opencode" && (
@@ -2483,6 +2484,7 @@ export default function ProviderDetailPageClient() {
           providerId={providerId}
           providerName="OpenCode"
           generateAccountId={() => crypto.randomUUID().replace(/-/g, "")}
+          allowDeleteAll
         />
       )}
       {!isUpstreamProxyProvider &&

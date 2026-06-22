@@ -142,6 +142,65 @@ test("codex workspace uniqueness uses workspaceId alongside email", async () => 
   ]);
 });
 
+test("no-auth fingerprint providers collapse repeated creates into one connection", async () => {
+  const first = await providersDb.createProviderConnection({
+    provider: "mimocode",
+    authType: "oauth",
+    name: "MiMoCode Account bootstrap",
+    providerSpecificData: {
+      fingerprints: ["fp-bootstrap"],
+      accountProxies: [
+        {
+          fingerprint: "fp-bootstrap",
+          proxy: { type: "socks5", host: "127.0.0.1", port: 1080 },
+        },
+      ],
+    },
+  });
+
+  const second = await providersDb.createProviderConnection({
+    provider: "mimocode",
+    authType: "oauth",
+    name: "MiMoCode Account ratelimit",
+    providerSpecificData: {
+      fingerprints: ["fp-ratelimit"],
+      accountProxies: [
+        {
+          fingerprint: "fp-ratelimit",
+          proxy: { type: "http", host: "127.0.0.2", port: 8080 },
+        },
+      ],
+    },
+  });
+
+  const rows = await providersDb.getProviderConnections({ provider: "mimocode" });
+
+  assert.equal(second.id, first.id);
+  assert.equal(rows.length, 1);
+  assert.deepEqual((rows[0].providerSpecificData as any).fingerprints, [
+    "fp-bootstrap",
+    "fp-ratelimit",
+  ]);
+  assert.deepEqual(
+    (rows[0].providerSpecificData as any).accountProxies.map((entry: any) => entry.fingerprint),
+    ["fp-bootstrap", "fp-ratelimit"]
+  );
+  assert.equal(rows[0].name, "MiMoCode Account bootstrap");
+
+  const cleared = await providersDb.updateProviderConnection(first.id, {
+    providerSpecificData: {
+      fingerprints: [],
+      accountProxies: [],
+    },
+  });
+  const reread = await providersDb.getProviderConnectionById(first.id);
+
+  assert.deepEqual((cleared?.providerSpecificData as any).fingerprints, []);
+  assert.deepEqual((cleared?.providerSpecificData as any).accountProxies, []);
+  assert.deepEqual((reread?.providerSpecificData as any).fingerprints, []);
+  assert.deepEqual((reread?.providerSpecificData as any).accountProxies, []);
+});
+
 test("updateProviderConnection reorders priorities and returns decrypted payloads", async () => {
   const first = await providersDb.createProviderConnection({
     provider: "openai",

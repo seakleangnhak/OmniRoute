@@ -952,26 +952,7 @@ export async function getProviderCredentials(
   try {
     await selectionLock.wait;
 
-    // No-auth providers (e.g. opencode) need no DB connection — return synthetic credentials
-    // so the executor receives a valid credentials object without auth headers being added.
     const resolvedId = resolveProviderId(provider);
-    const providerMaps: Record<string, { noAuth?: boolean } | undefined>[] = [
-      NOAUTH_PROVIDERS as Record<string, { noAuth?: boolean } | undefined>,
-      WEB_COOKIE_PROVIDERS as Record<string, { noAuth?: boolean } | undefined>,
-    ];
-    if (providerMaps.some((map) => map[resolvedId]?.noAuth)) {
-      // #3061: there is only one synthetic "noauth" connection for a no-auth
-      // provider. If the caller already tried and excluded it (account-fallback
-      // after a persistent upstream error), do NOT hand it back — that would let
-      // the chat fallback loop re-select "noauth" forever (no real DB row → no
-      // cooldown to brake it), writing logs every iteration until the disk fills.
-      // Returning null here lets the handler stop after a single attempt.
-      const excludedForNoAuth = normalizeExcludedConnectionIds(
-        excludeConnectionId,
-        options.excludeConnectionIds
-      );
-      return maybeSyntheticNoAuthFallback(resolvedId, excludedForNoAuth);
-    }
 
     const allowSuppressedConnections = options.allowSuppressedConnections === true;
     const allowRateLimitedConnections =

@@ -27,6 +27,7 @@ const TEST_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "omniroute-noauth-lo
 process.env.DATA_DIR = TEST_DATA_DIR;
 
 const core = await import("../../src/lib/db/core.ts");
+const { createProviderConnection } = await import("../../src/lib/db/providers.ts");
 const { getProviderCredentials } = await import("../../src/sse/services/auth.ts");
 
 test.after(() => {
@@ -71,5 +72,43 @@ test("#3061 opencode-zen no-auth: excluding 'noauth' returns null (breaks the fa
     creds,
     null,
     "excluded synthetic noauth must not be re-selected for the opencode-zen keyless path"
+  );
+});
+
+test("#3061 mimocode: saved no-auth connection is preferred over synthetic fallback", async () => {
+  const saved = await createProviderConnection({
+    provider: "mimocode",
+    authType: "oauth",
+    name: "MiMoCode Managed Account",
+    isActive: true,
+    providerSpecificData: {
+      fingerprints: ["managed-fp-1"],
+      accountProxies: [
+        {
+          fingerprint: "managed-fp-1",
+          proxy: { type: "socks5", host: "proxy.example.com", port: 1080 },
+        },
+      ],
+    },
+  });
+
+  const creds = await getProviderCredentials("mimocode", null, null, "mimo-auto");
+  assert.ok(creds, "mimocode should resolve to the saved dashboard connection when present");
+  assert.equal(
+    (creds as { connectionId?: string }).connectionId,
+    saved.id,
+    "selector should not bypass saved mimocode accounts with synthetic noauth fallback"
+  );
+  assert.deepEqual(
+    (creds as { providerSpecificData?: Record<string, unknown> }).providerSpecificData,
+    {
+      fingerprints: ["managed-fp-1"],
+      accountProxies: [
+        {
+          fingerprint: "managed-fp-1",
+          proxy: { type: "socks5", host: "proxy.example.com", port: 1080 },
+        },
+      ],
+    }
   );
 });

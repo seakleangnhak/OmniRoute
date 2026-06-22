@@ -201,6 +201,21 @@ function getTargetUrl(input) {
   return String(input);
 }
 
+function getProxyContextMetadataForLog(proxyConfig: unknown): string {
+  if (!proxyConfig || typeof proxyConfig !== "object" || Array.isArray(proxyConfig)) {
+    return "";
+  }
+
+  const record = proxyConfig as { proxyName?: unknown; proxyId?: unknown };
+  if (typeof record.proxyName === "string" && record.proxyName.trim().length > 0) {
+    return record.proxyName.trim();
+  }
+  if (typeof record.proxyId === "string" && record.proxyId.trim().length > 0) {
+    return record.proxyId.trim().slice(0, 8);
+  }
+  return "";
+}
+
 export async function runWithProxyContext(proxyConfig, fn) {
   if (typeof fn !== "function") {
     throw new TypeError("runWithProxyContext requires a callback function");
@@ -253,8 +268,10 @@ export async function runWithProxyContext(proxyConfig, fn) {
 
   return proxyContext.run(effectiveProxyConfig, async () => {
     if (resolvedProxyUrl && effectiveProxyConfig !== currentContext) {
+      const proxyLabel = proxyUrlForLogs(resolvedProxyUrl);
+      const metadata = getProxyContextMetadataForLog(effectiveProxyConfig);
       console.log(
-        `[ProxyFetch] Applied request proxy context: ${proxyUrlForLogs(resolvedProxyUrl)}`
+        `[ProxyFetch] Applied request proxy context: ${metadata ? `${proxyLabel} (${metadata})` : proxyLabel}`
       );
     }
     return fn();

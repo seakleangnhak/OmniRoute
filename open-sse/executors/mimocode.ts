@@ -19,6 +19,7 @@ import * as crypto from "node:crypto";
 import * as os from "node:os";
 import { BaseExecutor, type ExecuteInput, type ProviderCredentials } from "./base.ts";
 import { runWithProxyContext } from "../utils/proxyFetch.ts";
+import { proxyConfigToUrl, proxyUrlForLogs } from "../utils/proxyDispatcher.ts";
 
 const BOOTSTRAP_PATH = "/api/free-ai/bootstrap";
 const CHAT_PATH = "/api/free-ai/openai/chat";
@@ -82,6 +83,10 @@ export interface AccountProxyConfig {
     port: number;
     username?: string;
     password?: string;
+    proxyId?: string;
+    proxyName?: string;
+    family?: string;
+    relayAuth?: string;
   } | null;
 }
 
@@ -93,6 +98,62 @@ interface AccountState {
   consecutiveFails: number;
   /** Resolved proxy config for this account (null = direct). */
   proxy: AccountProxyConfig["proxy"];
+}
+
+function getAccountProxyKey(proxy: AccountState["proxy"]): string | null {
+  if (!proxy) return null;
+  try {
+    return proxyConfigToUrl(proxy);
+  } catch {
+    return JSON.stringify(proxy);
+  }
+}
+
+function getAccountProxyLabel(proxy: AccountState["proxy"]): string {
+  if (!proxy) return "direct connection";
+  try {
+    const proxyUrl = proxyConfigToUrl(proxy);
+    const base = proxyUrl ? proxyUrlForLogs(proxyUrl) : "configured proxy";
+    const metadata =
+      typeof proxy.proxyName === "string" && proxy.proxyName.trim().length > 0
+        ? proxy.proxyName.trim()
+        : typeof proxy.proxyId === "string" && proxy.proxyId.trim().length > 0
+          ? proxy.proxyId.trim().slice(0, 8)
+          : "";
+    return metadata ? `${base} (${metadata})` : base;
+  } catch {
+    return "configured proxy";
+  }
+}
+
+function isAbortLikeError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function isBootstrapHttpError(error: unknown): boolean {
+  return error instanceof Error && /^Bootstrap failed:\s*\d{3}\b/.test(error.message);
+}
+
+function shouldShortCircuitSharedProxy(
+  proxy: AccountState["proxy"],
+  error: unknown
+): error is Error {
+  if (!proxy) return false;
+  if (!(error instanceof Error)) return false;
+  if (isAbortLikeError(error)) return false;
+  if (isBootstrapHttpError(error)) return false;
+  return true;
+}
+
+function createEmptyAccountState(fingerprint: string): AccountState {
+  return {
+    fingerprint,
+    jwt: "",
+    expiresAt: 0,
+    cooldownUntil: 0,
+    consecutiveFails: 0,
+    proxy: null,
+  };
 }
 
 function parseJwtExp(jwt: string): number {
@@ -199,38 +260,39 @@ export class MimocodeExecutor extends BaseExecutor {
   private accounts: AccountState[] = [];
   private nextAccountIdx = 0;
   private baseUrl: string;
+  private readonly defaultFingerprint: string;
   private static encoder = new TextEncoder();
 
   constructor() {
     super("mimocode", { format: "openai" });
     this.baseUrl = this.getBaseUrls()[0] || "https://api.xiaomimimo.com";
-    this.accounts.push({
-      fingerprint: generateFingerprint(),
-      jwt: "",
-      expiresAt: 0,
-      cooldownUntil: 0,
-      consecutiveFails: 0,
-      proxy: null,
-    });
+    this.defaultFingerprint = generateFingerprint();
+    this.accounts.push(createEmptyAccountState(this.defaultFingerprint));
   }
 
   private syncAccountsFromCredentials(credentials: ProviderCredentials): void {
     const fingerprints = credentials?.providerSpecificData?.fingerprints;
-    if (Array.isArray(fingerprints)) {
-      const existing = new Set(this.accounts.map((a) => a.fingerprint));
-      for (const fp of fingerprints) {
-        if (typeof fp === "string" && !existing.has(fp)) {
-          this.accounts.push({
-            fingerprint: fp,
-            jwt: "",
-            expiresAt: 0,
-            cooldownUntil: 0,
-            consecutiveFails: 0,
-            proxy: null,
-          });
-          existing.add(fp);
-        }
-      }
+    const requestedFingerprints = Array.isArray(fingerprints)
+      ? Array.from(
+          new Set(
+            fingerprints.filter(
+              (fp): fp is string => typeof fp === "string" && fp.trim().length > 0
+            )
+          )
+        )
+      : [];
+    const nextFingerprints =
+      requestedFingerprints.length > 0 ? requestedFingerprints : [this.defaultFingerprint];
+    const existingByFingerprint = new Map(
+      this.accounts.map((account) => [account.fingerprint, account])
+    );
+
+    this.accounts = nextFingerprints.map((fingerprint) => {
+      const existing = existingByFingerprint.get(fingerprint);
+      return existing ? { ...existing } : createEmptyAccountState(fingerprint);
+    });
+    if (this.nextAccountIdx >= this.accounts.length) {
+      this.nextAccountIdx = 0;
     }
 
     const accountProxies = credentials?.providerSpecificData?.accountProxies as
@@ -289,6 +351,37 @@ export class MimocodeExecutor extends BaseExecutor {
 
   private markSuccess(account: AccountState): void {
     account.consecutiveFails = 0;
+  }
+
+  private getAttemptOrder(): AccountState[] {
+    const ready: AccountState[] = [];
+    const pending: AccountState[] = [];
+
+    for (let i = 0; i < this.accounts.length; i++) {
+      const idx = (this.nextAccountIdx + i) % this.accounts.length;
+      const account = this.accounts[idx];
+      if (isAccountReady(account)) {
+        ready.push(account);
+      } else {
+        pending.push(account);
+      }
+    }
+
+    if (this.accounts.length > 0) {
+      this.nextAccountIdx = (this.nextAccountIdx + 1) % this.accounts.length;
+    }
+
+    return [...ready, ...pending];
+  }
+
+  private markProxyGroupCooldown(proxyKey: string): number {
+    let affected = 0;
+    for (const account of this.accounts) {
+      if (getAccountProxyKey(account.proxy) !== proxyKey) continue;
+      this.markCooldown(account);
+      affected++;
+    }
+    return affected;
   }
 
   buildUrl(
@@ -392,15 +485,20 @@ export class MimocodeExecutor extends BaseExecutor {
     const reqBody = this.transformRequest(model, body, stream, input.credentials);
 
     this.syncAccountsFromCredentials(input.credentials);
+    const failedProxyKeys = new Set<string>();
+    let lastError: Error | null = null;
 
-    // Try each account, skip cooldown ones
-    for (let attempt = 0; attempt < this.accounts.length; attempt++) {
-      const account = this.pickAccount();
+    for (const account of this.getAttemptOrder()) {
+      const proxy = account.proxy;
+      const proxyKey = getAccountProxyKey(proxy);
+      if (proxyKey && failedProxyKeys.has(proxyKey)) {
+        continue;
+      }
+
       try {
         const jwt = await this.getJwtForAccount(account, signal);
         const headers = this.buildHeaders(input.credentials, stream);
         headers["Authorization"] = `Bearer ${jwt}`;
-        const proxy = account.proxy;
 
         let resp = await runWithProxyContext(proxy, () =>
           fetch(url, {
@@ -453,25 +551,40 @@ export class MimocodeExecutor extends BaseExecutor {
           transformedBody: reqBody,
         };
       } catch (err) {
-        this.markCooldown(account);
-        if (attempt === this.accounts.length - 1) {
-          const msg = err instanceof Error ? err.message : String(err);
-          log?.error?.("MIMOCODE", `Executor error: ${msg}`);
-          return {
-            response: new Response(
-              encoder.encode(
-                JSON.stringify({
-                  error: { message: msg, type: "upstream_error", code: "EXECUTOR_ERROR" },
-                })
-              ),
-              { status: 502, headers: { "Content-Type": "application/json" } }
-            ),
-            url,
-            headers: this.buildHeaders(input.credentials, stream),
-            transformedBody: body,
-          };
+        if (shouldShortCircuitSharedProxy(proxy, err) && proxyKey) {
+          failedProxyKeys.add(proxyKey);
+          const affected = this.markProxyGroupCooldown(proxyKey);
+          const proxyLabel = getAccountProxyLabel(proxy);
+          const msg = `Proxy request failed via ${proxyLabel}: ${err.message}`;
+          lastError = new Error(msg);
+          log?.warn?.(
+            "MIMOCODE",
+            `${msg}; skipping ${Math.max(affected - 1, 0)} additional fingerprint(s) sharing that proxy`
+          );
+          continue;
         }
+
+        this.markCooldown(account);
+        lastError = err instanceof Error ? err : new Error(String(err));
       }
+    }
+
+    if (lastError) {
+      const msg = lastError.message;
+      log?.error?.("MIMOCODE", `Executor error: ${msg}`);
+      return {
+        response: new Response(
+          encoder.encode(
+            JSON.stringify({
+              error: { message: msg, type: "upstream_error", code: "EXECUTOR_ERROR" },
+            })
+          ),
+          { status: 502, headers: { "Content-Type": "application/json" } }
+        ),
+        url,
+        headers: this.buildHeaders(input.credentials, stream),
+        transformedBody: body,
+      };
     }
 
     return {

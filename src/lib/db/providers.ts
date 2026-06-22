@@ -12,6 +12,7 @@ import {
 } from "./encryption";
 import { invalidateDbCache } from "./readCache";
 import { normalizeProviderSpecificData } from "@/lib/providers/requestDefaults";
+import { FREE_APIKEY_PROVIDER_IDS } from "@/shared/constants/providers";
 import { bumpProxyConfigGeneration } from "./settings";
 
 type JsonRecord = Record<string, unknown>;
@@ -136,6 +137,63 @@ function toNumberOrZero(value: unknown): number {
   return typeof value === "number" ? value : 0;
 }
 
+function isManagedNoAuthProvider(provider: unknown): provider is string {
+  return typeof provider === "string" && FREE_APIKEY_PROVIDER_IDS.has(provider);
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (entry): entry is string => typeof entry === "string" && entry.trim().length > 0
+  );
+}
+
+function mergeNoAuthProviderSpecificData(
+  existing: unknown,
+  incoming: unknown
+): JsonRecord | undefined {
+  const existingRecord = toRecord(existing);
+  const incomingRecord = toRecord(incoming);
+  const merged: JsonRecord = { ...existingRecord, ...incomingRecord };
+
+  const fingerprints = Array.from(
+    new Set([
+      ...toStringArray(existingRecord.fingerprints),
+      ...toStringArray(incomingRecord.fingerprints),
+    ])
+  );
+  if (fingerprints.length > 0) {
+    merged.fingerprints = fingerprints;
+  } else {
+    delete merged.fingerprints;
+  }
+
+  const existingProxyEntries = Array.isArray(existingRecord.accountProxies)
+    ? existingRecord.accountProxies
+    : [];
+  const incomingProxyEntries = Array.isArray(incomingRecord.accountProxies)
+    ? incomingRecord.accountProxies
+    : [];
+  const proxyEntries = [...existingProxyEntries, ...incomingProxyEntries];
+  if (proxyEntries.length > 0) {
+    const proxyMap = new Map<string, unknown>();
+    for (const entry of proxyEntries) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+      const fingerprint = toStringOrNull((entry as JsonRecord).fingerprint);
+      if (!fingerprint) continue;
+      proxyMap.set(fingerprint, entry);
+    }
+
+    if (proxyMap.size > 0) {
+      merged.accountProxies = Array.from(proxyMap.values());
+    } else {
+      delete merged.accountProxies;
+    }
+  }
+
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
 // ──────────────── Provider Connections ────────────────
 
 export async function getProviderConnections(filter: JsonRecord = {}) {
@@ -193,9 +251,13 @@ export async function getProviderConnectionById(id: string) {
 export async function createProviderConnection(data: JsonRecord) {
   const db = getDbInstance() as unknown as DbLike;
   const now = new Date().toISOString();
+  const providerId = toStringOrNull(data.provider);
+  const isNoAuthProvider = isManagedNoAuthProvider(providerId);
   const normalizedProviderSpecificData = normalizeProviderSpecificData(
-    toStringOrNull(data.provider),
-    data.providerSpecificData
+    providerId,
+    isNoAuthProvider
+      ? mergeNoAuthProviderSpecificData(undefined, data.providerSpecificData)
+      : data.providerSpecificData
   );
 
   // Upsert check
@@ -203,7 +265,16 @@ export async function createProviderConnection(data: JsonRecord) {
   // We need to check for workspace uniqueness, not just email
   let existing: JsonRecord | null = null;
 
-  if (data.authType === "oauth" && data.email) {
+  if (isNoAuthProvider) {
+    existing =
+      (db
+        .prepare(
+          "SELECT * FROM provider_connections WHERE provider = ? ORDER BY priority ASC, created_at ASC, updated_at DESC LIMIT 1"
+        )
+        .get(providerId) as JsonRecord | undefined) || null;
+  }
+
+  if (!existing && data.authType === "oauth" && data.email) {
     // For Codex, check for existing connection with same workspace
     const providerSpecificData = toRecord(data.providerSpecificData);
     const workspaceId = toStringOrNull(providerSpecificData.workspaceId);
@@ -239,7 +310,7 @@ export async function createProviderConnection(data: JsonRecord) {
           )
           .get(data.provider, data.email) as JsonRecord | undefined) || null;
     }
-  } else if (data.authType === "apikey") {
+  } else if (!existing && data.authType === "apikey") {
     // Name-based upsert (existing behavior): same provider + same name → update.
     if (data.name) {
       existing =
@@ -272,11 +343,22 @@ export async function createProviderConnection(data: JsonRecord) {
   if (existing) {
     const existingId = toStringOrNull(existing.id);
     if (!existingId) return null;
-    const merged: JsonRecord = { ...toRecord(rowToCamel(existing)), ...data, updatedAt: now };
-    merged.providerSpecificData = normalizeProviderSpecificData(
-      toStringOrNull(merged.provider),
-      merged.providerSpecificData
-    );
+    const existingRow = toRecord(rowToCamel(existing));
+    const merged: JsonRecord = { ...existingRow, ...data, updatedAt: now };
+    if (isNoAuthProvider) {
+      merged.name = toStringOrNull(existingRow.name) || toStringOrNull(data.name);
+      merged.authType =
+        toStringOrNull(existingRow.authType) || toStringOrNull(data.authType) || "apikey";
+      merged.providerSpecificData = normalizeProviderSpecificData(
+        providerId,
+        mergeNoAuthProviderSpecificData(existingRow.providerSpecificData, data.providerSpecificData)
+      );
+    } else {
+      merged.providerSpecificData = normalizeProviderSpecificData(
+        toStringOrNull(merged.provider),
+        merged.providerSpecificData
+      );
+    }
     _updateConnectionRow(db, existingId, merged);
     backupDbFile("pre-write");
     return withNullableRateLimitOverrides(
@@ -381,9 +463,9 @@ export async function createProviderConnection(data: JsonRecord) {
   }
 
   _insertConnectionRow(db, encryptConnectionFields({ ...connection }));
-  const providerId = toStringOrNull(data.provider);
-  if (providerId) {
-    _reorderConnections(db, providerId);
+  const insertedProviderId = toStringOrNull(data.provider);
+  if (insertedProviderId) {
+    _reorderConnections(db, insertedProviderId);
   }
   backupDbFile("pre-write");
   invalidateDbCache("connections"); // Bust connections read cache
