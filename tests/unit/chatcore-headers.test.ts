@@ -1,7 +1,10 @@
-import test from "node:test";
+import test, { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { getHeaderValueCaseInsensitive } from "../../open-sse/handlers/chatCore/headers.ts";
+import {
+  getHeaderValueCaseInsensitive,
+  resolveCompressionHeader,
+} from "../../open-sse/handlers/chatCore/headers.ts";
 
 test("getHeaderValueCaseInsensitive reads a Headers instance via .get()", () => {
   const h = new Headers({ "Content-Type": "text/event-stream" });
@@ -48,4 +51,23 @@ test("getHeaderValueCaseInsensitive returns null for null/undefined/non-object i
     ),
     null
   );
+});
+
+describe("resolveCompressionHeader", () => {
+  it("reads the raw value case-insensitively and trims it", () => {
+    assert.equal(
+      resolveCompressionHeader({ "x-omniroute-compression": "  engine:rtk " }),
+      "engine:rtk"
+    );
+    assert.equal(
+      resolveCompressionHeader(new Headers({ "X-OmniRoute-Compression": "off" })),
+      "off"
+    );
+  });
+
+  it("returns null when absent or blank", () => {
+    assert.equal(resolveCompressionHeader({}), null);
+    assert.equal(resolveCompressionHeader({ "x-omniroute-compression": "   " }), null);
+    assert.equal(resolveCompressionHeader(null), null);
+  });
 });

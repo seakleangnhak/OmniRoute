@@ -1,10 +1,11 @@
 import { BaseExecutor, type ExecuteInput } from "./base.ts";
 import { solveDeepSeekPowAsync } from "../lib/deepseek-pow.ts";
+import { type OpenAIToolCall } from "../translator/webTools.ts";
 import {
-  serializeToolsToPrompt,
-  parseToolCallsFromText,
-  type OpenAIToolCall,
-} from "../translator/webTools.ts";
+  serializeDeepSeekToolPrompt,
+  parseDeepSeekToolCalls,
+  buildToolConversationPrompt,
+} from "../translator/deepseekWebTools.ts";
 import { sanitizeErrorMessage } from "../utils/error.ts";
 
 export const DEEPSEEK_WEB_BASE = "https://chat.deepseek.com";
@@ -738,6 +739,10 @@ function buildToolAwareResult(opts: {
     const sse = new ReadableStream({
       start(controller) {
         emit(controller, { role: "assistant", content: "" }, null);
+        // Surrounding natural-language text (and reasoning) is emitted before the tool_calls
+        // so a model reply that interleaves a plan with a call still reaches the client (#7).
+        if (reasoningContent) emit(controller, { reasoning_content: reasoningContent }, null);
+        if (content) emit(controller, { content }, null);
         if (hasCalls) {
           emit(
             controller,
@@ -751,8 +756,6 @@ function buildToolAwareResult(opts: {
             },
             null
           );
-        } else if (content) {
-          emit(controller, { content }, null);
         }
         emit(controller, {}, finishReason);
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
@@ -826,7 +829,7 @@ export class DeepSeekWebExecutor extends BaseExecutor {
     // back into OpenAI tool_calls on the way out.
     const requestedTools = bodyObj.tools;
     const hasTools = Array.isArray(requestedTools) && requestedTools.length > 0;
-    const toolSystemPrompt = hasTools ? serializeToolsToPrompt(requestedTools) : "";
+    const toolSystemPrompt = hasTools ? serializeDeepSeekToolPrompt(requestedTools) : "";
 
     const messages = (Array.isArray(bodyObj.messages) ? bodyObj.messages : []) as Array<{
       role: string;
@@ -868,7 +871,12 @@ export class DeepSeekWebExecutor extends BaseExecutor {
       const accessToken = await acquireAccessToken(userToken, signal, log);
       log?.info?.("DEEPSEEK-WEB", `Token acquired in ${Date.now() - t0}ms`);
 
-      const prompt = messagesToPrompt(promptMessages, historyWindow);
+      // Tool (agentic) requests replay the whole trajectory — prior tool calls and their
+      // results — so the model keeps context across turns instead of restarting each time.
+      // Plain chat keeps the legacy last-user-message / rolling-window behavior.
+      const prompt = hasTools
+        ? buildToolConversationPrompt(messages, toolSystemPrompt)
+        : messagesToPrompt(promptMessages, historyWindow);
       const refFileIds = Array.isArray(bodyObj.ref_file_ids) ? bodyObj.ref_file_ids : [];
       log?.info?.(
         "DEEPSEEK-WEB",
@@ -1030,7 +1038,7 @@ export class DeepSeekWebExecutor extends BaseExecutor {
       if (hasTools) {
         const { content, reasoningContent } = await collectSSEContent(resp.body!, clientModel);
         await cleanupFn();
-        const { content: cleanedContent, toolCalls } = parseToolCallsFromText(
+        const { content: cleanedContent, toolCalls } = parseDeepSeekToolCalls(
           content,
           `call-${Date.now()}`,
           requestedTools

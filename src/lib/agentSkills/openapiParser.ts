@@ -9,7 +9,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import yaml from "js-yaml";
+import * as yaml from "js-yaml";
 import type { SkillArea } from "./types";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -118,7 +118,6 @@ function resolveArea(urlPath: string): SkillArea | null {
   return null;
 }
 
- 
 function extractOperations(pathsObj: Record<string, any>): OpenapiPath[] {
   const ops: OpenapiPath[] = [];
 
@@ -163,7 +162,6 @@ export function parseOpenapi(): ParsedOpenapi {
     );
   }
 
-   
   const doc = yaml.load(rawContent) as Record<string, any>;
 
   if (!doc || typeof doc !== "object") {

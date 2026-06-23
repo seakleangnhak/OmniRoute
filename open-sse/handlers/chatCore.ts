@@ -2,6 +2,7 @@ import { injectMemoryAndSkills } from "./chatCore/memorySkillsInjection.ts";
 import { checkIdempotencyCache } from "./chatCore/idempotency.ts";
 import { checkSemanticCache } from "./chatCore/semanticCache.ts";
 import { sanitizeChatRequestBody } from "./chatCore/sanitization.ts";
+import { resolveCompressionHeader } from "./chatCore/headers.ts";
 import { CORS_HEADERS } from "../utils/cors.ts";
 import { HEAP_PRESSURE_THRESHOLD_MB } from "../utils/heapPressure.ts";
 import { normalizeHeaders } from "../utils/headers.ts";
@@ -110,7 +111,11 @@ import {
 } from "@/lib/usage/tokenAccounting";
 import { recordCost } from "@/domain/costRules";
 import { calculateCost } from "@/lib/usage/costCalculator";
-import { buildOmniRouteResponseMetaHeaders } from "@/domain/omnirouteResponseMeta";
+import {
+  attachOmniRouteMetaHeaders,
+  buildOmniRouteResponseMetaHeaders,
+} from "@/domain/omnirouteResponseMeta";
+import { echoModelInObject } from "../services/responseModelEcho.ts";
 import { CLAUDE_OAUTH_TOOL_PREFIX } from "../translator/request/openai-to-claude.ts";
 import {
   getModelNormalizeToolCallId,
@@ -2053,6 +2058,13 @@ export async function handleChatCore({
   const noLogEnabled = apiKeyInfo?.noLog === true;
   // Consolidate settings reads — fetch once, reuse throughout the request
   const settings = cachedSettings ?? (await getCachedSettings());
+  // #1311 (opt-in): echo the client-requested alias/combo name in the response `model`
+  // field instead of the upstream model, so strict clients (Claude Desktop) that validate
+  // response.model === request.model stop rejecting alias/combo requests with a 401.
+  const echoModel =
+    settings.echoRequestedModelName === true && typeof requestedModel === "string" && requestedModel
+      ? requestedModel
+      : null;
   const detailedLoggingEnabled =
     !noLogEnabled &&
     (settings.call_log_pipeline_enabled === true ||
@@ -2369,6 +2381,7 @@ export async function handleChatCore({
   let cavemanOutputModeApplied = false;
   let cavemanOutputModeIntensity: string | null = null;
   let preCompressionBody: typeof body | null = null;
+  let compressionResponseMeta: string | null = null;
   if (body && Array.isArray(allMessages) && allMessages.length > 0) {
     let estimatedTokens = estimateTokens(allMessages);
     let promptCompressionEnabled = false;
@@ -2388,8 +2401,13 @@ export async function handleChatCore({
     // --- Modular Compression Pipeline (Phase 1 Lite + Phase 2 Standard/Caveman + Phase 3 Aggressive) ---
     // Runs BEFORE the existing reactive compressContext() to proactively reduce tokens.
     try {
-      const { selectCompressionStrategy, applyCompressionAsync } =
-        await import("../services/compression/strategySelector.ts");
+      const {
+        selectCompressionStrategy,
+        selectCompressionPlan,
+        applyCompressionAsync,
+        formatCompressionMeta,
+        buildNamedComboLookup,
+      } = await import("../services/compression/strategySelector.ts");
       const { trackCompressionStats } = await import("../services/compression/stats.ts");
       let config: CompressionConfig = compressionSettings ?? {
         enabled: false,
@@ -2556,12 +2574,29 @@ export async function handleChatCore({
           );
         }
       }
+      let namedCombos: Record<string, CompressionPipelineStep[]> = {};
+      try {
+        const { listCompressionCombos } = await import("../../src/lib/db/compressionCombos.ts");
+        namedCombos = buildNamedComboLookup(listCompressionCombos());
+      } catch (err) {
+        log?.debug?.(
+          "COMPRESSION",
+          "Named combos load skipped: " + (err instanceof Error ? err.message : String(err))
+        );
+      }
+      // Phase 3: per-request override. Unknown values fall through in the resolver (never error).
+      const compressionHeader = resolveCompressionHeader(clientRawRequest?.headers ?? null);
+      if (compressionHeader) {
+        log?.debug?.("COMPRESSION", `x-omniroute-compression header: ${compressionHeader}`);
+      }
       const modeBeforeOutputTransform = selectCompressionStrategy(
         config,
         compressionComboKey,
         estimatedTokens,
         body as Record<string, unknown>,
-        { provider, targetFormat, model: effectiveModel }
+        { provider, targetFormat, model: effectiveModel },
+        namedCombos,
+        compressionHeader
       );
       if (
         modeBeforeOutputTransform === "stacked" &&
@@ -2617,13 +2652,32 @@ export async function handleChatCore({
         }
       }
       const compressionInputBody = body as Record<string, unknown>;
-      const mode = selectCompressionStrategy(
+      const compressionPlan = selectCompressionPlan(
         config,
         compressionComboKey,
         estimatedTokens,
         compressionInputBody,
-        { provider, targetFormat, model: effectiveModel }
+        { provider, targetFormat, model: effectiveModel },
+        namedCombos,
+        compressionHeader
       );
+      const mode = compressionPlan.mode as CompressionConfig["defaultMode"];
+      compressionResponseMeta = formatCompressionMeta(compressionPlan);
+      // When the per-engine toggle map derives a stacked pipeline (and no named/routing
+      // combo already set config.stackedPipeline), feed that derived pipeline through so
+      // applyCompressionAsync (which reads config.stackedPipeline for stacked mode) runs the
+      // engines the operator actually toggled on instead of the built-in rtk+caveman default.
+      if (
+        mode === "stacked" &&
+        compressionPlan.stackedPipeline.length > 0 &&
+        !compressionComboApplied &&
+        !config.compressionComboId
+      ) {
+        config = {
+          ...config,
+          stackedPipeline: compressionPlan.stackedPipeline as CompressionConfig["stackedPipeline"],
+        };
+      }
       let compressionAnalyticsRecorded = false;
       if (mode !== "off") {
         const result = await applyCompressionAsync(compressionInputBody, mode, {
@@ -4254,7 +4308,11 @@ export async function handleChatCore({
         : formatProviderError(error, provider, model, failureStatus);
     const upstreamErrorCode = getUpstreamErrorIdentifier(error);
     const upstreamErrorType =
-      upstreamErrorCode === ANTIGRAVITY_PRE_RESPONSE_TIMEOUT_CODE ? "upstream_timeout" : undefined;
+      upstreamErrorCode === ANTIGRAVITY_PRE_RESPONSE_TIMEOUT_CODE
+        ? "upstream_timeout"
+        : failureStatus === 401
+          ? "authentication_error"
+          : undefined;
     appendRequestLog({
       model,
       provider,
@@ -5347,21 +5405,28 @@ export async function handleChatCore({
       providerResponse: responseBody,
       clientResponse: translatedResponse,
     });
+    const responseHeaders: Record<string, string> = {
+      "Content-Type": "application/json",
+      [OMNIROUTE_RESPONSE_HEADERS.cache]: "MISS",
+    };
+    attachOmniRouteMetaHeaders(responseHeaders, {
+      provider,
+      model,
+      cacheHit: false,
+      latencyMs: Date.now() - startTime,
+      usage: responseUsage,
+      costUsd: estimatedCost,
+      requestId: skillRequestId,
+    });
+    if (compressionResponseMeta) {
+      responseHeaders[OMNIROUTE_RESPONSE_HEADERS.compression] = compressionResponseMeta;
+    }
+    // #1311: echo the requested alias/combo name in the non-streaming response model.
+    if (echoModel) echoModelInObject(translatedResponse, echoModel);
     return {
       success: true,
       response: new Response(JSON.stringify(translatedResponse), {
-        headers: {
-          "Content-Type": "application/json",
-          [OMNIROUTE_RESPONSE_HEADERS.cache]: "MISS",
-          ...buildOmniRouteResponseMetaHeaders({
-            provider,
-            model,
-            cacheHit: false,
-            latencyMs: Date.now() - startTime,
-            usage: responseUsage,
-            costUsd: estimatedCost,
-          }),
-        },
+        headers: responseHeaders,
       }),
     };
   }
@@ -5481,6 +5546,9 @@ export async function handleChatCore({
     }),
     "x-omniroute-request-id": pendingRequestId,
   };
+  if (compressionResponseMeta) {
+    responseHeaders[OMNIROUTE_RESPONSE_HEADERS.compression] = compressionResponseMeta;
+  }
 
   // Create transform stream with logger for streaming response
   let transformStream;

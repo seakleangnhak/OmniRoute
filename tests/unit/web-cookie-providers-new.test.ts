@@ -127,7 +127,10 @@ test("v0 Vercel Web executor is registered", () => {
 
 test("Kimi Web executor is registered", () => {
   assert.ok(hasSpecializedExecutor("kimi-web"));
-  assert.ok(hasSpecializedExecutor("kimi"));
+  // #4699: the `kimi` API-key provider must NOT be routed through KimiWebExecutor
+  // (Bug 2) — it correctly falls through to DefaultExecutor. Only the explicit
+  // kimi-web alias keeps the specialized web executor.
+  assert.equal(hasSpecializedExecutor("kimi"), false);
   const executor = getExecutor("kimi-web");
   assert.ok(executor instanceof KimiWebExecutor);
 });

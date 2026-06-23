@@ -1,4 +1,5 @@
 import { DEFAULT_API_LIMITS, PROVIDER_PROFILES } from "@omniroute/open-sse/config/constants";
+import { resolveFeatureFlag } from "@/shared/utils/featureFlags";
 
 type JsonRecord = Record<string, unknown>;
 type AuthCategory = "oauth" | "apikey";
@@ -105,7 +106,7 @@ export interface StreamRecoverySettings {
    * open-sse/config/constants.ts) so an early cutoff can be retried before any byte
    * reaches the client. OFF by default because holding the window adds up to
    * STREAM_RECOVERY.HOLDBACK_MS of time-to-first-token latency on every stream.
-   * Default seeds from the STREAM_RECOVERY_ENABLED env var.
+   * Default seeds from the STREAM_RECOVERY_ENABLED feature flag / env var.
    */
   enabled: boolean;
   /**
@@ -113,8 +114,8 @@ export interface StreamRecoverySettings {
    * bytes already reached the client, re-request with the partial text as an assistant
    * prefill and stitch the missing suffix (plain-text OpenAI-compatible streams only;
    * never with a tool call in flight). OFF by default because the recovered tail arrives
-   * as one burst rather than token-by-token. Default seeds from
-   * STREAM_RECOVERY_MIDSTREAM_ENABLED.
+   * as one burst rather than token-by-token. Default seeds from the
+   * STREAM_RECOVERY_MIDSTREAM_ENABLED feature flag / env var.
    */
   continueMidStream: boolean;
 }
@@ -169,6 +170,40 @@ function toBoolean(value: unknown, fallback: boolean): boolean {
 }
 
 const LEGACY_REQUEST_QUEUE_MAX_WAIT_MS = 120_000;
+
+function parseFeatureFlagBoolean(value: string, fallback: boolean): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") {
+    return true;
+  }
+  if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") {
+    return false;
+  }
+  return fallback;
+}
+
+function resolveBooleanFeatureFlag(key: string, fallback: boolean): boolean {
+  try {
+    return parseFeatureFlagBoolean(resolveFeatureFlag(key), fallback);
+  } catch (error) {
+    const envValue = process.env[key];
+    if (typeof envValue === "string" && envValue.trim() !== "") {
+      return parseFeatureFlagBoolean(envValue, fallback);
+    }
+    console.error(
+      `[resilience] Failed to resolve ${key}, falling back to ${String(fallback)}:`,
+      error instanceof Error ? error.message : error
+    );
+    return fallback;
+  }
+}
+
+function resolveStreamRecoveryDefaults(): StreamRecoverySettings {
+  return {
+    enabled: resolveBooleanFeatureFlag("STREAM_RECOVERY_ENABLED", false),
+    continueMidStream: resolveBooleanFeatureFlag("STREAM_RECOVERY_MIDSTREAM_ENABLED", false),
+  };
+}
 
 export const DEFAULT_REQUEST_QUEUE_MAX_WAIT_MS = (() => {
   const parsed = Number(process.env.RATE_LIMIT_MAX_WAIT_MS || "10000");
@@ -519,6 +554,7 @@ function normalizeStreamRecoverySettings(
 function buildLegacyFallback(settings: JsonRecord): ResilienceSettings {
   const profiles = asRecord(settings.providerProfiles);
   const defaults = asRecord(settings.rateLimitDefaults);
+  const streamRecoveryDefaults = resolveStreamRecoveryDefaults();
 
   const oauthLegacy = asRecord(profiles.oauth);
   const apikeyLegacy = asRecord(profiles.apikey);
@@ -602,7 +638,7 @@ function buildLegacyFallback(settings: JsonRecord): ResilienceSettings {
     },
     providerCooldown: DEFAULT_RESILIENCE_SETTINGS.providerCooldown,
     quotaPreflight: DEFAULT_RESILIENCE_SETTINGS.quotaPreflight,
-    streamRecovery: DEFAULT_RESILIENCE_SETTINGS.streamRecovery,
+    streamRecovery: streamRecoveryDefaults,
   };
 }
 

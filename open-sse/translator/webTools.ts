@@ -34,7 +34,7 @@ interface ToolParseCandidate {
   requireRequestedTool: boolean;
 }
 
-interface RequestedToolName {
+export interface RequestedToolName {
   original: string;
   normalized: string;
 }
@@ -45,7 +45,7 @@ function toRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function getRequestedToolNames(tools: unknown): RequestedToolName[] {
+export function getRequestedToolNames(tools: unknown): RequestedToolName[] {
   if (!Array.isArray(tools)) return [];
   const names: RequestedToolName[] = [];
   const seen = new Set<string>();
@@ -102,7 +102,7 @@ function scoreToolName(emitted: string, requested: RequestedToolName): number {
   return similarity >= 0.72 ? similarity : 0;
 }
 
-function resolveRequestedToolName(
+export function resolveRequestedToolName(
   emitted: string,
   requestedTools: RequestedToolName[]
 ): string | null {
@@ -230,7 +230,7 @@ function normalizeLooseJson(value: string): string {
     .replace(/,\s*([}\]])/g, "$1");
 }
 
-function parseLooseJsonObject(raw: string): Record<string, unknown> | null {
+export function parseLooseJsonObject(raw: string): Record<string, unknown> | null {
   const trimmed = stripCodeFence(raw);
   for (const candidate of [trimmed, normalizeLooseJson(trimmed)]) {
     try {
@@ -306,7 +306,7 @@ function rangesOverlap(
   return a.start < b.end && b.start < a.end;
 }
 
-function stripRanges(text: string, ranges: Array<{ start: number; end: number }>): string {
+export function stripRanges(text: string, ranges: Array<{ start: number; end: number }>): string {
   let content = text;
   const sorted = [...ranges].sort((a, b) => b.start - a.start);
   for (const range of sorted) {
@@ -328,7 +328,7 @@ function stripRanges(text: string, ranges: Array<{ start: number; end: number }>
   return content.replace(/\n{3,}/g, "\n\n").trim();
 }
 
-function toArgumentsString(value: unknown): string {
+export function toArgumentsString(value: unknown): string {
   if (value === undefined) return "{}";
   if (typeof value === "string") {
     const parsed = parseLooseJsonObject(value);
