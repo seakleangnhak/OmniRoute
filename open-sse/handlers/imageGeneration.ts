@@ -990,6 +990,7 @@ async function handleOpenAIImageGeneration({
     provider,
     duration: Date.now() - startTime,
     tokens: { prompt_tokens: 0, completion_tokens: 0 },
+    imagesCount: result.success ? result.data?.data?.length || 1 : 0,
     error: result.success
       ? null
       : typeof result.error === "string"
@@ -1109,6 +1110,7 @@ export async function handleOpenAIImageEdit({
     provider,
     duration: Date.now() - startTime,
     tokens: { prompt_tokens: 0, completion_tokens: 0 },
+    imagesCount: result.success ? result.data?.data?.length || 1 : 0,
     error: result.success
       ? null
       : typeof result.error === "string"
