@@ -989,7 +989,11 @@ async function handleOpenAIImageGeneration({
     model: `${provider}/${model}`,
     provider,
     duration: Date.now() - startTime,
-    tokens: { prompt_tokens: 0, completion_tokens: 0 },
+    tokens: {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      images: result.success ? result.data?.data?.length || 1 : 0,
+    },
     imagesCount: result.success ? result.data?.data?.length || 1 : 0,
     error: result.success
       ? null
@@ -1109,7 +1113,11 @@ export async function handleOpenAIImageEdit({
     model: `${provider}/${model}`,
     provider,
     duration: Date.now() - startTime,
-    tokens: { prompt_tokens: 0, completion_tokens: 0 },
+    tokens: {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      images: result.success ? result.data?.data?.length || 1 : 0,
+    },
     imagesCount: result.success ? result.data?.data?.length || 1 : 0,
     error: result.success
       ? null
