@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -20,6 +21,10 @@ import {
 const projectRoot = process.cwd();
 const distDir = path.resolve(process.env.NEXT_DIST_DIR || ".build/next");
 const backupRoot = path.join(os.tmpdir(), `omniroute-build-isolated-${process.pid}-${Date.now()}`);
+const DEFAULT_BUILD_MEMORY_MB = 4096;
+const MIN_BUILD_MEMORY_MB = 1536;
+const MAX_AUTO_BUILD_MEMORY_MB = 4096;
+const DEFAULT_CONTAINER_BUILD_MEMORY_MB = 3072;
 
 export function getTransientBuildPaths(rootDir = projectRoot, env = process.env) {
   const paths = [
@@ -119,13 +124,68 @@ function withoutMaxOldSpaceSize(nodeOptions = "") {
   return kept.join(" ");
 }
 
-function resolveBuildMemoryMb(baseEnv = process.env) {
-  const rawValue = baseEnv.OMNIROUTE_BUILD_MEMORY_MB || baseEnv.NEXT_BUILD_MEMORY_MB || "4096";
-  const parsed = Number.parseInt(rawValue, 10);
-  if (!Number.isFinite(parsed) || parsed < 1024) {
-    return "4096";
+function roundDownTo256(valueMb) {
+  return Math.floor(valueMb / 256) * 256;
+}
+
+function readConstrainedMemoryBytes() {
+  const candidates = ["/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"];
+
+  for (const candidate of candidates) {
+    try {
+      const raw = fsSync.readFileSync(candidate, "utf8").trim();
+      if (!raw || raw === "max") continue;
+      const parsed = Number.parseInt(raw, 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) continue;
+      // Ignore bogus "effectively unlimited" cgroup values.
+      if (parsed >= 9_000_000_000_000_000_000) continue;
+      return parsed;
+    } catch {
+      // Best effort only.
+    }
   }
-  return String(parsed);
+
+  return null;
+}
+
+function isLikelyContainerBuild(baseEnv = process.env) {
+  if (baseEnv.BUILDKIT_SANDBOX_HOSTNAME) return true;
+  if (baseEnv.container || baseEnv.CONTAINER) return true;
+  return fsSync.existsSync("/.dockerenv") || fsSync.existsSync("/run/.containerenv");
+}
+
+export function resolveBuildMemoryMb(baseEnv = process.env) {
+  const explicitRaw = baseEnv.OMNIROUTE_BUILD_MEMORY_MB || baseEnv.NEXT_BUILD_MEMORY_MB;
+  if (typeof explicitRaw === "string" && explicitRaw.trim().length > 0) {
+    const parsed = Number.parseInt(explicitRaw, 10);
+    if (Number.isFinite(parsed) && parsed >= 1024) {
+      return String(parsed);
+    }
+  }
+
+  const constrainedBytes = readConstrainedMemoryBytes();
+  if (constrainedBytes === null && isLikelyContainerBuild(baseEnv)) {
+    return String(DEFAULT_CONTAINER_BUILD_MEMORY_MB);
+  }
+  const totalMemoryBytes =
+    typeof constrainedBytes === "number" && constrainedBytes > 0 ? constrainedBytes : os.totalmem();
+  const totalMemoryMb = Math.floor(totalMemoryBytes / 1024 / 1024);
+
+  if (!Number.isFinite(totalMemoryMb) || totalMemoryMb <= 0) {
+    return String(DEFAULT_BUILD_MEMORY_MB);
+  }
+
+  const reservedForOsMb = 768;
+  const autoSizedMb = roundDownTo256(
+    Math.max(MIN_BUILD_MEMORY_MB, totalMemoryMb - reservedForOsMb)
+  );
+  const boundedMb = Math.min(MAX_AUTO_BUILD_MEMORY_MB, autoSizedMb);
+
+  if (!Number.isFinite(boundedMb) || boundedMb < MIN_BUILD_MEMORY_MB) {
+    return String(DEFAULT_BUILD_MEMORY_MB);
+  }
+
+  return String(boundedMb);
 }
 
 export function resolveNextBuildBundlerFlag(baseEnv = process.env) {
@@ -215,6 +275,13 @@ export async function main() {
   const transientBuildPaths = getTransientBuildPaths();
 
   try {
+    const effectiveBuildEnv = resolveNextBuildEnv(process.env);
+    console.log(
+      `[build-next-isolated] Next.js build heap limit: ${
+        effectiveBuildEnv.NODE_OPTIONS.match(/--max-old-space-size=(\d+)/)?.[1] || "unknown"
+      } MB`
+    );
+
     for (const entry of transientBuildPaths) {
       if (!(await exists(entry.sourcePath))) continue;
       await movePath(entry.sourcePath, entry.backupPath);

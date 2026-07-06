@@ -38,8 +38,15 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
   && npm rebuild better-sqlite3 \
   && node -e "require('better-sqlite3')(':memory:').close()"
 
-ARG OMNIROUTE_BUILD_MEMORY_MB=4096
+# BuildKit / Docker Desktop frequently hides the builder VM memory ceiling from
+# Node's cgroup probes, which makes auto-sizing fall back to host RAM. A 3072 MB
+# V8 old-space cap now OOMs in the webpack optimization pass on v3.8.34, while
+# 4096 MB previously starved some builder VMs later in page-data collection with
+# `cannot allocate memory`. Keep the Docker default at a middle ground and let
+# larger builders still opt in via `--build-arg OMNIROUTE_BUILD_MEMORY_MB=...`.
+ARG OMNIROUTE_BUILD_MEMORY_MB=3584
 ENV OMNIROUTE_BUILD_MEMORY_MB=${OMNIROUTE_BUILD_MEMORY_MB}
+ENV NODE_OPTIONS="--max-old-space-size=${OMNIROUTE_BUILD_MEMORY_MB}"
 ARG OMNIROUTE_NEXT_BUILD_WORKERS=1
 ENV OMNIROUTE_NEXT_BUILD_WORKERS=${OMNIROUTE_NEXT_BUILD_WORKERS}
 ENV NEXT_TELEMETRY_DISABLED=1

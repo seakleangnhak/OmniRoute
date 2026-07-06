@@ -62,6 +62,7 @@ import {
   checkPipelineGates,
   executeChatWithBreaker,
   handleNoCredentials,
+  isCredentialSelectionExhausted,
   safeResolveProxy,
   safeLogEvents,
   shouldRetryStreamEarlyEof,
@@ -606,7 +607,7 @@ export async function handleChat(
           ...(target?.connectionId ? { forcedConnectionId: target.connectionId } : {}),
         }
       );
-      if (!creds || creds.allRateLimited) return false;
+      if (isCredentialSelectionExhausted(creds)) return false;
 
       comboPreselectedCredentials.set(getComboCredentialCacheKey(modelString, target), creds);
       return true;
@@ -1013,7 +1014,7 @@ async function handleSingleModelChat(
             );
       preselectedCredentials = null;
 
-      if (!credentials || "allRateLimited" in credentials) {
+      if (isCredentialSelectionExhausted(credentials)) {
         if (credentials?.allRateLimited) {
           const retryDecision = getCooldownAwareRetryDecision({
             retryAfter: credentials.retryAfter,

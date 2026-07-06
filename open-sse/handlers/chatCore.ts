@@ -4024,7 +4024,7 @@ export async function handleChatCore({
                   excludeConnectionIds: [...codexExcludedIds],
                 }).catch(() => null);
 
-                if (!nextCreds || nextCreds.allRateLimited) {
+                if (!nextCreds || nextCreds.allRateLimited || nextCreds.allExpired) {
                   log?.warn?.("CODEX_FAILOVER", "No more codex accounts available — returning 429");
                   return res;
                 }

@@ -9,6 +9,7 @@ const ACCOUNT_PROVIDER_NAMES: Record<string, string> = {
   mimocode: "MiMoCode",
   opencode: "OpenCode",
 };
+const BULK_ACCOUNT_PROVIDER_IDS = new Set(["mimocode", "opencode"]);
 
 interface NoAuthProviderControlsProps {
   providerId: string;
@@ -83,6 +84,7 @@ export default function NoAuthProviderControls({
 
   const accountProviderName = ACCOUNT_PROVIDER_NAMES[providerId];
   if (accountProviderName) {
+    const supportsBulkAccountManagement = BULK_ACCOUNT_PROVIDER_IDS.has(providerId);
     return (
       <NoAuthAccountCard
         providerId={providerId}
@@ -91,6 +93,8 @@ export default function NoAuthProviderControls({
         enabled={enabled}
         savingEnabled={savingEnabled}
         onEnabledChange={handleEnabledChange}
+        allowDeleteAll={supportsBulkAccountManagement}
+        enhancedMode={supportsBulkAccountManagement}
       />
     );
   }

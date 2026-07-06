@@ -94,7 +94,6 @@ const nextConfig = {
   },
   output: "standalone",
   compress: true,
-  productionBrowserSourceMaps: false,
   // OmniRoute is a proxy for AI APIs — request bodies routinely include
   // multi-MB payloads (vision models, image edits, base64-encoded files,
   // long chat histories with embedded images). Next.js's Server Action
@@ -106,6 +105,10 @@ const nextConfig = {
   // more.
   experimental: {
     ...(hasBuildWorkerOverride ? { cpus: buildWorkerCount } : {}),
+    // Next.js documents this flag as a low-risk way to reduce webpack peak
+    // memory during production builds, which matters on constrained Docker
+    // builders where OmniRoute's app graph is otherwise close to the limit.
+    webpackMemoryOptimizations: true,
     serverActions: {
       bodySizeLimit: process.env.OMNIROUTE_SERVER_ACTIONS_BODY_LIMIT || "50mb",
     },
@@ -127,7 +130,11 @@ const nextConfig = {
       "next-intl",
       "@omniroute/open-sse",
     ],
+    // Source maps add measurable build-time memory pressure and are not needed
+    // in the standalone production bundle we ship from Docker.
+    serverSourceMaps: false,
   },
+  productionBrowserSourceMaps: false,
   outputFileTracingRoot: projectRoot,
   outputFileTracingIncludes: {
     // Migration SQL and compression rule/filter JSON files are read via fs at

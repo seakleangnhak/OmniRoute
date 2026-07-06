@@ -24,6 +24,7 @@ import {
 } from "@/lib/providers/claudeExtraUsage";
 import { requireManagementAuth } from "@/lib/api/requireManagementAuth";
 import { isApiKeyRevealEnabled, maskStoredApiKey } from "@/lib/apiKeyExposure";
+import { supportsApiKeyOnFreeProvider } from "@/shared/constants/providers";
 import {
   refreshConnectionRateLimits,
   enableRateLimitProtection,
@@ -51,6 +52,41 @@ function normalizeCodexLimitPolicy(
     useWeekly:
       typeof incomingRecord.useWeekly === "boolean" ? incomingRecord.useWeekly : existingUseWeekly,
   };
+}
+
+function getNormalizedFingerprintList(providerSpecificData: unknown): string[] {
+  const record =
+    providerSpecificData &&
+    typeof providerSpecificData === "object" &&
+    !Array.isArray(providerSpecificData)
+      ? (providerSpecificData as Record<string, unknown>)
+      : {};
+  const raw = record.fingerprints;
+  if (!Array.isArray(raw)) return [];
+  return Array.from(
+    new Set(
+      raw
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        .map((value) => value.trim())
+    )
+  ).sort();
+}
+
+function shouldReactivateManagedNoAuthConnection(
+  providerId: unknown,
+  existingProviderSpecificData: unknown,
+  nextProviderSpecificData: unknown
+): boolean {
+  if (typeof providerId !== "string" || !supportsApiKeyOnFreeProvider(providerId)) {
+    return false;
+  }
+
+  const previousFingerprints = getNormalizedFingerprintList(existingProviderSpecificData);
+  const nextFingerprints = getNormalizedFingerprintList(nextProviderSpecificData);
+  if (nextFingerprints.length === 0) return false;
+  if (previousFingerprints.length !== nextFingerprints.length) return true;
+
+  return previousFingerprints.some((value, index) => value !== nextFingerprints[index]);
 }
 
 // GET /api/providers/[id] - Get single connection
@@ -283,6 +319,24 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
         if (clearExtraUsageUpdate) {
           Object.assign(updateData, clearExtraUsageUpdate);
         }
+      }
+
+      if (
+        shouldReactivateManagedNoAuthConnection(
+          existing.provider,
+          existingPsd,
+          updateData.providerSpecificData
+        )
+      ) {
+        if (isActive === undefined) updateData.isActive = true;
+        if (testStatus === undefined) updateData.testStatus = "active";
+        if (lastError === undefined) updateData.lastError = null;
+        if (lastErrorAt === undefined) updateData.lastErrorAt = null;
+        if (lastErrorType === undefined) updateData.lastErrorType = null;
+        if (lastErrorSource === undefined) updateData.lastErrorSource = null;
+        if (errorCode === undefined) updateData.errorCode = null;
+        if (rateLimitedUntil === undefined) updateData.rateLimitedUntil = null;
+        updateData.backoffLevel = 0;
       }
     }
 

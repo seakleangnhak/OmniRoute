@@ -50,6 +50,7 @@ import {
   resolveProviderId,
   NOAUTH_PROVIDERS,
   WEB_COOKIE_PROVIDERS,
+  supportsApiKeyOnFreeProvider,
 } from "@/shared/constants/providers";
 import { isModelExcludedByConnection } from "@/domain/connectionModelRules";
 import * as log from "../utils/logger";
@@ -788,7 +789,18 @@ function providerCanUseSyntheticNoAuthFallback(providerId: string): boolean {
   );
 }
 
-function maybeSyntheticNoAuthFallback(providerId: string, excludedConnectionIds: Set<string>) {
+function hasManagedNoAuthConnections(connections: ProviderConnectionView[]): boolean {
+  return connections.some((connection) => supportsApiKeyOnFreeProvider(connection.provider));
+}
+
+function maybeSyntheticNoAuthFallback(
+  providerId: string,
+  excludedConnectionIds: Set<string>,
+  options: { hasManagedNoAuthConnection?: boolean } = {}
+) {
+  if (options.hasManagedNoAuthConnection) {
+    return null;
+  }
   if (!providerCanUseSyntheticNoAuthFallback(providerId)) return null;
   if (excludedConnectionIds.has(SYNTHETIC_NOAUTH_CONNECTION_ID)) return null;
   return buildSyntheticNoAuthCredentials();
@@ -901,6 +913,10 @@ async function getProviderSearchPool(provider: string): Promise<string[]> {
   }
 
   const searchPool = new Set([provider, canonicalProvider, canonicalAlias].filter(Boolean));
+
+  if (provider === "opencode-zen" || canonicalProvider === "opencode-zen") {
+    searchPool.add("opencode");
+  }
 
   // Built-in providers already resolve through static ids/aliases. Only
   // compatible/custom providers need provider_nodes expansion back to the
@@ -1036,7 +1052,13 @@ export async function getProviderCredentials(
         // the dashboard sees a misleading "bad_request" code.
         const terminalConnections = allConnections.filter(isTerminalConnectionStatus);
         if (terminalConnections.length === allConnections.length) {
-          const syntheticFallback = maybeSyntheticNoAuthFallback(resolvedId, excludedConnectionIds);
+          const syntheticFallback = maybeSyntheticNoAuthFallback(
+            resolvedId,
+            excludedConnectionIds,
+            {
+              hasManagedNoAuthConnection: hasManagedNoAuthConnections(allConnections),
+            }
+          );
           if (syntheticFallback) return syntheticFallback;
 
           const statusCounts = new Map<string, number>();
@@ -1053,7 +1075,9 @@ export async function getProviderCredentials(
           };
         }
       }
-      const syntheticFallback = maybeSyntheticNoAuthFallback(resolvedId, excludedConnectionIds);
+      const syntheticFallback = maybeSyntheticNoAuthFallback(resolvedId, excludedConnectionIds, {
+        hasManagedNoAuthConnection: hasManagedNoAuthConnections(allConnections),
+      });
       if (syntheticFallback) return syntheticFallback;
       log.warn("AUTH", `No credentials for ${provider}`);
       return null;
@@ -1208,11 +1232,13 @@ export async function getProviderCredentials(
 
       if (earliest) {
         const earliestConn = earliestCandidate?.connection;
+        const connectionCooldownLabel =
+          Number(earliestConn?.errorCode) === 429 ? "rate limited" : "cooling down";
         log.warn(
           "AUTH",
           allBlockedByModelCooldown
             ? `${provider} | all ${connections.length} active accounts cooling down for model ${requestedModel} (${formatRetryAfter(earliest)}) | lastErrorCode=${earliestConn?.errorCode}, lastError=${earliestConn?.lastError?.slice(0, 50)}`
-            : `${provider} | all ${connections.length} active accounts rate limited (${formatRetryAfter(earliest)}) | lastErrorCode=${earliestConn?.errorCode}, lastError=${earliestConn?.lastError?.slice(0, 50)}`
+            : `${provider} | all ${connections.length} active accounts ${connectionCooldownLabel} (${formatRetryAfter(earliest)}) | lastErrorCode=${earliestConn?.errorCode}, lastError=${earliestConn?.lastError?.slice(0, 50)}`
         );
         return {
           allRateLimited: true,
@@ -1224,7 +1250,9 @@ export async function getProviderCredentials(
           cooldownModel: allBlockedByModelCooldown ? requestedModel : null,
         };
       }
-      const syntheticFallback = maybeSyntheticNoAuthFallback(resolvedId, excludedConnectionIds);
+      const syntheticFallback = maybeSyntheticNoAuthFallback(resolvedId, excludedConnectionIds, {
+        hasManagedNoAuthConnection: hasManagedNoAuthConnections(connections),
+      });
       if (syntheticFallback) return syntheticFallback;
       log.warn("AUTH", `${provider} | all ${connections.length} accounts unavailable`);
       return null;

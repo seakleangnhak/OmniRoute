@@ -19,7 +19,7 @@ process.env.DATA_DIR = TEST_DATA_DIR;
 const MIGRATION_SQL = fs.readFileSync(
   path.resolve(
     import.meta.dirname ?? __dirname,
-    "../../src/lib/db/migrations/097_model_intelligence.sql"
+    "../../src/lib/db/migrations/103_model_intelligence.sql"
   ),
   "utf8"
 );

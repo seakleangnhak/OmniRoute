@@ -227,6 +227,30 @@ const RENAMED_MIGRATION_COMPATIBILITY = [
     toVersion: "098",
     toName: "discovery_results",
   },
+  {
+    fromVersion: "097",
+    fromName: "model_intelligence",
+    toVersion: "103",
+    toName: "model_intelligence",
+  },
+  {
+    fromVersion: "098",
+    fromName: "clear_semantic_cache_for_key_isolation",
+    toVersion: "104",
+    toName: "clear_semantic_cache_for_key_isolation",
+  },
+  {
+    fromVersion: "100",
+    fromName: "model_intelligence",
+    toVersion: "103",
+    toName: "model_intelligence",
+  },
+  {
+    fromVersion: "101",
+    fromName: "clear_semantic_cache_for_key_isolation",
+    toVersion: "104",
+    toName: "clear_semantic_cache_for_key_isolation",
+  },
 ] as const;
 
 const LEGACY_VERSION_SLOT_MIGRATIONS = [
@@ -606,6 +630,16 @@ function isSchemaAlreadyApplied(
       );
     case "098":
       return hasTable(db, "discovery_results");
+    case "100":
+      return hasTable(db, "cli_access_tokens");
+    case "101":
+      return (
+        hasColumn(db, "api_keys", "usage_limit_enabled") &&
+        hasColumn(db, "api_keys", "daily_usage_limit_usd") &&
+        hasColumn(db, "api_keys", "weekly_usage_limit_usd")
+      );
+    case "103":
+      return hasTable(db, "model_intelligence");
     default:
       return false;
   }

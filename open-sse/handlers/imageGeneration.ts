@@ -90,6 +90,8 @@ const OPENAI_IMAGE_TO_IMAGE_MODELS = new Set([
   "black-forest-labs/FLUX.2-flex",
   "black-forest-labs/FLUX.2-dev",
   "openai/gpt-image-1.5",
+  "gpt-image-2",
+  "gpt-image",
   "Wan-AI/Wan2.6-image",
   "Qwen/Qwen-Image-2.0-Pro",
   "Qwen/Qwen-Image-2.0",
@@ -919,6 +921,8 @@ async function handleOpenAIImageGeneration({
   if (body.quality !== undefined) upstreamBody.quality = body.quality;
   if (body.response_format !== undefined) upstreamBody.response_format = body.response_format;
   if (body.style !== undefined) upstreamBody.style = body.style;
+  if (body.aspect_ratio !== undefined) upstreamBody.aspect_ratio = body.aspect_ratio;
+  if (body.resolution !== undefined) upstreamBody.resolution = body.resolution;
 
   const { imageUrl } = extractImageInputs(body);
   if (imageUrl && OPENAI_IMAGE_TO_IMAGE_MODELS.has(model)) {
@@ -2104,6 +2108,8 @@ async function handleRecraftImageGeneration({
   if (body.size !== undefined) upstreamBody.size = body.size;
   if (body.response_format !== undefined) upstreamBody.response_format = body.response_format;
   if (body.style !== undefined) upstreamBody.style = body.style;
+  if (body.aspect_ratio !== undefined) upstreamBody.aspect_ratio = body.aspect_ratio;
+  if (body.resolution !== undefined) upstreamBody.resolution = body.resolution;
 
   if (log) {
     const promptPreview = String(body.prompt ?? "").slice(0, 60);

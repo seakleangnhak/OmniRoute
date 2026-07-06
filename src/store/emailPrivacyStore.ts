@@ -8,13 +8,16 @@ interface EmailPrivacyState {
   emailsVisible: boolean;
   /** Set the global email visibility state. */
   setEmailsVisible: (visible: boolean) => void;
+  /** Toggle the global email visibility state. */
+  toggleEmailVisibility: () => void;
 }
 
 const useEmailPrivacyStore = create<EmailPrivacyState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       emailsVisible: false,
       setEmailsVisible: (visible) => set({ emailsVisible: visible }),
+      toggleEmailVisibility: () => set({ emailsVisible: !get().emailsVisible }),
     }),
     {
       name: "omniroute-email-privacy",

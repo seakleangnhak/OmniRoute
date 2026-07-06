@@ -90,6 +90,7 @@ import EditCompatibleNodeModal from "./components/modals/EditCompatibleNodeModal
 import AddApiKeyModal from "./components/modals/AddApiKeyModal";
 import EditConnectionModal from "./components/modals/EditConnectionModal";
 import WebSessionCredentialGuide from "./components/WebSessionCredentialGuide";
+import NoAuthProviderControls from "./components/NoAuthProviderControls";
 // Phase 1d extractions — Issue #3501
 import ConnectionRow, { type ConnectionRowConnection } from "./components/ConnectionRow";
 import ModelCompatPopover from "./components/ModelCompatPopover";
@@ -2472,11 +2473,9 @@ export default function ProviderDetailPageClient() {
 
       {/* Connections */}
       {!isUpstreamProxyProvider && isFreeNoAuth && providerId === "mimocode" && (
-        <NoAuthAccountCard
+        <NoAuthProviderControls
           providerId={providerId}
-          providerName="MiMoCode"
-          generateAccountId={() => crypto.randomUUID().replace(/-/g, "")}
-          allowDeleteAll
+          providerName={providerInfo?.name || providerId}
         />
       )}
       {!isUpstreamProxyProvider && isFreeNoAuth && providerId === "opencode" && (
@@ -2485,6 +2484,7 @@ export default function ProviderDetailPageClient() {
           providerName="OpenCode"
           generateAccountId={() => crypto.randomUUID().replace(/-/g, "")}
           allowDeleteAll
+          enhancedMode
         />
       )}
       {!isUpstreamProxyProvider &&

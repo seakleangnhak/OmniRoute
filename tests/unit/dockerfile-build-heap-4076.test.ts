@@ -59,16 +59,17 @@ test("#4076 the heap ceiling is set BEFORE `npm run build` so it reaches `next b
   );
 });
 
-test("#4076 the build heap default is at least 4096 MB (the V8 default ~2 GB OOMed)", () => {
+test("#4076 the build heap default balances V8 headroom against builder VM pressure", () => {
   const { start, end } = builderStageRange();
   const stage = lines.slice(start, end).join("\n");
   // Match the literal default in either `--max-old-space-size=N` or an ARG default
-  // referenced by the ENV (e.g. ARG OMNIROUTE_BUILD_MEMORY_MB=4096).
+  // referenced by the ENV (e.g. ARG OMNIROUTE_BUILD_MEMORY_MB=3584).
   const direct = stage.match(/--max-old-space-size=(\d+)/);
   const argDefault = stage.match(/ARG\s+\w*MEMORY\w*\s*=\s*(\d+)/i);
   const value = Number(direct?.[1] ?? argDefault?.[1] ?? 0);
-  assert.ok(
-    value >= 4096,
-    `build heap default must be >= 4096 MB to clear the #4076 OOM (found ${value})`
+  assert.equal(
+    value,
+    3584,
+    `build heap default should leave enough webpack heap without starving the builder VM (found ${value})`
   );
 });

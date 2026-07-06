@@ -9,6 +9,7 @@ const {
   getTransientBuildPaths,
   movePath,
   pruneStandaloneArtifacts,
+  resolveBuildMemoryMb,
   resolveNextBuildEnv,
   syncStandaloneNativeAssets,
 } = await import("../../scripts/build/build-next-isolated.mjs");
@@ -95,10 +96,13 @@ test("movePath rethrows non-EXDEV rename failures", async () => {
 });
 
 test("resolveNextBuildEnv forces stable build worker mode unless already provided", () => {
-  const defaultEnv = resolveNextBuildEnv({ NODE_ENV: "test" });
+  const defaultEnv = resolveNextBuildEnv({
+    NODE_ENV: "test",
+    OMNIROUTE_BUILD_MEMORY_MB: "3072",
+  });
   assert.equal(defaultEnv.NEXT_PRIVATE_BUILD_WORKER, "0");
   assert.equal(defaultEnv.NODE_ENV, "test");
-  assert.equal(defaultEnv.NODE_OPTIONS, "--max-old-space-size=4096");
+  assert.equal(defaultEnv.NODE_OPTIONS, "--max-old-space-size=3072");
 
   const preservedEnv = resolveNextBuildEnv({
     NODE_ENV: "production",
@@ -111,34 +115,51 @@ test("resolveNextBuildEnv forces stable build worker mode unless already provide
   assert.equal(preservedEnv.NODE_OPTIONS, "--trace-warnings --max-old-space-size=6144");
 });
 
-// Escalated bug (WhatsApp BR, cmqiuhd7600): a local `npm run build` stalls/OOMs
-// during the webpack production pass ("Compiling instrumentation" bundles the whole
-// server graph). #4076/#4104 raised the heap only in the Docker builder stage; the
-// local/native path (build-next-isolated.mjs → resolveNextBuildEnv) was left on V8's
-// default ~2 GB ceiling, so memory-constrained npm-global installs hit the same OOM.
-test("resolveNextBuildEnv raises the Node heap for memory-constrained local builds", () => {
-  const env = resolveNextBuildEnv({ NODE_ENV: "production" });
-  const match = (env.NODE_OPTIONS ?? "").match(/--max-old-space-size=(\d+)/);
-  assert.ok(
-    match,
-    "local build must set NODE_OPTIONS --max-old-space-size to avoid the webpack-pass OOM"
-  );
-  assert.ok(
-    Number(match[1]) >= 4096,
-    `build heap default must be >= 4096 MB (the V8 default ~2 GB OOMed); got ${match[1]}`
-  );
+test("resolveBuildMemoryMb auto-sizes below the container memory ceiling when unset", () => {
+  const originalReadFileSync = fsSync.readFileSync;
+
+  try {
+    fsSync.readFileSync = ((targetPath, ...args) => {
+      if (String(targetPath) === "/sys/fs/cgroup/memory.max") {
+        return "3221225472\n";
+      }
+      return originalReadFileSync(targetPath, ...args);
+    }) as typeof fsSync.readFileSync;
+
+    assert.equal(resolveBuildMemoryMb({}), "2304");
+  } finally {
+    fsSync.readFileSync = originalReadFileSync;
+  }
 });
 
-test("resolveNextBuildEnv does not clobber an existing --max-old-space-size (Docker)", () => {
-  const env = resolveNextBuildEnv({ NODE_OPTIONS: "--max-old-space-size=8192" });
-  const occurrences = (env.NODE_OPTIONS.match(/--max-old-space-size=/g) || []).length;
-  assert.equal(occurrences, 1, "must not duplicate the heap flag when one is already set");
-  assert.match(env.NODE_OPTIONS, /--max-old-space-size=8192/);
-});
+test("resolveBuildMemoryMb uses the conservative fallback in container builds without cgroup limits", () => {
+  const originalReadFileSync = fsSync.readFileSync;
+  const originalExistsSync = fsSync.existsSync;
 
-test("resolveNextBuildEnv honors the OMNIROUTE_BUILD_MEMORY_MB override", () => {
-  const env = resolveNextBuildEnv({ OMNIROUTE_BUILD_MEMORY_MB: "6144" });
-  assert.match(env.NODE_OPTIONS, /--max-old-space-size=6144/);
+  try {
+    fsSync.readFileSync = ((targetPath, ...args) => {
+      if (
+        String(targetPath) === "/sys/fs/cgroup/memory.max" ||
+        String(targetPath) === "/sys/fs/cgroup/memory/memory.limit_in_bytes"
+      ) {
+        const error = new Error("missing cgroup limit");
+        error.code = "ENOENT";
+        throw error;
+      }
+      return originalReadFileSync(targetPath, ...args);
+    }) as typeof fsSync.readFileSync;
+    fsSync.existsSync = ((targetPath) => {
+      if (String(targetPath) === "/.dockerenv" || String(targetPath) === "/run/.containerenv") {
+        return false;
+      }
+      return originalExistsSync(targetPath);
+    }) as typeof fsSync.existsSync;
+
+    assert.equal(resolveBuildMemoryMb({ BUILDKIT_SANDBOX_HOSTNAME: "sandbox" }), "3072");
+  } finally {
+    fsSync.readFileSync = originalReadFileSync;
+    fsSync.existsSync = originalExistsSync;
+  }
 });
 
 test("getTransientBuildPaths leaves _tasks in place by default", () => {

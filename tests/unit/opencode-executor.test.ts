@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { createServer } from "node:net";
 
 const { OpencodeExecutor } = await import("../../open-sse/executors/opencode.ts");
 const { DefaultExecutor } = await import("../../open-sse/executors/default.ts");
 const { PROVIDER_MODELS } = await import("../../open-sse/config/providerModels.ts");
+const { resolveProxyForRequest } = await import("../../open-sse/utils/proxyFetch.ts");
 
 function createMockResponse() {
   return new Response(JSON.stringify({ ok: true }), {
@@ -426,6 +428,39 @@ describe("OpencodeExecutor", () => {
       assert.equal(headers["x-opencode-session"], "sess-noauth");
       assert.equal(headers["Authorization"], undefined);
     });
+
+    it("uses the selected managed fingerprint as x-opencode-session when the client did not send one", () => {
+      const headers = zenExecutor.buildHeaders(
+        {
+          providerSpecificData: {
+            selectedFingerprint: "managed-fingerprint-1",
+          },
+        },
+        true,
+        null
+      );
+      assert.equal(headers["x-opencode-session"], "managed-fingerprint-1");
+      assert.ok(
+        typeof headers["x-opencode-request"] === "string" &&
+          headers["x-opencode-request"].length > 0
+      );
+    });
+
+    it("does not override a client-sent x-opencode-session with the selected managed fingerprint", () => {
+      const headers = zenExecutor.buildHeaders(
+        {
+          providerSpecificData: {
+            selectedFingerprint: "managed-fingerprint-1",
+          },
+        },
+        true,
+        {
+          "x-opencode-session": "client-session",
+        }
+      );
+      assert.equal(headers["x-opencode-session"], "client-session");
+      assert.equal(headers["x-opencode-request"], undefined);
+    });
   });
 
   // #4022: OpenCode CLI only emits x-opencode-* when the provider id starts with
@@ -597,6 +632,98 @@ describe("OpencodeExecutor", () => {
       );
       assert.equal(out.model, "some-other-model-high");
       assert.equal(out.reasoning_effort, undefined);
+    });
+  });
+
+  describe("managed free account rotation", () => {
+    it("round-robins across created fingerprints on consecutive calls", async () => {
+      const credentials = {
+        providerSpecificData: {
+          fingerprints: ["managed-fp-1", "managed-fp-2"],
+        },
+      };
+
+      await zenExecutor.execute(createInput("gpt-5-nano", true, credentials));
+      await zenExecutor.execute(createInput("gpt-5-nano", true, credentials));
+
+      assert.equal(fetchCalls[0].options.headers["x-opencode-session"], "managed-fp-1");
+      assert.equal(fetchCalls[1].options.headers["x-opencode-session"], "managed-fp-2");
+    });
+
+    it("retries the next managed fingerprint when the first one is rate limited", async () => {
+      globalThis.fetch = (async (url, options) => {
+        fetchCalls.push({ url, options });
+        if (fetchCalls.length === 1) {
+          return new Response(JSON.stringify({ error: { message: "Too many requests" } }), {
+            status: 429,
+            headers: {
+              "Content-Type": "application/json",
+              "retry-after": "2",
+            },
+          });
+        }
+        return createMockResponse();
+      }) as any;
+
+      const credentials = {
+        providerSpecificData: {
+          fingerprints: ["managed-fp-1", "managed-fp-2"],
+        },
+      };
+
+      const result = await zenExecutor.execute(createInput("gpt-5-nano", true, credentials));
+
+      assert.equal(result.response.status, 200);
+      assert.equal(fetchCalls.length, 2);
+      assert.equal(fetchCalls[0].options.headers["x-opencode-session"], "managed-fp-1");
+      assert.equal(fetchCalls[1].options.headers["x-opencode-session"], "managed-fp-2");
+    });
+
+    it("binds the matching account proxy for the selected managed fingerprint", async () => {
+      const server = createServer((socket) => socket.destroy());
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+      const address = server.address();
+      assert.ok(address && typeof address === "object" && "port" in address);
+
+      try {
+        globalThis.fetch = (async (url, options) => {
+          fetchCalls.push({
+            url,
+            options,
+            proxyUrl: resolveProxyForRequest(String(url)).proxyUrl,
+          });
+          return createMockResponse();
+        }) as any;
+
+        const credentials = {
+          providerSpecificData: {
+            fingerprints: ["managed-fp-proxy"],
+            accountProxies: [
+              {
+                fingerprint: "managed-fp-proxy",
+                proxy: {
+                  type: "http",
+                  host: "127.0.0.1",
+                  port: address.port,
+                  username: "proxy-user",
+                  password: "proxy-pass",
+                },
+              },
+            ],
+          },
+        };
+
+        await zenExecutor.execute(createInput("gpt-5-nano", true, credentials));
+
+        assert.equal(
+          fetchCalls[0].proxyUrl,
+          `http://proxy-user:proxy-pass@127.0.0.1:${address.port}`
+        );
+      } finally {
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve()))
+        );
+      }
     });
   });
 });

@@ -605,6 +605,10 @@ export function handleNoCredentials(
   );
 }
 
+export function isCredentialSelectionExhausted(credentials: any) {
+  return !credentials || credentials?.allRateLimited === true || credentials?.allExpired === true;
+}
+
 /**
  * Bug #3758 (Problem A): NVIDIA NIM (and other flaky OpenAI-compatible upstreams)
  * intermittently send HTTP 200, then close the SSE early with zero useful frames.

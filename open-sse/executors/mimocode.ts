@@ -134,6 +134,20 @@ function isBootstrapHttpError(error: unknown): boolean {
   return error instanceof Error && /^Bootstrap failed:\s*\d{3}\b/.test(error.message);
 }
 
+function parseBootstrapHttpError(error: unknown): { status: number; body: string } | null {
+  if (!(error instanceof Error)) return null;
+  const match = error.message.match(/^Bootstrap failed:\s*(\d{3})\s*([\s\S]*)$/);
+  if (!match) return null;
+
+  const status = Number.parseInt(match[1], 10);
+  if (!Number.isFinite(status)) return null;
+
+  return {
+    status,
+    body: match[2]?.trim() || "",
+  };
+}
+
 function shouldShortCircuitSharedProxy(
   proxy: AccountState["proxy"],
   error: unknown
@@ -252,6 +266,56 @@ async function bootstrapJwt(
 function rewriteModelName(model: string): string {
   const idx = model.lastIndexOf("/");
   return idx >= 0 ? model.slice(idx + 1) : model;
+}
+
+function buildExecutorErrorResponse(error: Error, encoder: TextEncoder): Response {
+  const bootstrapError = parseBootstrapHttpError(error);
+  if (bootstrapError) {
+    const { status, body } = bootstrapError;
+    const headers = { "Content-Type": "application/json" };
+
+    if (body) {
+      try {
+        const parsed = JSON.parse(body) as unknown;
+        return new Response(encoder.encode(JSON.stringify(parsed)), { status, headers });
+      } catch {
+        return new Response(
+          encoder.encode(
+            JSON.stringify({
+              error: {
+                message: body,
+                type: "upstream_error",
+                code: `HTTP_${status}`,
+              },
+            })
+          ),
+          { status, headers }
+        );
+      }
+    }
+
+    return new Response(
+      encoder.encode(
+        JSON.stringify({
+          error: {
+            message: `Bootstrap failed with status ${status}`,
+            type: "upstream_error",
+            code: `HTTP_${status}`,
+          },
+        })
+      ),
+      { status, headers }
+    );
+  }
+
+  return new Response(
+    encoder.encode(
+      JSON.stringify({
+        error: { message: error.message, type: "upstream_error", code: "EXECUTOR_ERROR" },
+      })
+    ),
+    { status: 502, headers: { "Content-Type": "application/json" } }
+  );
 }
 
 // ── Executor ───────────────────────────────────────────────────────────────
@@ -573,14 +637,7 @@ export class MimocodeExecutor extends BaseExecutor {
       const msg = lastError.message;
       log?.error?.("MIMOCODE", `Executor error: ${msg}`);
       return {
-        response: new Response(
-          encoder.encode(
-            JSON.stringify({
-              error: { message: msg, type: "upstream_error", code: "EXECUTOR_ERROR" },
-            })
-          ),
-          { status: 502, headers: { "Content-Type": "application/json" } }
-        ),
+        response: buildExecutorErrorResponse(lastError, encoder),
         url,
         headers: this.buildHeaders(input.credentials, stream),
         transformedBody: body,

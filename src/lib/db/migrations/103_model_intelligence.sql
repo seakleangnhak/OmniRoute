@@ -1,4 +1,4 @@
--- 097_model_intelligence.sql
+-- 103_model_intelligence.sql
 -- Model intelligence scores: per-model task-fitness from arena ELO, models.dev
 -- tier rankings, and user overrides. Supports resolution chain (user_override
 -- > arena_elo > models_dev_tier) and auto-expiry for stale synced data.

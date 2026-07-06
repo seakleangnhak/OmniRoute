@@ -15,6 +15,7 @@ const {
   checkPipelineGates,
   executeChatWithBreaker,
   handleNoCredentials,
+  isCredentialSelectionExhausted,
   safeResolveProxy,
   safeLogEvents,
   withSessionHeader,
@@ -364,6 +365,13 @@ test("handleNoCredentials maps allExpired status='expired' to the 'authenticatio
 
   assert.equal(response.status, 401);
   assert.match(json.error.message, /3 connection\(s\) authentication expired/);
+});
+
+test("isCredentialSelectionExhausted treats allExpired results as terminal selection outcomes", () => {
+  assert.equal(isCredentialSelectionExhausted(null), true);
+  assert.equal(isCredentialSelectionExhausted({ allRateLimited: true }), true);
+  assert.equal(isCredentialSelectionExhausted({ allExpired: true }), true);
+  assert.equal(isCredentialSelectionExhausted({ connectionId: "conn_live" }), false);
 });
 
 test("safeResolveProxy returns the direct route when no proxy config is present", async () => {

@@ -185,6 +185,49 @@ describe("MimocodeExecutor", () => {
     assert.strictEqual((result as any).response.status, 499);
   });
 
+  it("preserves bootstrap 403 illegal_access instead of rewriting it to a synthetic 502", async () => {
+    const testExec = new MimocodeExecutor();
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "403",
+            message: "Illegal access",
+            type: "illegal_access",
+          },
+        }),
+        {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        }
+      )) as typeof fetch;
+
+    try {
+      const result = await testExec.execute({
+        model: "mimo-auto",
+        body: { messages: [{ role: "user", content: "hi" }], stream: false },
+        stream: false,
+        signal: null,
+        credentials: {},
+        log: testLog,
+      });
+
+      assert.strictEqual(result.response.status, 403);
+      const payload = await result.response.json();
+      assert.deepStrictEqual(payload, {
+        error: {
+          code: "403",
+          message: "Illegal access",
+          type: "illegal_access",
+        },
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("is registered in executor index", async () => {
     const { getExecutor } = await import("../../open-sse/executors/index.ts");
     const exec = getExecutor("mimocode");

@@ -278,6 +278,13 @@ export async function runWithProxyContext(proxyConfig, fn) {
   });
 }
 
+export async function runWithProxyContextOrDirect(proxyConfig, fn) {
+  if (!proxyConfig) {
+    return proxyContext.run(null, fn);
+  }
+  return runWithProxyContext(proxyConfig, fn);
+}
+
 async function patchedFetch(
   input: RequestInfo | URL,
   options: FetchWithDispatcherOptions = {},

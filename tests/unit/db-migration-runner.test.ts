@@ -1735,6 +1735,205 @@ test(
   }
 );
 
+test(
+  "reconcileRenumberedMigrations rehomes merged 097/098 collision markers to 103/104",
+  serial,
+  async () => {
+    const runner = await importFresh("src/lib/db/migrationRunner.ts");
+    const db = createDb();
+
+    try {
+      db.exec(`
+        CREATE TABLE _omniroute_migrations (
+          version TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE semantic_cache (cache_key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE api_keys (id TEXT PRIMARY KEY);
+        CREATE TABLE usage_history (id TEXT PRIMARY KEY, api_key_id TEXT, provider TEXT, model TEXT, timestamp TEXT);
+        CREATE TABLE model_intelligence (
+          model TEXT NOT NULL,
+          source TEXT NOT NULL,
+          category TEXT NOT NULL,
+          score REAL NOT NULL,
+          PRIMARY KEY (model, source, category)
+        ) WITHOUT ROWID;
+      `);
+      db.prepare("INSERT INTO _omniroute_migrations (version, name) VALUES (?, ?)").run(
+        "097",
+        "model_intelligence"
+      );
+      db.prepare("INSERT INTO _omniroute_migrations (version, name) VALUES (?, ?)").run(
+        "098",
+        "clear_semantic_cache_for_key_isolation"
+      );
+
+      const consoleErrors: string[] = [];
+      const originalError = console.error;
+      console.error = (...args: any[]) => {
+        consoleErrors.push(args.map(String).join(" "));
+      };
+
+      try {
+        const count = withMockedMigrationFs(
+          {
+            "097_per_model_token_limits.sql": `
+              CREATE TABLE IF NOT EXISTS api_key_token_limits (id TEXT PRIMARY KEY);
+              CREATE TABLE IF NOT EXISTS api_key_token_counters (limit_id TEXT, window_start TEXT);
+              CREATE TABLE IF NOT EXISTS api_key_token_limit_reset_logs (id INTEGER PRIMARY KEY AUTOINCREMENT);
+            `,
+            "098_discovery_results.sql":
+              "CREATE TABLE IF NOT EXISTS discovery_results (id INTEGER PRIMARY KEY AUTOINCREMENT);",
+            "100_cli_access_tokens.sql":
+              "CREATE TABLE IF NOT EXISTS cli_access_tokens (id TEXT PRIMARY KEY, token_hash TEXT UNIQUE, token_prefix TEXT, name TEXT, scope TEXT, created_at TEXT, last_used_at TEXT, expires_at TEXT, revoked_at TEXT);",
+            "101_api_key_usage_limits.sql": `
+              ALTER TABLE api_keys ADD COLUMN usage_limit_enabled INTEGER NOT NULL DEFAULT 0;
+              ALTER TABLE api_keys ADD COLUMN daily_usage_limit_usd REAL;
+              ALTER TABLE api_keys ADD COLUMN weekly_usage_limit_usd REAL;
+            `,
+            "103_model_intelligence.sql":
+              "CREATE TABLE IF NOT EXISTS model_intelligence (model TEXT PRIMARY KEY, source TEXT, category TEXT, score REAL);",
+            "104_clear_semantic_cache_for_key_isolation.sql": "DELETE FROM semantic_cache;",
+          },
+          () => runner.runMigrations(db)
+        );
+
+        assert.equal(count, 4);
+        assert.equal(
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("097")?.name,
+          "per_model_token_limits"
+        );
+        assert.equal(
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("098")?.name,
+          "discovery_results"
+        );
+        assert.equal(
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("100")?.name,
+          "cli_access_tokens"
+        );
+        assert.equal(
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("101")?.name,
+          "api_key_usage_limits"
+        );
+        assert.equal(
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("103")?.name,
+          "model_intelligence"
+        );
+        assert.equal(
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("104")?.name,
+          "clear_semantic_cache_for_key_isolation"
+        );
+
+        const renumberingWarnings = consoleErrors.filter(
+          (e) => e.includes("CRITICAL") && e.includes("renumbered")
+        );
+        assert.equal(
+          renumberingWarnings.length,
+          0,
+          `Expected no renumbering warnings, got: ${renumberingWarnings.join("; ")}`
+        );
+      } finally {
+        console.error = originalError;
+      }
+    } finally {
+      db.close();
+    }
+  }
+);
+
+test(
+  "reconcileRenumberedMigrations rehomes pre-merge 100/101 collision markers to 103/104",
+  serial,
+  async () => {
+    const runner = await importFresh("src/lib/db/migrationRunner.ts");
+    const db = createDb();
+
+    try {
+      db.exec(`
+        CREATE TABLE _omniroute_migrations (
+          version TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE semantic_cache (cache_key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE api_keys (id TEXT PRIMARY KEY);
+        CREATE TABLE usage_history (id TEXT PRIMARY KEY, api_key_id TEXT, provider TEXT, model TEXT, timestamp TEXT);
+        CREATE TABLE model_intelligence (
+          model TEXT NOT NULL,
+          source TEXT NOT NULL,
+          category TEXT NOT NULL,
+          score REAL NOT NULL,
+          PRIMARY KEY (model, source, category)
+        ) WITHOUT ROWID;
+      `);
+      db.prepare("INSERT INTO _omniroute_migrations (version, name) VALUES (?, ?)").run(
+        "100",
+        "model_intelligence"
+      );
+      db.prepare("INSERT INTO _omniroute_migrations (version, name) VALUES (?, ?)").run(
+        "101",
+        "clear_semantic_cache_for_key_isolation"
+      );
+
+      const consoleErrors: string[] = [];
+      const originalError = console.error;
+      console.error = (...args: any[]) => {
+        consoleErrors.push(args.map(String).join(" "));
+      };
+
+      try {
+        const count = withMockedMigrationFs(
+          {
+            "100_cli_access_tokens.sql":
+              "CREATE TABLE IF NOT EXISTS cli_access_tokens (id TEXT PRIMARY KEY, token_hash TEXT UNIQUE, token_prefix TEXT, name TEXT, scope TEXT, created_at TEXT, last_used_at TEXT, expires_at TEXT, revoked_at TEXT);",
+            "101_api_key_usage_limits.sql": `
+              ALTER TABLE api_keys ADD COLUMN usage_limit_enabled INTEGER NOT NULL DEFAULT 0;
+              ALTER TABLE api_keys ADD COLUMN daily_usage_limit_usd REAL;
+              ALTER TABLE api_keys ADD COLUMN weekly_usage_limit_usd REAL;
+            `,
+            "103_model_intelligence.sql":
+              "CREATE TABLE IF NOT EXISTS model_intelligence (model TEXT PRIMARY KEY, source TEXT, category TEXT, score REAL);",
+            "104_clear_semantic_cache_for_key_isolation.sql": "DELETE FROM semantic_cache;",
+          },
+          () => runner.runMigrations(db)
+        );
+
+        assert.equal(count, 2);
+        assert.equal(
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("100")?.name,
+          "cli_access_tokens"
+        );
+        assert.equal(
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("101")?.name,
+          "api_key_usage_limits"
+        );
+        assert.equal(
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("103")?.name,
+          "model_intelligence"
+        );
+        assert.equal(
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("104")?.name,
+          "clear_semantic_cache_for_key_isolation"
+        );
+
+        const renumberingWarnings = consoleErrors.filter(
+          (e) => e.includes("CRITICAL") && e.includes("renumbered")
+        );
+        assert.equal(
+          renumberingWarnings.length,
+          0,
+          `Expected no renumbering warnings, got: ${renumberingWarnings.join("; ")}`
+        );
+      } finally {
+        console.error = originalError;
+      }
+    } finally {
+      db.close();
+    }
+  }
+);
+
 test("runMigrations applies canonical 097 and 098 after local 073 and 074", serial, async () => {
   const runner = await importFresh("src/lib/db/migrationRunner.ts");
   const db = createDb();
