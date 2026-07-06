@@ -321,6 +321,7 @@ async function postHandler(request: Request) {
     responseFormat,
     n: 1,
     log,
+    apiKeyInfo: policy.apiKeyInfo,
   });
 
   if (result.success) {

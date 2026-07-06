@@ -351,6 +351,7 @@ export async function handleImageGeneration({
       body,
       credentials,
       log,
+      apiKeyInfo,
     });
   }
 
@@ -513,7 +514,15 @@ export async function handleImageGeneration({
     });
   }
 
-  return handleOpenAIImageGeneration({ model, provider, providerConfig, body, credentials, log });
+  return handleOpenAIImageGeneration({
+    model,
+    provider,
+    providerConfig,
+    body,
+    credentials,
+    log,
+    apiKeyInfo,
+  });
 }
 
 function normalizeKieImageResult(recordData: unknown): string[] {
@@ -894,6 +903,7 @@ async function handleOpenAIImageGeneration({
   body,
   credentials,
   log,
+  apiKeyInfo = null,
 }) {
   const startTime = Date.now();
 
@@ -995,6 +1005,8 @@ async function handleOpenAIImageGeneration({
       images: result.success ? result.data?.data?.length || 1 : 0,
     },
     imagesCount: result.success ? result.data?.data?.length || 1 : 0,
+    apiKeyId: apiKeyInfo?.id || null,
+    apiKeyName: apiKeyInfo?.name || null,
     error: result.success
       ? null
       : typeof result.error === "string"
@@ -1027,6 +1039,7 @@ export async function handleOpenAIImageEdit({
   responseFormat,
   n = 1,
   log,
+  apiKeyInfo = null,
 }: {
   model: string;
   provider: string;
@@ -1119,6 +1132,8 @@ export async function handleOpenAIImageEdit({
       images: result.success ? result.data?.data?.length || 1 : 0,
     },
     imagesCount: result.success ? result.data?.data?.length || 1 : 0,
+    apiKeyId: apiKeyInfo?.id || null,
+    apiKeyName: apiKeyInfo?.name || null,
     error: result.success
       ? null
       : typeof result.error === "string"
