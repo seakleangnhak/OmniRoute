@@ -1,0 +1,135 @@
+{
+  "src/app/(dashboard)/dashboard/HomePageClient.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/app/(dashboard)/dashboard/agent-skills/AgentSkillsPageClient.tsx": {
+    "no-restricted-syntax": {
+      "count": 3
+    }
+  },
+  "src/app/(dashboard)/dashboard/api-manager/ApiManagerPageClient.tsx": {
+    "no-restricted-syntax": {
+      "count": 2
+    },
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/app/(dashboard)/dashboard/cli-agents/CliAgentsPageClient.tsx": {
+    "no-restricted-syntax": {
+      "count": 4
+    }
+  },
+  "src/app/(dashboard)/dashboard/cli-code/components/AntigravityToolCard.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/app/(dashboard)/dashboard/cli-code/components/DefaultToolCard.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "src/app/(dashboard)/dashboard/costs/costExplorerUtils.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/app/(dashboard)/dashboard/media-providers/components/ImageExampleCard.tsx": {
+    "@next/next/no-img-element": {
+      "count": 1
+    }
+  },
+  "src/app/(dashboard)/dashboard/playground/components/tabs/ApiTab.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/app/(dashboard)/dashboard/providers/[id]/ProviderDetailPageClient.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/app/(dashboard)/dashboard/settings/components/AppearanceTab.tsx": {
+    "@next/next/no-img-element": {
+      "count": 4
+    }
+  },
+  "src/app/(dashboard)/dashboard/settings/components/AuthzSection.tsx": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/app/(dashboard)/dashboard/settings/components/MitmProxyTab.tsx": {
+    "@next/next/no-html-link-for-pages": {
+      "count": 1
+    }
+  },
+  "src/app/(dashboard)/dashboard/settings/components/ModelLockoutCard.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/app/(dashboard)/dashboard/settings/components/SessionInfoCard.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/app/(dashboard)/dashboard/tools/agent-bridge/components/AgentList.tsx": {
+    "no-restricted-syntax": {
+      "count": 3
+    }
+  },
+  "src/app/(dashboard)/dashboard/tools/agent-bridge/components/ModelSelectorModal.tsx": {
+    "no-restricted-syntax": {
+      "count": 2
+    }
+  },
+  "src/app/api/services/[name]/logs/route.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/app/api/v1/vscode/[token]/models/route.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/hooks/useLiveDashboard.ts": {
+    "react-hooks/exhaustive-deps": {
+      "count": 2
+    }
+  },
+  "src/shared/components/CursorAuthModal.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/shared/components/KiroSocialOAuthModal.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/shared/components/LanguageSelector.tsx": {
+    "@next/next/no-img-element": {
+      "count": 1
+    }
+  },
+  "src/shared/components/ProxyConfigModal.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 1
+    }
+  },
+  "src/shared/components/RequestLoggerV2.tsx": {
+    "react-hooks/exhaustive-deps": {
+      "count": 6
+    }
+  },
+  "src/shared/components/Sidebar.tsx": {
+    "@next/next/no-img-element": {
+      "count": 1
+    }
+  }
+}

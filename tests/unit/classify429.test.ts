@@ -44,6 +44,24 @@ test("classify429: Antigravity 'Individual quota reached' body returns 'quota_ex
   assert.equal(classify429({ status: 429, body: { error: { message: body } } }), "quota_exhausted");
 });
 
+test("classify429: Antigravity INSUFFICIENT_G1_CREDITS_BALANCE body returns 'quota_exhausted'", () => {
+  const body = {
+    error: {
+      code: 429,
+      message: "Resource has been exhausted (e.g. check quota).",
+      status: "RESOURCE_EXHAUSTED",
+      details: [
+        {
+          "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+          reason: "INSUFFICIENT_G1_CREDITS_BALANCE",
+        },
+      ],
+    },
+  };
+  assert.equal(looksLikeQuotaExhausted(body), true);
+  assert.equal(classify429({ status: 429, body }), "quota_exhausted");
+});
+
 test("classify429: Antigravity quota patterns do not over-match plain rate limits", () => {
   // The new 'quota reached' / 'enable overages' patterns must stay specific —
   // a per-minute rate limit must still classify as a transient rate_limit.

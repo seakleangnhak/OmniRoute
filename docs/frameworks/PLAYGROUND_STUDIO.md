@@ -1,7 +1,7 @@
 ---
 title: "Playground Studio"
-version: 3.8.7
-lastUpdated: 2026-05-30
+version: 3.8.40
+lastUpdated: 2026-06-28
 ---
 
 # Playground Studio

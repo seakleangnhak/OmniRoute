@@ -1,13 +1,13 @@
 ---
 title: "OmniRoute Agent Skills Catalog"
-version: 3.8.6
-lastUpdated: 2026-05-28
+version: 3.8.40
+lastUpdated: 2026-06-28
 ---
 
 # OmniRoute Agent Skills Catalog
 
 > **Source of truth:** `src/lib/agentSkills/` (catalog, generator, parsers) + `skills/` directory (SKILL.md files)
-> **Last updated:** 2026-05-28 — v3.8.6
+> **Last updated:** 2026-06-28 — v3.8.40
 
 Agent Skills are structured SKILL.md files that teach external agents, MCP clients, and A2A orchestrators how to use OmniRoute's REST API and CLI. Unlike [Omni Skills](./SKILLS.md) (which are LLM tool definitions executed inside OmniRoute), Agent Skills are a _documentation catalog_ — static markdown that can be fed directly into agent context.
 
@@ -31,7 +31,7 @@ src/shared/constants/agentSkills.ts    — 42-entry curated list (name/desc/cate
 src/lib/agentSkills/
   catalog.ts                           — getCatalog(), getSkillById(), filterCatalog(), computeCoverage()
   generator.ts                         — generateAgentSkills() writes SKILL.md to skills/{id}/
-  openapiParser.ts                     — extracts REST endpoints from docs/reference/openapi.yaml
+  openapiParser.ts                     — extracts REST endpoints from docs/openapi.yaml
   cliRegistryParser.ts                 — extracts CLI subcommands from bin/cli-registry.ts
   schemas.ts                           — Zod schemas: AgentSkillSchema, SkillCoverageSchema, etc.
   types.ts                             — TypeScript interfaces: AgentSkill, SkillCoverage, etc.

@@ -570,8 +570,7 @@ test("chatCore integration: combo requests run proactive compression before Kiro
 
     // Ensure request was translated to Kiro shape (messages are not sent directly upstream).
     const conversationState = capturedTranslatedBody?.conversationState as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     assert.ok(conversationState, "Kiro translated request should include conversationState");
 
     const history = Array.isArray(conversationState?.history)
@@ -584,8 +583,7 @@ test("chatCore integration: combo requests run proactive compression before Kiro
 
     const currentMessage = conversationState?.currentMessage as Record<string, unknown> | undefined;
     const userInputMessage = currentMessage?.userInputMessage as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     const currentContent =
       typeof userInputMessage?.content === "string" ? userInputMessage.content : "";
     assert.match(currentContent, /Please summarize everything\./);
@@ -687,7 +685,7 @@ test("chatCore integration: assigned compression combo applies language packs an
     assert.ok(capturedBody, "Fetch should receive the request body");
     const firstMessage = capturedBody.messages?.[0];
     assert.equal(firstMessage?.role, "system");
-    assert.match(firstMessage?.content ?? "", /OmniRoute Caveman Output Mode/);
+    assert.match(firstMessage?.content ?? "", /OmniRoute Output Styles/);
     assert.match(firstMessage?.content ?? "", /Responda conciso/);
 
     for (
@@ -782,7 +780,7 @@ test("chatCore integration: default stacked compression combo applies for unassi
     assert.ok(capturedBody, "Fetch should receive the request body");
     const firstMessage = capturedBody.messages?.[0];
     assert.equal(firstMessage?.role, "system");
-    assert.match(firstMessage?.content ?? "", /OmniRoute Caveman Output Mode/);
+    assert.match(firstMessage?.content ?? "", /OmniRoute Output Styles/);
     assert.match(firstMessage?.content ?? "", /Responda conciso/);
 
     let summary = compressionAnalyticsDb.getCompressionAnalyticsSummary();
@@ -1037,7 +1035,7 @@ test("chatCore integration: caveman output mode skipped when compression is glob
       "user",
       "No system message should be injected when compression is disabled"
     );
-    assert.doesNotMatch(capturedBody.messages[0].content ?? "", /Caveman Output Mode/);
+    assert.doesNotMatch(capturedBody.messages[0].content ?? "", /Output Styles/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1103,7 +1101,7 @@ test("chatCore integration: caveman output mode injected when both compression a
 
     assert.ok(result.success, "Request should succeed");
     assert.equal(capturedBody.messages[0].role, "system");
-    assert.match(capturedBody.messages[0].content ?? "", /Caveman Output Mode/);
+    assert.match(capturedBody.messages[0].content ?? "", /Output Styles/);
   } finally {
     globalThis.fetch = originalFetch;
   }

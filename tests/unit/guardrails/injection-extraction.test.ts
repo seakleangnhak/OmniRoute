@@ -31,6 +31,10 @@ test("extracts body.input as array of strings", () => {
       .includes(INJ)
   );
 });
+test("extracts body.input as Responses object without throwing", () => {
+  const out = extractMessageContents({ input: { role: "user", content: INJ } }).join("\n");
+  assert.ok(out.includes(INJ));
+});
 test("extracts body.query + body.documents (rerank)", () => {
   const out = extractMessageContents({ query: INJ, documents: ["doc1", "doc2"] }).join("\n");
   assert.ok(out.includes(INJ) && out.includes("doc1"));

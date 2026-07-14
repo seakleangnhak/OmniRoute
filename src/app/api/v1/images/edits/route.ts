@@ -3,7 +3,10 @@ import {
   handleOpenAIImageEdit,
 } from "@omniroute/open-sse/handlers/imageGeneration.ts";
 import { withInjectionGuard } from "@/middleware/promptInjectionGuard";
-import { getProviderCredentials, clearRecoveredProviderState } from "@/sse/services/auth";
+import {
+  getProviderCredentialsWithQuotaPreflight,
+  clearRecoveredProviderState,
+} from "@/sse/services/auth";
 import { parseImageModel, getImageProvider } from "@omniroute/open-sse/config/imageRegistry.ts";
 import { errorResponse, unavailableResponse } from "@omniroute/open-sse/utils/error.ts";
 import { HTTP_STATUS } from "@omniroute/open-sse/config/constants.ts";
@@ -192,7 +195,7 @@ async function postHandler(request: Request) {
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing required field: image or cache_id");
   }
 
-  const fullModel = model || "cgpt-web/gpt-5.3-instant";
+  const fullModel = model || "cgpt-web/gpt-5.5";
 
   const policy = await enforceApiKeyPolicy(request, fullModel);
   if (policy.rejection) return policy.rejection;
@@ -210,7 +213,7 @@ async function postHandler(request: Request) {
 
   // chatgpt-web keeps its conversation-continuation edit flow unchanged.
   if (providerConfig?.format === "chatgpt-web") {
-    const credentials = await getProviderCredentials(
+    const credentials = await getProviderCredentialsWithQuotaPreflight(
       parsed.provider,
       null,
       allowedConnections,
@@ -282,7 +285,7 @@ async function postHandler(request: Request) {
     );
   }
 
-  const credentials = await getProviderCredentials(
+  const credentials = await getProviderCredentialsWithQuotaPreflight(
     customProviderId,
     null,
     allowedConnections,

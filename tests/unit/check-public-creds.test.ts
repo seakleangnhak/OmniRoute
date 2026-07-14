@@ -179,26 +179,22 @@ test("6A.8 stale: known literal that was removed from the codebase is detected a
 });
 
 test("6A.8: open-sse/services/usage.ts FP — function-signature apiKey is suppressed by allowlist", () => {
-  // open-sse/services/usage.ts L543: `getMiniMaxUsage(apiKey: string, provider: "minimax" | "minimax-cn")`
+  // open-sse/services/usage/minimax.ts L213: `getMiniMaxUsage(apiKey: string, provider: "minimax" | "minimax-cn")`
   // The CRED_KEY_RE matches `apiKey:` in the TypeScript function-parameter type annotation.
   // "minimax" and "minimax-cn" are provider-name strings in the type, NOT credentials.
-  // Frozen in KNOWN_LITERAL_CREDS as FPs by file:line:value key.
-  const realSrc = fs.readFileSync(
-    path.join(repoRoot, "open-sse/services/usage.ts"),
-    "utf8"
-  ) as string;
+  // Frozen in KNOWN_LITERAL_CREDS as FPs by file:line:value key. The MiniMax family was
+  // extracted from services/usage.ts into services/usage/minimax.ts (god-file decomposition),
+  // so the FP moved with the getMiniMaxUsage signature.
+  const minimaxPath = "open-sse/services/usage/minimax.ts";
+  const realSrc = fs.readFileSync(path.join(repoRoot, minimaxPath), "utf8") as string;
   // With empty allowlist the FP shows up (it IS flagged by the regex).
-  const vWithEmpty = findLiteralCreds(realSrc, new Set(), "open-sse/services/usage.ts");
+  const vWithEmpty = findLiteralCreds(realSrc, new Set(), minimaxPath);
   assert.ok(
     vWithEmpty.some((v) => v.includes("minimax")),
     `expected FP 'minimax' violations with empty allowlist, got: ${vWithEmpty.join(", ")}`
   );
   // With KNOWN_LITERAL_CREDS the FPs are suppressed.
-  const vWithAllowlist = findLiteralCreds(
-    realSrc,
-    KNOWN_LITERAL_CREDS,
-    "open-sse/services/usage.ts"
-  );
+  const vWithAllowlist = findLiteralCreds(realSrc, KNOWN_LITERAL_CREDS, minimaxPath);
   assert.deepEqual(
     vWithAllowlist,
     [],

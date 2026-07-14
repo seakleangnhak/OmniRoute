@@ -54,11 +54,18 @@ import { sanitizeErrorMessage, sanitizeUpstreamDetails } from "../utils/error.ts
 // are still used by handleImageEdit below, so they are imported (not re-defined).
 import { handleSDWebUIImageGeneration } from "./imageGeneration/providers/sdWebUI.ts";
 import { handleHyperbolicImageGeneration } from "./imageGeneration/providers/hyperbolic.ts";
+import { handleHuggingFaceImageGeneration } from "./imageGeneration/providers/huggingface.ts";
 import { handleComfyUIImageGeneration } from "./imageGeneration/providers/comfyUI.ts";
 import { handleImagen3ImageGeneration } from "./imageGeneration/providers/imagen3.ts";
 import { handleIdeogramImageGeneration } from "./imageGeneration/providers/ideogram.ts";
 import { handleHaiperImageGeneration } from "./imageGeneration/providers/haiper.ts";
 import { handleLeonardoImageGeneration } from "./imageGeneration/providers/leonardo.ts";
+import {
+  handleChatGptWebImageGeneration,
+  extractMarkdownImageUrls,
+  CHATGPT_WEB_IMAGE_ID_RE,
+} from "./imageGeneration/providers/chatgptWeb.ts";
+import { handleNvidiaNimImageGeneration } from "./imageGeneration/providers/nvidiaNim.ts";
 
 interface KieImageOptions {
   model: string;
@@ -126,9 +133,7 @@ const IMAGE_ASPECT_RATIO_PATTERN = /^\d+:\d+$/;
  */
 export function resolveImageBaseUrl(
   credentials:
-    | { baseUrl?: unknown; providerSpecificData?: { baseUrl?: unknown } | null }
-    | null
-    | undefined,
+    { baseUrl?: unknown; providerSpecificData?: { baseUrl?: unknown } | null } | null | undefined,
   fallback: string,
   endpoint: "generations" | "edits" = "generations"
 ): string {
@@ -381,6 +386,17 @@ export async function handleImageGeneration({
     });
   }
 
+  if (providerConfig.format === "huggingface-image") {
+    return handleHuggingFaceImageGeneration({
+      model,
+      provider,
+      providerConfig,
+      body,
+      credentials,
+      log,
+    });
+  }
+
   if (providerConfig.format === "fal-ai") {
     return handleFalAIImageGeneration({
       model,
@@ -505,6 +521,17 @@ export async function handleImageGeneration({
   }
   if (providerConfig.format === "ideogram-image") {
     return handleIdeogramImageGeneration({
+      model,
+      provider,
+      providerConfig,
+      body,
+      credentials,
+      log,
+    });
+  }
+
+  if (providerConfig.format === "nvidia-nim") {
+    return handleNvidiaNimImageGeneration({
       model,
       provider,
       providerConfig,
@@ -998,6 +1025,7 @@ async function handleOpenAIImageGeneration({
     status: result.status || (result.success ? 200 : 502),
     model: `${provider}/${model}`,
     provider,
+    connectionId: credentials?.connectionId || null,
     duration: Date.now() - startTime,
     tokens: {
       prompt_tokens: 0,
@@ -1047,6 +1075,7 @@ export async function handleOpenAIImageEdit({
     | {
         apiKey?: string;
         accessToken?: string;
+        connectionId?: string;
         baseUrl?: unknown;
         providerSpecificData?: { baseUrl?: unknown } | null;
       }
@@ -1059,6 +1088,7 @@ export async function handleOpenAIImageEdit({
   responseFormat?: string | null;
   n?: number;
   log?: { info: (tag: string, message: string) => void } | null;
+  apiKeyInfo?: { id?: string | null; name?: string | null } | null;
 }) {
   const startTime = Date.now();
   const url = resolveImageBaseUrl(
@@ -1125,6 +1155,7 @@ export async function handleOpenAIImageEdit({
     status: result.status || (result.success ? 200 : 502),
     model: `${provider}/${model}`,
     provider,
+    connectionId: credentials?.connectionId || null,
     duration: Date.now() - startTime,
     tokens: {
       prompt_tokens: 0,
@@ -1146,367 +1177,11 @@ export async function handleOpenAIImageEdit({
   return result;
 }
 
-const CHATGPT_WEB_IMAGE_MARKDOWN_RE = /!\[[^\]]*\]\(([^)\s]+)\)/g;
-const CHATGPT_WEB_IMAGE_ID_RE = /\/v1\/chatgpt-web\/image\/([a-f0-9]{16,64})(?=[?\s"'<>)]|$)/i;
-const CHATGPT_WEB_CACHE_ID_RE = /^[a-f0-9]{16,64}$/i;
-
-function extractChatGptWebCacheId(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const urlMatch = trimmed.match(CHATGPT_WEB_IMAGE_ID_RE)?.[1];
-  if (urlMatch) return urlMatch.toLowerCase();
-  if (CHATGPT_WEB_CACHE_ID_RE.test(trimmed)) return trimmed.toLowerCase();
-  return null;
-}
-
-function getChatGptWebEditCacheId(body: Record<string, unknown>): string | null {
-  return (
-    extractChatGptWebCacheId(body.cache_id) ||
-    extractChatGptWebCacheId(body.image_cache_id) ||
-    extractChatGptWebCacheId(body.imageCacheId) ||
-    extractChatGptWebCacheId(body.image_url) ||
-    extractChatGptWebCacheId(body.url)
-  );
-}
-
-type ChatGptWebImageResult = {
-  url?: string;
-  b64_json?: string;
-  cache_id?: string;
-  cache_expires_at?: number;
-  cache_ttl_seconds?: number;
-};
-
-function withChatGptWebCacheMetadata<T extends { url?: string; b64_json?: string }>(
-  image: T,
-  source: unknown
-): T & ChatGptWebImageResult {
-  const cacheId = extractChatGptWebCacheId(source);
-  if (!cacheId) return image;
-  const cached = getChatGptImage(cacheId);
-  if (!cached) return { ...image, cache_id: cacheId };
-  return {
-    ...image,
-    cache_id: cacheId,
-    cache_expires_at: cached.expiresAt,
-    cache_ttl_seconds: Math.max(0, Math.floor((cached.expiresAt - Date.now()) / 1000)),
-  };
-}
-
-const CHATGPT_WEB_NATIVE_LAYOUTS = [
-  { aspectRatio: "1:1", size: "1024x1024", label: "square", ratio: 1 },
-  { aspectRatio: "3:4", size: "1024x1365", label: "portrait", ratio: 3 / 4 },
-  { aspectRatio: "9:16", size: "1024x1792", label: "story", ratio: 9 / 16 },
-  { aspectRatio: "4:3", size: "1365x1024", label: "landscape", ratio: 4 / 3 },
-  { aspectRatio: "16:9", size: "1792x1024", label: "widescreen", ratio: 16 / 9 },
-] as const;
-
-const CHATGPT_WEB_LAYOUT_ALIASES = new Map([
-  ["square", "1:1"],
-  ["squared", "1:1"],
-  ["1:1", "1:1"],
-  ["1024x1024", "1:1"],
-  ["portrait", "3:4"],
-  ["vertical", "3:4"],
-  ["tall", "3:4"],
-  ["3:4", "3:4"],
-  ["2:3", "3:4"],
-  ["1024x1365", "3:4"],
-  ["1024x1366", "3:4"],
-  ["1024x1536", "3:4"],
-  ["story", "9:16"],
-  ["phone", "9:16"],
-  ["9:16", "9:16"],
-  ["1024x1792", "9:16"],
-  ["landscape", "4:3"],
-  ["horizontal", "4:3"],
-  ["4:3", "4:3"],
-  ["3:2", "4:3"],
-  ["1365x1024", "4:3"],
-  ["1366x1024", "4:3"],
-  ["1536x1024", "4:3"],
-  ["wide", "16:9"],
-  ["widescreen", "16:9"],
-  ["16:9", "16:9"],
-  ["1792x1024", "16:9"],
-]);
-
-function getChatGptWebRequestedAspectRatio(body) {
-  return typeof body.aspect_ratio === "string"
-    ? body.aspect_ratio
-    : typeof body.aspectRatio === "string"
-      ? body.aspectRatio
-      : null;
-}
-
-function isChatGptWebAutoLayout(value: unknown) {
-  return typeof value === "string" && ["auto", "default"].includes(value.trim().toLowerCase());
-}
-
-function findChatGptWebLayout(aspectRatio: string) {
-  return CHATGPT_WEB_NATIVE_LAYOUTS.find((layout) => layout.aspectRatio === aspectRatio) || null;
-}
-
-function closestChatGptWebLayout(width: number, height: number) {
-  const ratio = width / height;
-  return CHATGPT_WEB_NATIVE_LAYOUTS.reduce((best, layout) => {
-    const bestDistance = Math.abs(Math.log(ratio / best.ratio));
-    const distance = Math.abs(Math.log(ratio / layout.ratio));
-    return distance < bestDistance ? layout : best;
-  }, CHATGPT_WEB_NATIVE_LAYOUTS[0]);
-}
-
-function normalizeChatGptWebLayout(value: unknown) {
-  if (typeof value !== "string") return null;
-  const raw = value.trim();
-  if (!raw) return null;
-
-  const key = raw.toLowerCase().replace(/\s+/g, "-");
-  if (isChatGptWebAutoLayout(key)) return null;
-
-  const aliased = CHATGPT_WEB_LAYOUT_ALIASES.get(key);
-  if (aliased) return findChatGptWebLayout(aliased);
-
-  const sizeMatch = key.match(/^(\d+)x(\d+)$/);
-  if (sizeMatch) {
-    return closestChatGptWebLayout(Number(sizeMatch[1]), Number(sizeMatch[2]));
-  }
-
-  const ratioMatch = key.match(/^(\d+):(\d+)$/);
-  if (ratioMatch) {
-    return closestChatGptWebLayout(Number(ratioMatch[1]), Number(ratioMatch[2]));
-  }
-
-  return null;
-}
-
-function getChatGptWebImageLayout(body) {
-  const requestedAspectRatio = getChatGptWebRequestedAspectRatio(body);
-  if (isChatGptWebAutoLayout(requestedAspectRatio)) return null;
-  if (requestedAspectRatio) return normalizeChatGptWebLayout(requestedAspectRatio);
-  return normalizeChatGptWebLayout(body.size);
-}
-
-function extractMarkdownImageUrls(text: string): string[] {
-  const urls: string[] = [];
-  // String.prototype.matchAll consumes a fresh iterator and ignores the
-  // regex's lastIndex, so no manual reset is required.
-  for (const match of text.matchAll(CHATGPT_WEB_IMAGE_MARKDOWN_RE)) {
-    if (match[1]) urls.push(match[1]);
-  }
-  return urls;
-}
-
-function buildChatGptWebImagePrompt(body, referenceImageCount = 0): string {
-  const prompt = String(body.prompt || "").trim();
-  const details: string[] = [];
-  const layout = getChatGptWebImageLayout(body);
-  if (referenceImageCount > 0) {
-    details.push(
-      `Use the attached reference image${referenceImageCount === 1 ? "" : "s"} as visual guidance.`
-    );
-  }
-  details.push(`Create an image for this prompt: ${prompt}`);
-  if (layout) {
-    details.push(`Requested aspect ratio: ${layout.label} (${layout.aspectRatio}).`);
-    details.push(`Requested size: ${layout.size}.`);
-  } else if (typeof body.size === "string" && body.size.trim()) {
-    details.push(`Requested size: ${body.size.trim()}.`);
-  }
-  if (typeof body.quality === "string" && body.quality.trim()) {
-    details.push(`Requested quality: ${body.quality.trim()}.`);
-  }
-  if (typeof body.style === "string" && body.style.trim()) {
-    details.push(`Requested style: ${body.style.trim()}.`);
-  }
-  return details.join("\n");
-}
-
-async function handleChatGptWebImageGeneration({
-  model,
-  provider,
-  body,
-  credentials,
-  log,
-  signal,
-  clientHeaders,
-  apiKeyInfo = null,
-}) {
-  const startTime = Date.now();
-  const logMetadata = buildImageCallLogMetadata(credentials, apiKeyInfo);
-  const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
-  if (!prompt) {
-    return saveImageErrorResult({
-      provider,
-      model,
-      status: 400,
-      startTime,
-      error: "Prompt is required for ChatGPT Web image generation",
-    });
-  }
-
-  if (!credentials?.apiKey) {
-    return saveImageErrorResult({
-      provider,
-      model,
-      status: 401,
-      startTime,
-      error: "ChatGPT Web credentials missing session cookie",
-    });
-  }
-
-  // Each image is one chatgpt.com chat turn (~30s). Cap at 4 (matches OpenAI's
-  // own limit for GPT Image models) so a stray n=1000 doesn't pin the
-  // executor for hours before the upstream HTTP timeout fires.
-  const CHATGPT_WEB_IMAGE_N_MAX = 4;
-  const rawCount = Number.isInteger(body.n) && (body.n as number) > 0 ? (body.n as number) : 1;
-  if (rawCount > CHATGPT_WEB_IMAGE_N_MAX) {
-    return saveImageErrorResult({
-      provider,
-      model,
-      status: 400,
-      startTime,
-      error: `ChatGPT Web image generation supports n=1..${CHATGPT_WEB_IMAGE_N_MAX} (got ${rawCount}); each n is a separate ~30s chat turn.`,
-    });
-  }
-  const requestedCount = rawCount;
-  if (log && requestedCount > 1) {
-    log.warn(
-      "IMAGE",
-      `ChatGPT Web returns one image per chat turn; requested n=${requestedCount} will run sequentially`
-    );
-  }
-
-  const wantsBase64 = body.response_format === "b64_json";
-  const imageInputs = extractImageInputs(body);
-  const referenceImageUrls = imageInputs.imageUrls;
-  const layout = getChatGptWebImageLayout(body);
-  const requestedAspectRatio = getChatGptWebRequestedAspectRatio(body);
-  const isAutoLayout = isChatGptWebAutoLayout(requestedAspectRatio);
-  const images: ChatGptWebImageResult[] = [];
-  const requestBody = {
-    model,
-    prompt: prompt.slice(0, 500),
-    size: layout?.size || (isAutoLayout ? undefined : body.size) || undefined,
-    aspect_ratio: isAutoLayout
-      ? "auto"
-      : layout?.aspectRatio || body.aspect_ratio || body.aspectRatio || undefined,
-    quality: body.quality || undefined,
-    reference_images: referenceImageUrls.length || undefined,
-  };
-
-  const buildUserContent = () => {
-    const text = buildChatGptWebImagePrompt(body, referenceImageUrls.length);
-    if (referenceImageUrls.length === 0) return text;
-    return [
-      { type: "text", text },
-      ...referenceImageUrls.map((url) => ({ type: "image_url", image_url: { url } })),
-    ];
-  };
-
-  for (let i = 0; i < requestedCount; i++) {
-    const executor = new ChatGptWebExecutor();
-    const result = await executor.execute({
-      model,
-      body: {
-        messages: [{ role: "user", content: buildUserContent() }],
-      },
-      stream: false,
-      credentials,
-      signal,
-      log,
-      clientHeaders,
-    });
-
-    const responseText = await result.response.text();
-    if (result.response.status >= 400) {
-      return saveImageErrorResult({
-        provider,
-        model,
-        status: result.response.status,
-        startTime,
-        error: responseText,
-        requestBody,
-      });
-    }
-
-    let content = "";
-    try {
-      const json = JSON.parse(responseText);
-      content = String(json?.choices?.[0]?.message?.content || "");
-    } catch {
-      content = responseText;
-    }
-
-    const urls = extractMarkdownImageUrls(content);
-    if (urls.length === 0) {
-      return saveImageErrorResult({
-        provider,
-        model,
-        status: 502,
-        startTime,
-        error: `ChatGPT Web completed without returning image markdown: ${content.slice(0, 300)}`,
-        requestBody,
-      });
-    }
-
-    for (const url of urls) {
-      if (!wantsBase64) {
-        images.push(withChatGptWebCacheMetadata({ url }, url));
-        continue;
-      }
-      const id = url.match(CHATGPT_WEB_IMAGE_ID_RE)?.[1];
-      const cached = id ? getChatGptImage(id) : null;
-      if (!cached) {
-        return saveImageErrorResult({
-          provider,
-          model,
-          status: 502,
-          startTime,
-          error: "ChatGPT Web image bytes expired before b64_json conversion",
-          requestBody,
-        });
-      }
-      images.push(withChatGptWebCacheMetadata({ b64_json: cached.bytes.toString("base64") }, id));
-    }
-  }
-
-  return saveImageSuccessResult({
-    provider,
-    model,
-    startTime,
-    requestBody,
-    responseBody: { images_count: images.length },
-    images,
-    tokens: buildImageUsageTokens(images),
-    ...logMetadata,
-  });
-}
-
-/**
- * Handle a multipart /v1/images/edits request for chatgpt-web. Open WebUI
- * uploads the prior image's bytes; we hash them and look up our cache. Native
- * OmniRoute clients can skip the upload and send the short-lived cache id.
- *
- * The hash match is reliable because Open WebUI's image-gen pipeline
- * downloads our /v1/chatgpt-web/image/<id> URL byte-for-byte and re-serves
- * those exact bytes through its own file store. When the user asks to edit
- * the image, OWUI uploads the same bytes back to us via multipart — same
- * hash, we find the conversation context, and drive the executor with a
- * synthetic chat thread that triggers continuation mode.
- *
- * No-match cases (cache evicted by TTL, or the user uploaded a foreign
- * image) get a clear 400. We can't actually edit an image we don't have a
- * conversation context for — chatgpt.com's image_gen tool needs the
- * original conversation node, and we don't have a path to upload bytes
- * directly.
- */
 export async function handleImageEdit({
   provider,
   model,
   body,
-  imageBytes = null,
+  imageBytes,
   credentials,
   apiKeyInfo = null,
   log,
@@ -1515,8 +1190,8 @@ export async function handleImageEdit({
 }: {
   provider: string;
   model: string;
-  body: Record<string, unknown>;
-  imageBytes?: Buffer | null;
+  body: Record<string, any>;
+  imageBytes: Buffer;
   imageMime?: string; // accepted for symmetry with route layer; not used
   credentials: any;
   apiKeyInfo?: { id?: string | null; name?: string | null } | null;
@@ -1547,31 +1222,16 @@ export async function handleImageEdit({
     });
   }
 
-  const imageCacheId = getChatGptWebEditCacheId(body);
-  let imageHash: string | null = null;
-  let cached = imageCacheId
-    ? (() => {
-        const entry = getChatGptImage(imageCacheId);
-        return entry ? { id: imageCacheId, entry } : null;
-      })()
-    : null;
-  let lookupMethod = imageCacheId ? "cache_id" : "sha256";
-
-  if (!cached && imageBytes?.length) {
-    imageHash = createHash("sha256").update(imageBytes).digest("hex");
-    cached = findChatGptImageBySha256(imageHash);
-    lookupMethod = imageCacheId ? "cache_id_then_sha256" : "sha256";
-  }
+  const imageHash = createHash("sha256").update(imageBytes).digest("hex");
+  const cached = findChatGptImageBySha256(imageHash);
 
   const wantsBase64 = body.response_format === "b64_json";
   const requestBody = {
     model,
     prompt: prompt.slice(0, 500),
     size: body.size || undefined,
-    cache_id: imageCacheId ? imageCacheId.slice(0, 16) : undefined,
-    image_hash: imageHash ? imageHash.slice(0, 16) : undefined,
-    image_bytes: imageBytes?.length || undefined,
-    lookup_method: lookupMethod,
+    image_hash: imageHash.slice(0, 16),
+    image_bytes: imageBytes.length,
     cached_match: Boolean(cached?.entry.context),
   };
 
@@ -1583,9 +1243,7 @@ export async function handleImageEdit({
     // unrelated image and confusing the user.
     log?.warn?.(
       "IMAGE",
-      imageCacheId && !imageBytes?.length
-        ? `chatgpt-web edit: no cached match for cache_id=${imageCacheId.slice(0, 16)}; returning 400`
-        : `chatgpt-web edit: no cached match for sha256=${imageHash?.slice(0, 16) ?? "none"} (bytes=${imageBytes?.length ?? 0}); returning 400`
+      `chatgpt-web edit: no cached match for sha256=${imageHash.slice(0, 16)} (bytes=${imageBytes.length}); returning 400`
     );
     return saveImageErrorResult({
       provider,
@@ -1593,9 +1251,9 @@ export async function handleImageEdit({
       status: 400,
       startTime,
       error:
-        "chatgpt-web image edit only works for images generated through this OmniRoute instance " +
-        "while the persistent cache entry is still available. Send a valid cache_id/image_cache_id " +
-        "from the generation response, or upload the original image bytes.",
+        "chatgpt-web image edit only works for images recently generated through this OmniRoute instance " +
+        "(cache window: 30 minutes). Re-generate the image and try the edit immediately, or disable image-edit " +
+        "in your client to use plain chat-completion edit prompts instead.",
       requestBody,
     });
   }
@@ -1670,10 +1328,10 @@ export async function handleImageEdit({
     });
   }
 
-  const images: ChatGptWebImageResult[] = [];
+  const images: Array<{ url?: string; b64_json?: string }> = [];
   for (const url of urls) {
     if (!wantsBase64) {
-      images.push(withChatGptWebCacheMetadata({ url }, url));
+      images.push({ url });
       continue;
     }
     const id = url.match(CHATGPT_WEB_IMAGE_ID_RE)?.[1];
@@ -1688,7 +1346,7 @@ export async function handleImageEdit({
         requestBody,
       });
     }
-    images.push(withChatGptWebCacheMetadata({ b64_json: cachedNew.bytes.toString("base64") }, id));
+    images.push({ b64_json: cachedNew.bytes.toString("base64") });
   }
 
   return saveImageSuccessResult({

@@ -3,6 +3,7 @@ import React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { EXPECTED_CODE_COUNT } from "@/shared/schemas/cliCatalog";
 import type { ToolBatchStatusMap } from "@/shared/types/cliBatchStatus";
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
@@ -65,6 +66,33 @@ vi.mock("@/shared/components", () => ({
   Input: ({ placeholder, value, onChange }: React.InputHTMLAttributes<HTMLInputElement>) => (
     <input data-testid="search-input" placeholder={placeholder} value={value} onChange={onChange} />
   ),
+  Toggle: ({
+    checked = false,
+    disabled = false,
+    label,
+    description,
+    onChange,
+  }: {
+    checked?: boolean;
+    disabled?: boolean;
+    label?: string;
+    description?: string;
+    onChange?: (checked: boolean) => void;
+  }) => (
+    <div data-testid="toggle-row">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-label={label}
+        disabled={disabled}
+        onClick={() => onChange?.(!checked)}
+      >
+        {label}
+      </button>
+      {description ? <span>{description}</span> : null}
+    </div>
+  ),
 }));
 
 // ── useToolBatchStatuses mock ─────────────────────────────────────────────────
@@ -89,12 +117,30 @@ vi.mock("@/shared/hooks/cli/useToolBatchStatuses", () => ({
 // ── fetch mock ────────────────────────────────────────────────────────────────
 
 let mockFetchResponse: { connections?: unknown[] } = { connections: [{ isActive: true }] };
+let mockFeatureFlagsResponse = {
+  flags: [
+    { key: "OMNIROUTE_AUTO_SYNC_CODEX_PROFILES", effectiveValue: "false" },
+    { key: "OMNIROUTE_AUTO_SYNC_CLAUDE_PROFILES", effectiveValue: "false" },
+  ],
+};
 
-globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
   if (typeof url === "string" && url.includes("/api/providers")) {
     return Promise.resolve({
       ok: true,
       json: () => Promise.resolve(mockFetchResponse),
+    });
+  }
+  if (typeof url === "string" && url.includes("/api/settings/feature-flags")) {
+    if (init?.method === "PUT") {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({}),
+      });
+    }
+    return Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve(mockFeatureFlagsResponse),
     });
   }
   return Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
@@ -123,11 +169,15 @@ async function renderPage(props: { machineId?: string } = {}): Promise<HTMLEleme
   });
 
   // Let any pending microtasks (fetch promises) flush
+  await flushPromises();
+
+  return container;
+}
+
+async function flushPromises() {
   await act(async () => {
     await Promise.resolve();
   });
-
-  return container;
 }
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
@@ -147,12 +197,30 @@ beforeEach(() => {
     refetch: mockRefetch,
   };
   mockFetchResponse = { connections: [{ isActive: true }] };
+  mockFeatureFlagsResponse = {
+    flags: [
+      { key: "OMNIROUTE_AUTO_SYNC_CODEX_PROFILES", effectiveValue: "false" },
+      { key: "OMNIROUTE_AUTO_SYNC_CLAUDE_PROFILES", effectiveValue: "false" },
+    ],
+  };
 
-  globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+  globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
     if (typeof url === "string" && url.includes("/api/providers")) {
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve(mockFetchResponse),
+      });
+    }
+    if (typeof url === "string" && url.includes("/api/settings/feature-flags")) {
+      if (init?.method === "PUT") {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({}),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(mockFeatureFlagsResponse),
       });
     }
     return Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
@@ -181,17 +249,70 @@ describe("CliCodePageClient", () => {
     expect(container.querySelector('[data-testid="cli-comparison-card"]')).not.toBeNull();
   });
 
-  it("2. renders 19 CliToolCard cards when catalogue is OK (code + baseUrlSupport != none)", async () => {
+  it("2. renders every code tool card when catalogue is OK", async () => {
     const container = await renderPage();
     const cards = container.querySelectorAll('[data-testid="cli-tool-card"]');
-    expect(cards.length).toBe(19);
+    expect(cards.length).toBe(EXPECTED_CODE_COUNT);
+  });
+
+  it("2b. renders CLI profile auto-sync toggles from feature flags", async () => {
+    mockFeatureFlagsResponse = {
+      flags: [
+        { key: "OMNIROUTE_AUTO_SYNC_CODEX_PROFILES", effectiveValue: "true" },
+        { key: "OMNIROUTE_AUTO_SYNC_CLAUDE_PROFILES", effectiveValue: "false" },
+      ],
+    };
+
+    const container = await renderPage();
+
+    expect(container.textContent).toContain("CLI profile auto-sync");
+    expect(container.textContent).toContain("Codex profiles");
+    expect(container.textContent).toContain("Claude Code profiles");
+    expect(container.textContent).not.toContain("HTTP");
+
+    const codexToggle = container.querySelector(
+      'button[role="switch"][aria-label="Codex profiles"]'
+    );
+    const claudeToggle = container.querySelector(
+      'button[role="switch"][aria-label="Claude Code profiles"]'
+    );
+
+    expect(codexToggle?.getAttribute("aria-checked")).toBe("true");
+    expect(claudeToggle?.getAttribute("aria-checked")).toBe("false");
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/settings/feature-flags");
+  });
+
+  it("2c. persists CLI profile auto-sync toggle changes", async () => {
+    const container = await renderPage();
+    const codexToggle = container.querySelector(
+      'button[role="switch"][aria-label="Codex profiles"]'
+    ) as HTMLButtonElement;
+
+    expect(codexToggle).not.toBeNull();
+
+    await act(async () => {
+      codexToggle.click();
+      await Promise.resolve();
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/settings/feature-flags", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        key: "OMNIROUTE_AUTO_SYNC_CODEX_PROFILES",
+        value: "true",
+      }),
+    });
+    expect(codexToggle.getAttribute("aria-checked")).toBe("true");
   });
 
   it("3. search filter: typing 'claude' shows only 1 card", async () => {
     const container = await renderPage();
 
-    // All 19 initially visible
-    expect(container.querySelectorAll('[data-testid="cli-tool-card"]').length).toBe(19);
+    // All code tools initially visible
+    expect(container.querySelectorAll('[data-testid="cli-tool-card"]').length).toBe(
+      EXPECTED_CODE_COUNT
+    );
 
     const input = container.querySelector('[data-testid="search-input"]') as HTMLInputElement;
     expect(input).not.toBeNull();
@@ -230,7 +351,7 @@ describe("CliCodePageClient", () => {
       );
     });
 
-    // We can verify with a simpler approach: check the card count remains 19 (no crash)
+    // We can verify with a simpler approach: check the card count remains non-zero (no crash)
     expect(container.querySelectorAll('[data-testid="cli-tool-card"]').length).toBeGreaterThan(0);
   });
 
@@ -250,7 +371,7 @@ describe("CliCodePageClient", () => {
 
     const cards = container.querySelectorAll('[data-testid="cli-tool-card"]');
     // After filtering for "claude code", only Claude Code CLI should match
-    expect(cards.length).toBeLessThan(19);
+    expect(cards.length).toBeLessThan(EXPECTED_CODE_COUNT);
     expect(cards.length).toBeGreaterThan(0);
     // The visible card should contain "Claude Code"
     expect(container.textContent).toContain("Claude Code");

@@ -4,6 +4,20 @@ import assert from "node:assert/strict";
 const { AgentSkillSchema, SkillCoverageSchema, ListQuerySchema, GenerateBodySchema } =
   await import("../../src/lib/agentSkills/schemas.ts");
 
+test("agent skills schemas module exposes runtime validators", async () => {
+  const schemas = await import("../../src/lib/agentSkills/schemas.ts");
+
+  for (const key of [
+    "AgentSkillSchema",
+    "GenerateBodySchema",
+    "ListQuerySchema",
+    "SkillCategorySchema",
+    "SkillCoverageSchema",
+  ]) {
+    assert.equal(typeof schemas[key].safeParse, "function", `${key} should stay exported`);
+  }
+});
+
 // ─── AgentSkillSchema ─────────────────────────────────────────────────────────
 
 test("AgentSkillSchema — valid api skill parses successfully", () => {
@@ -121,7 +135,7 @@ test("AgentSkillSchema — .parse throws on invalid input", () => {
 
 test("SkillCoverageSchema — valid coverage parses successfully", () => {
   const input = {
-    api: { have: 22, total: 22 },
+    api: { have: 23, total: 23 },
     cli: { have: 20, total: 20 },
     totalSkills: 42,
     generatedAt: new Date().toISOString(),
@@ -143,7 +157,7 @@ test("SkillCoverageSchema — wrong total literal (api.total=21) fails", () => {
 
 test("SkillCoverageSchema — wrong total literal (cli.total=19) fails", () => {
   const input = {
-    api: { have: 22, total: 22 },
+    api: { have: 23, total: 23 },
     cli: { have: 19, total: 19 },
     totalSkills: 41,
     generatedAt: new Date().toISOString(),
@@ -154,7 +168,7 @@ test("SkillCoverageSchema — wrong total literal (cli.total=19) fails", () => {
 
 test("SkillCoverageSchema — invalid datetime fails", () => {
   const input = {
-    api: { have: 22, total: 22 },
+    api: { have: 23, total: 23 },
     cli: { have: 20, total: 20 },
     totalSkills: 42,
     generatedAt: "not-a-date",
@@ -165,7 +179,7 @@ test("SkillCoverageSchema — invalid datetime fails", () => {
 
 test("SkillCoverageSchema — negative have value fails", () => {
   const input = {
-    api: { have: -1, total: 22 },
+    api: { have: -1, total: 23 },
     cli: { have: 20, total: 20 },
     totalSkills: 42,
     generatedAt: new Date().toISOString(),

@@ -150,7 +150,6 @@ export default function StreamTransformerAccordion({
     const prev = prevForceOpen.current;
     prevForceOpen.current = Boolean(forceOpen);
     if (!prev && forceOpen) {
-       
       setOpen(true);
       setHasOpened(true);
       onOpenChange?.(true);

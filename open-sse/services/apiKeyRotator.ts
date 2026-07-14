@@ -31,7 +31,10 @@ const MAX_CONNECTION_EXTRA_KEYS = 500;
  */
 export function trackConnectionExtraKeys(connectionId: string, extraKeys: string[]): void {
   const validExtras = extraKeys.filter((k) => typeof k === "string" && k.trim().length > 0);
-  if (!_connectionExtraKeys.has(connectionId) && _connectionExtraKeys.size >= MAX_CONNECTION_EXTRA_KEYS) {
+  if (
+    !_connectionExtraKeys.has(connectionId) &&
+    _connectionExtraKeys.size >= MAX_CONNECTION_EXTRA_KEYS
+  ) {
     const oldest = _connectionExtraKeys.keys().next().value;
     if (oldest !== undefined) _connectionExtraKeys.delete(oldest);
   }
@@ -185,6 +188,29 @@ export function recordKeyFailure(connectionId: string, keyId: string): KeyHealth
   } else if (health.failures > 0) {
     health.status = "warning";
   }
+
+  return { ...health };
+}
+
+/**
+ * Record a terminal failure for a key — e.g. HTTP 402 "Insufficient account
+ * balance". Unlike recordKeyFailure() (which only invalidates after
+ * FAILURE_THRESHOLD consecutive failures), this marks the key "invalid"
+ * immediately in a single call, because the condition will not recover
+ * mid-session (the depleted key must not be returned by the rotator again
+ * until credits are added / an operator resets it).
+ *
+ * @param connectionId - Connection scope for health state isolation
+ * @param keyId - Key identifier ("primary" | "extra_0" | ...)
+ * @returns Updated health status
+ */
+export function recordKeyTerminal(connectionId: string, keyId: string): KeyHealth {
+  const health = getOrCreateHealth(connectionId, keyId);
+  health.failures = Math.max(health.failures + 1, FAILURE_THRESHOLD);
+  health.totalRequests++;
+  health.totalFailures++;
+  health.lastFailure = new Date().toISOString();
+  health.status = "invalid";
 
   return { ...health };
 }

@@ -143,13 +143,6 @@ _Hubungkan IDE atau alat CLI berbasis AI apa pun melalui OmniRoute — gateway A
         <sub>⭐ 67.3K</sub>
       </td>
       <td align="center" width="110">
-        <a href="https://github.com/google-gemini/gemini-cli">
-          <img src="./public/providers/gemini-cli.svg" alt="Gemini CLI" width="48"/><br/>
-          <b>Gemini CLI</b>
-        </a><br/>
-        <sub>⭐ 94.7K</sub>
-      </td>
-      <td align="center" width="110">
         <a href="https://github.com/Kilo-Org/kilocode">
           <img src="./public/providers/kilocode.svg" alt="Kilo Code" width="48"/><br/>
           <b>Kilo Code</b>
@@ -177,7 +170,6 @@ _Hubungkan IDE atau alat CLI berbasis AI apa pun melalui OmniRoute — gateway A
 - ✅ **Maksimalkan langganan** - Pantau kuota, gunakan setiap bit sebelum reset
 - ✅ **Fallback otomatis** - Langganan → Kunci API → Murah → Gratis, tanpa downtime
 - ✅ **Multi-akun** - Round-robin antar akun per penyedia
-- ✅ **Universal** - Bekerja dengan Claude Code, Codex, Gemini CLI, Cursor, Cline, OpenClaw, alat CLI apa pun
 
 ---
 
@@ -207,7 +199,7 @@ Perintah ini menghasilkan `system-info.txt` berisi versi Node.js, versi OmniRout
 
 ```
 ┌─────────────┐
-│  CLI Anda   │  (Claude Code, Codex, Gemini CLI, OpenClaw, Cursor, Cline...)
+│  Your CLI   │  (Claude Code, Codex, OpenClaw, Cursor, Cline...)
 │   Tool      │
 └──────┬──────┘
        │ http://localhost:20128/v1
@@ -219,7 +211,7 @@ Perintah ini menghasilkan `system-info.txt` berisi versi Node.js, versi OmniRout
 │  • Refresh token otomatis               │
 └──────┬──────────────────────────────────┘
        │
-       ├─→ [Tier 1: LANGGANAN] Claude Code, Codex, Gemini CLI
+       ├─→ [Tier 1: LANGGANAN] Claude Code, Codex
        │   ↓ kuota habis
        ├─→ [Tier 2: KUNCI API] DeepSeek, Groq, xAI, Mistral, NVIDIA NIM, dll.
        │   ↓ batas anggaran
@@ -294,9 +286,8 @@ Tidak semua orang bisa membayar $20–200/bulan untuk langganan AI. Pelajar, dev
 
 **Cara OmniRoute menyelesaikannya:**
 
-- **Penyedia Tier Gratis Bawaan** — Dukungan asli untuk penyedia 100% gratis: Qoder (5 model tak terbatas via OAuth: kimi-k2-thinking, qwen3-coder-plus, deepseek-r1, minimax-m2, kimi-k2), Qwen (4 model tak terbatas: qwen3-coder-plus, qwen3-coder-flash, qwen3-coder-next, vision-model), Kiro (Claude + AWS Builder ID gratis), Gemini CLI (180K token/bulan gratis)
 - **Ollama Cloud** — Model Ollama yang di-host di cloud pada `api.ollama.com` dengan tier "Light usage" gratis; gunakan prefix `ollamacloud/<model>`
-- **Combo Hanya Gratis** — Rantai `gc/gemini-3-flash → if/kimi-k2-thinking → qw/qwen3-coder-plus` = $0/bulan tanpa downtime
+- **Combo Hanya Gratis** — Rantai `if/kimi-k2-thinking → qw/qwen3-coder-plus` = $0/bulan tanpa downtime
 - **Akses Gratis NVIDIA NIM** — ~40 RPM akses gratis selamanya untuk 70+ model di build.nvidia.com (beralih dari kredit ke batas rate murni)
 - **Strategi Optimasi Biaya** — Strategi routing yang secara otomatis memilih penyedia termurah yang tersedia
 
@@ -340,8 +331,6 @@ Penyedia AI bisa menjadi tidak stabil, mengembalikan kesalahan 5xx, atau mencapa
 <details>
 <summary><b>🔧 7. "Mengonfigurasi setiap alat AI membosankan dan berulang"</b></summary>
 
-Developer menggunakan Cursor, Claude Code, Codex CLI, OpenClaw, Gemini CLI, Kilo Code... Setiap alat memerlukan konfigurasi berbeda (endpoint API, kunci, model). Mengonfigurasi ulang saat berganti penyedia atau model adalah pemborosan waktu.
-
 **Cara OmniRoute menyelesaikannya:**
 
 - **Dashboard Alat CLI** — Halaman khusus dengan pengaturan satu klik untuk Claude Code, Codex CLI, OpenClaw, Kilo Code, Antigravity, Cline
@@ -354,12 +343,9 @@ Developer menggunakan Cursor, Claude Code, Codex CLI, OpenClaw, Gemini CLI, Kilo
 <details>
 <summary><b>🔑 8. "Mengelola token OAuth dari beberapa penyedia adalah mimpi buruk"</b></summary>
 
-Claude Code, Codex, Gemini CLI, Copilot — semua menggunakan OAuth 2.0 dengan token yang kedaluwarsa. Developer perlu mengautentikasi ulang terus-menerus, menangani `client_secret is missing`, `redirect_uri_mismatch`, dan kegagalan di server jarak jauh. OAuth di LAN/VPS sangat bermasalah.
-
 **Cara OmniRoute menyelesaikannya:**
 
 - **Refresh Token Otomatis** — Token OAuth diperbarui di latar belakang sebelum kedaluwarsa
-- **OAuth 2.0 (PKCE) Bawaan** — Alur otomatis untuk Claude Code, Codex, Gemini CLI, Copilot, Kiro, Qwen, Qoder
 - **OAuth Multi-Akun** — Beberapa akun per penyedia melalui ekstraksi token JWT/ID
 - **Perbaikan OAuth LAN/Jarak Jauh** — Deteksi IP privat untuk `redirect_uri` + mode URL manual untuk server jarak jauh
 - **OAuth di Balik Nginx** — Menggunakan `window.location.origin` untuk kompatibilitas reverse proxy
@@ -711,9 +697,8 @@ Outcome: higher quality, near-zero interruption
 
 ```txt
 Combo: "free-forever"
-  1. gc/gemini-3-flash
-  2. if/kimi-k2-thinking
-  3. qw/qwen3-coder-plus
+  1. if/kimi-k2-thinking       (unlimited free)
+  2. qw/qwen3-coder-plus       (unlimited free)
 
 Monthly cost: $0
 Outcome: stable free coding workflow
@@ -752,8 +737,7 @@ Outcome: deep fallback depth for deadline-critical workloads
 | 1    | Connect **Kiro** (AWS Builder ID OAuth)                | Claude Sonnet 4.5, Haiku 4.5 — **unlimited**                       |
 | 2    | Connect **Qoder** (Google OAuth)                       | kimi-k2-thinking, qwen3-coder-plus, deepseek-r1... — **unlimited** |
 | 3    | Connect **Qwen** (Device Code)                         | qwen3-coder-plus, qwen3-coder-flash... — **unlimited**             |
-| 4    | Connect **Gemini CLI** (Google OAuth)                  | gemini-3-flash, gemini-2.5-pro — **Gratis 180K/bln**               |
-| 5    | `/dashboard/combos` → **Templat Tumpukan Gratis ($0)** | Round-robin semua penyedia gratis secara otomatis                  |
+| 4    | `/dashboard/combos` → **Templat Tumpukan Gratis ($0)** | Round-robin semua penyedia gratis secara otomatis                  |
 
 **Arahkan IDE/CLI apa pun ke:** `http://localhost:20128/v1` · Kunci API: `any-string` · Selesai.
 
@@ -768,11 +752,10 @@ npm install -g omniroute
 omniroute
 ```
 
-> **pengguna pnpm:** Jalankan `pnpm approve-builds -g` setelah instalasi untuk mengaktifkan skrip build asli yang diperlukan oleh `better-sqlite3` dan `@swc/core`:
+> **pengguna pnpm:** Pass `--allow-build` at install time to enable native build scripts required by `better-sqlite3` and `@swc/core` (the `approve-builds -g` command is not supported for global installs on pnpm v11):
 >
 > ```bash
-> pnpm install -g omniroute
-> pnpm approve-builds -g   # Pilih semua paket → approve
+> pnpm add -g omniroute@latest --allow-build=better-sqlite3 --allow-build=@swc/core
 > omniroute
 > ```
 
@@ -866,8 +849,6 @@ Base URL: http://localhost:20128/v1
 API Key:  [copy from Endpoint page]
 Model:    if/kimi-k2-thinking (or any provider/model prefix)
 ```
-
-Bekerja dengan Claude Code, Codex CLI, Gemini CLI, Cursor, Cline, OpenClaw, OpenCode, dan SDK yang kompatibel dengan OpenAI.
 
 ### 4) Mengaktifkan dan memvalidasi protokol (v2.0)
 
@@ -1153,7 +1134,6 @@ Saat diminimalkan, OmniRoute ada di baki sistem Anda dengan tindakan cepat:
 | ------------------- | --------------------------- | ----------------------------------- | ---------------- | --------------------------------- |
 | **💳 SUBSCRIPTION** | Claude Code (Pro)           | $20/mo                              | 5h + weekly      | Already subscribed                |
 |                     | Codex (Plus/Pro)            | $20-200/mo                          | 5h + weekly      | OpenAI users                      |
-|                     | Gemini CLI                  | **FREE**                            | 180K/mo + 1K/day | Everyone!                         |
 |                     | GitHub Copilot              | $10-19/mo                           | Monthly          | GitHub users                      |
 | **🔑 API KEY**      | NVIDIA NIM                  | **GRATIS** (pengembangan selamanya) | ~40 RPM          | 70+ open models                   |
 |                     | Cerebras                    | **FREE** (1M tok/day)               | 60K TPM / 30 RPM | World's fastest                   |
@@ -1235,13 +1215,6 @@ Cerebras (cerebras/)   → Llama/Qwen world-fastest — 1M tok/day
 | `qwen3-coder-flash` | `qw/`  | **Unlimited** | No reported cap     |
 | `qwen3-coder-next`  | `qw/`  | **Unlimited** | No reported cap     |
 | `vision-model`      | `qw/`  | **Unlimited** | Multimodal (images) |
-
-### 🟣 GEMINI CLI (Google OAuth)
-
-| Model                    | Prefix | Limit                       | Rate Limit    |
-| ------------------------ | ------ | --------------------------- | ------------- |
-| `gemini-3-flash-preview` | `gc/`  | **180K tok/month** + 1K/day | Monthly reset |
-| `gemini-2.5-pro`         | `gc/`  | 180K/month (shared pool)    | High quality  |
 
 ### ⚫ NVIDIA NIM (Kunci API Gratis — build.nvidia.com)
 
@@ -1372,7 +1345,7 @@ OmniRoute v3.6 dibangun sebagai platform operasional, bukan hanya proxy relai.
 | 🗑️ **Uninstall / Full Uninstall**    | `npm run uninstall` menyimpan data, `npm run uninstall:full` menghapus semuanya — penghapusan bersih untuk semua metode instalasi                                                  |
 | 🔧 **OAuth Env Repair**              | Tindakan "Perbaiki env" sekali klik untuk penyedia OAuth memulihkan vars env yang hilang dan memperbaiki status autentikasi yang rusak                                             |
 | 🔒 **Pematian Elektron yang Anggun** | Electron `before-quit` dimatikan Next.js dengan baik, mencegah penguncian database SQLite WAL pada penutupan desktop                                                               |
-| 👁️ **Pengalih Visibilitas Model**    | Pengalih visibilitas per model (ikon 👁) dengan filter pencarian dan lencana jumlah aktif (`N/M active`) di halaman penyedia                                                       |
+| 👁️ **Pengalih Visibilitas Model**    | Pengalih visibilitas per model (ikon 👁) dengan filter pencarian dan lencana jumlah aktif (`N/M active`) di halaman penyedia                                                        |
 | 📧 **Email Privacy Masking**         | OAuth account emails masked (`di*****@g****.com`), full address visible on hover                                                                                                   |
 | 🔗 **Context Relay Strategy**        | Strategi kombo menjaga kesinambungan sesi melalui ringkasan penyerahan terstruktur saat akun dirotasi di tengah percakapan                                                         |
 | 🛡️ **Proxy Hardening**               | Pemeriksaan kesehatan token, validasi kunci API, dan operator undici semuanya menghormati konfigurasi proxy                                                                        |
@@ -1395,15 +1368,14 @@ OmniRoute v3.6 dibangun sebagai platform operasional, bukan hanya proxy relai.
 
 ### 🚀 Sebelumnya v2.0.9+ — Playground, Fingerprint CLI & ACP
 
-| Feature                                   | Apa Fungsinya                                                                                                                                                                                                                                                               |
-| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 🎮 **Model Playground**                   | Halaman dasbor untuk menguji model apa pun secara langsung — pemilih penyedia/model/titik akhir, Editor Monaco, streaming, batalkan, pengaturan waktu                                                                                                                       |
-| 🔏 **CLI Fingerprint Matching**           | Pengurutan header/isi per penyedia agar sesuai dengan tanda tangan CLI asli — alihkan per penyedia di Pengaturan > Keamanan. **IP proxy Anda dipertahankan**                                                                                                                |
-| 🤝 **Dukungan ACP (Protokol Klien Agen)** | CLI agent discovery (Codex, Claude, Goose, Gemini CLI, OpenClaw + 9 more), process spawner, `/api/acp/agents` endpoint                                                                                                                                                      |
-| 🤖 **Dasbor Agen ACP**                    | Debug › Halaman agen — kisi 14 agen dengan status pemasangan, versi, formulir agen khusus untuk alat CLI apa pun. Pengguna **OpenCode** mendapatkan tombol "Unduh opencode.json" yang secara otomatis menghasilkan konfigurasi siap pakai dengan semua model yang tersedia. |
-| 🔧 **Custom Model `apiFormat` Routing**   | Model khusus dengan `apiFormat: "responses"` sekarang dirutekan dengan benar ke penerjemah Responses API                                                                                                                                                                    |
-| 🏢 **Codex Workspace Isolation**          | Multiple Codex workspaces per email — OAuth correctly separates connections by workspace ID                                                                                                                                                                                 |
-| 🔄 **Pembaruan Otomatis Elektron**        | Aplikasi desktop memeriksa pembaruan + instal otomatis saat restart                                                                                                                                                                                                         |
+| Feature                                 | Apa Fungsinya                                                                                                                                                                                                                                                               |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🎮 **Model Playground**                 | Halaman dasbor untuk menguji model apa pun secara langsung — pemilih penyedia/model/titik akhir, Editor Monaco, streaming, batalkan, pengaturan waktu                                                                                                                       |
+| 🔏 **CLI Fingerprint Matching**         | Pengurutan header/isi per penyedia agar sesuai dengan tanda tangan CLI asli — alihkan per penyedia di Pengaturan > Keamanan. **IP proxy Anda dipertahankan**                                                                                                                |
+| 🤖 **Dasbor Agen ACP**                  | Debug › Halaman agen — kisi 14 agen dengan status pemasangan, versi, formulir agen khusus untuk alat CLI apa pun. Pengguna **OpenCode** mendapatkan tombol "Unduh opencode.json" yang secara otomatis menghasilkan konfigurasi siap pakai dengan semua model yang tersedia. |
+| 🔧 **Custom Model `apiFormat` Routing** | Model khusus dengan `apiFormat: "responses"` sekarang dirutekan dengan benar ke penerjemah Responses API                                                                                                                                                                    |
+| 🏢 **Codex Workspace Isolation**        | Multiple Codex workspaces per email — OAuth correctly separates connections by workspace ID                                                                                                                                                                                 |
+| 🔄 **Pembaruan Otomatis Elektron**      | Aplikasi desktop memeriksa pembaruan + instal otomatis saat restart                                                                                                                                                                                                         |
 
 ### 🤖 Operasi Agen & Protokol (v2.0)
 
@@ -1702,20 +1674,6 @@ Scenarios:
 - `5h ON` + `Weekly OFF` : hanya penggunaan 5 jam yang dapat memblokir akun.
 - `resetAt` lolos: akun masuk kembali ke rotasi secara otomatis (tidak ada pengaktifan ulang secara manual).
 
-### Gemini CLI (GRATIS 180K/bulan!)
-
-```bash
-Dashboard → Providers → Connect Gemini CLI
-→ Google OAuth
-→ 180K completions/month + 1K/day
-
-Models:
-  gc/gemini-3-flash-preview
-  gc/gemini-2.5-pro
-```
-
-**Nilai Terbaik:** Tingkat gratis yang sangat besar! Gunakan ini sebelum tingkatan berbayar.
-
 ### GitHub Copilot
 
 ```bash
@@ -1878,9 +1836,8 @@ Use in CLI: premium-coding
 ```
 Name: free-combo
 Models:
-  1. gc/gemini-3-flash-preview (180K free/month)
-  2. if/kimi-k2-thinking (unlimited)
-  3. qw/qwen3-coder-plus (unlimited)
+  1. if/kimi-k2-thinking (unlimited)
+  2. qw/qwen3-coder-plus (unlimited)
 
 Cost: $0 forever!
 ```
@@ -2017,7 +1974,6 @@ opencode
 
 - Periksa statistik penggunaan di Dashboard → Biaya
 - Ganti model utama ke GLM/MiniMax
-- Gunakan tingkat gratis (Gemini CLI, Qoder) untuk tugas-tugas yang tidak penting
 
 **Port dasbor/API salah**
 
@@ -2058,10 +2014,6 @@ opencode
 <a name="oauth-em-servidor-remoto"></a>
 
 > **⚠️ Penting bagi pengguna yang menjalankan OmniRoute di VPS, Docker, atau server jarak jauh mana pun**
-
-#### Mengapa OAuth Antigravity / Gemini CLI gagal di server jarak jauh?
-
-Penyedia **Antigravitasi** dan **Gemini CLI** menggunakan **Google OAuth 2.0**. Google mewajibkan `redirect_uri` dalam alur OAuth agar sama persis dengan salah satu URI yang telah didaftarkan sebelumnya di Google Cloud Console aplikasi.
 
 Kredensial OAuth yang disertakan dalam OmniRoute didaftarkan **hanya untuk `localhost`**. Saat Anda mengakses OmniRoute di server jarak jauh (misalnya `https://omniroute.myserver.com`), Google menolak autentikasi dengan:
 
@@ -2108,10 +2060,8 @@ Di `.env` Anda (atau variabel lingkungan Docker):
 ANTIGRAVITY_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
 ANTIGRAVITY_OAUTH_CLIENT_SECRET=GOCSPX-your-secret
 
-# For Gemini CLI:
 GEMINI_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
 GEMINI_OAUTH_CLIENT_SECRET=GOCSPX-your-secret
-GEMINI_CLI_OAUTH_CLIENT_SECRET=GOCSPX-your-secret
 ```
 
 **6. Restart OmniRoute**
@@ -2125,8 +2075,6 @@ docker restart omniroute
 ```
 
 **7. Try connecting again**
-
-Dasbor → Penyedia → Antigravitasi (atau Gemini CLI) → OAuth
 
 Google will now redirect correctly to `https://your-server.com/callback`.
 
@@ -2145,100 +2093,6 @@ Jika Anda tidak ingin menyiapkan kredensial Anda sendiri saat ini, Anda masih da
 > Ini berfungsi karena kode otorisasi di URL valid terlepas dari apakah halaman pengalihan dimuat.
 
 ---
-
-<details>
-<summary><b>🇧🇷 Versão em Português</b></summary>
-
-#### Por que o OAuth do Antigravity / Gemini CLI falha em servidores remotos?
-
-Os provedores **Antigravity** e **Gemini CLI** usam **Google OAuth 2.0** para autenticação. O Google exige que a `redirect_uri` usada no fluxo OAuth seja **exatamente** uma das URIs pré-cadastradas no Google Cloud Console do aplicativo.
-
-As credenciais OAuth embutidas no OmniRoute estão cadastradas **apenas para `localhost`**. Quando você acessa o OmniRoute em um servidor remoto (ex: `https://omniroute.meuservidor.com`), o Google rejeita a autenticação com:
-
-```
-Error 400: redirect_uri_mismatch
-```
-
-#### Solução: Configure suas próprias credenciais OAuth
-
-Você precisa criar um **OAuth 2.0 Client ID** no Google Cloud Console com a URI do seu servidor.
-
-#### Passo a passo
-
-**1. Acesse o Google Cloud Console**
-
-Abra: [https://console.cloud.google.com/apis/credentials](https://console.cloud.google.com/apis/credentials)
-
-**2. Inilah ID Klien OAuth 2.0 yang baru**
-
-- Klik pada **"+ Buat Kredensial"** → **"ID klien OAuth"**
-- Tip aplikasi: **"Aplikasi web"**
-- Nama: nama escolha qualquer (misal: `OmniRoute Remote`)
-
-**3. Adicione as Authorized Redirect URIs**
-
-No campo **"Authorized redirect URIs"**, adicione:
-
-```
-https://seu-servidor.com/callback
-```
-
-> Substitua `seu-servidor.com` pelo domínio ou IP do seu servidor (inclua a porta se necessário, ex: `http://45.33.32.156:20128/callback`).
-
-**4. Salve e copie as credenciais**
-
-Kemudian, Google menampilkan **ID Klien** dan **Rahasia Klien**.
-
-**5. Configure as variáveis de ambiente**
-
-No seu `.env` (ou nas variáveis de ambiente do Docker):
-
-```bash
-# Para Antigravity:
-ANTIGRAVITY_OAUTH_CLIENT_ID=seu-client-id.apps.googleusercontent.com
-ANTIGRAVITY_OAUTH_CLIENT_SECRET=GOCSPX-seu-secret
-
-# Para Gemini CLI:
-GEMINI_OAUTH_CLIENT_ID=seu-client-id.apps.googleusercontent.com
-GEMINI_OAUTH_CLIENT_SECRET=GOCSPX-seu-secret
-GEMINI_CLI_OAUTH_CLIENT_SECRET=GOCSPX-seu-secret
-```
-
-**6. Reinicie o OmniRoute**
-
-```bash
-# Se usando npm:
-npm run dev
-
-# Se usando Docker:
-docker restart omniroute
-```
-
-**7. Tente conectar novamente**
-
-Dasbor → Penyedia → Antigravitasi (atau Gemini CLI) → OAuth
-
-Agora o Google redirecionará corretamente para `https://seu-servidor.com/callback` e a autenticação funcionará.
-
----
-
-#### Workaround temporário (sem configurar credenciais próprias)
-
-Se não quiser criar credenciais próprias agora, ainda é possível usar o fluxo **manual de URL**:
-
-1. O OmniRoute abrirá a URL de autorização do Google
-2. Após você autorizar, o Google tentará redirecionar para `localhost` (que falha no servidor remoto)
-3. **Copie a URL completa** da barra de endereço do seu browser (mesmo que a página não carregue)
-4. Cole essa URL no campo que aparece no modal de conexão do OmniRoute
-5. Clique em **"Connect"**
-
-> Este workaround funciona porque o código de autorização na URL é válido independente do redirect ter carregado ou não.
-
-</details>
-
----
-
-</details>
 
 ## 🛠️ Stack Teknologi
 

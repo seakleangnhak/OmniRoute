@@ -39,13 +39,12 @@ test("parseCliProxyAuthRecord maps a claude (anthropic) auth file", () => {
   });
 });
 
-test("parseCliProxyAuthRecord maps gemini → gemini-cli with project_id", () => {
+test("parseCliProxyAuthRecord skips discontinued gemini records", () => {
   const parsed = parseCliProxyAuthRecord(
     { type: "gemini", access_token: "at", project_id: "proj-9" },
     T0
   );
-  assert.equal(parsed?.provider, "gemini-cli");
-  assert.equal(parsed?.projectId, "proj-9");
+  assert.equal(parsed, null);
 });
 
 test("parseCliProxyAuthRecord returns null for unknown type or missing access token", () => {
@@ -56,10 +55,10 @@ test("parseCliProxyAuthRecord returns null for unknown type or missing access to
 });
 
 test("every CLIPROXY_TYPE_TO_PROVIDER target is a real OAuth provider id", () => {
-  // codex/antigravity/claude/gemini-cli/qwen/kimi are all OmniRoute providers
+  // codex/antigravity/claude/qwen/kimi are all OmniRoute providers
   for (const provider of Object.values(CLIPROXY_TYPE_TO_PROVIDER)) {
     assert.ok(
-      ["claude", "codex", "antigravity", "gemini-cli", "qwen", "kimi"].includes(provider),
+      ["claude", "codex", "antigravity", "qwen", "kimi"].includes(provider),
       `unexpected provider mapping: ${provider}`
     );
   }

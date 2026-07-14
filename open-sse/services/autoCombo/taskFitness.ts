@@ -326,9 +326,20 @@ export function getTaskFitnessWithSource(
     return { score: userOverride, source: "user_override" };
   }
 
+  // Try arena_elo with the literal model id first (e.g. "mimo-v2.5"). If that's
+  // a miss and the model id carries a "-free" suffix (e.g. "mimo-v2.5-free"),
+  // try the un-suffixed base id so free-tier variants inherit the arena_elo
+  // score of their paid counterpart. This is what operators expect: the
+  // upstream's `mimo-v2.5` is benchmarked once, and `mimo-v2.5-free` should
+  // pick up the same signal rather than falling through to the wildcard 0.5
+  // and losing every free-vs-paid comparison.
   const arenaElo = queryModelIntelligence(normalizedModel, normalizedTask, "arena_elo");
   if (arenaElo !== null) {
     return { score: arenaElo, source: "arena_elo" };
+  }
+  const arenaEloBase = lookupFreeAliasArenaElo(normalizedModel, normalizedTask);
+  if (arenaEloBase !== null) {
+    return { score: arenaEloBase, source: "arena_elo_free_alias" };
   }
 
   const tierScore = getModelsDevTierFitness(normalizedModel, normalizedTask);
@@ -342,6 +353,26 @@ export function getTaskFitnessWithSource(
   }
 
   return { score: lookupWildcardBoosts(normalizedModel, normalizedTask), source: "wildcard_boost" };
+}
+
+/** Suffix used to mark free-tier model variants (e.g. "mimo-v2.5-free"). */
+const FREE_SUFFIX = "-free";
+
+/**
+ * Strip a trailing "-free" suffix from the model id and re-query arena_elo.
+ * Returns `null` when the original id has no "-free" suffix, when the base id
+ * is identical to the original, or when no arena_elo row exists for the base.
+ *
+ * Examples:
+ *   "mimo-v2.5-free"   → look up "mimo-v2.5"
+ *   "deepseek-v4-flash-free" → look up "deepseek-v4-flash"
+ *   "big-pickle"       → no "-free" suffix → return null (skip)
+ */
+function lookupFreeAliasArenaElo(normalizedModel: string, normalizedTask: string): number | null {
+  if (!normalizedModel.endsWith(FREE_SUFFIX)) return null;
+  const baseId = normalizedModel.slice(0, -FREE_SUFFIX.length);
+  if (baseId.length === 0 || baseId === normalizedModel) return null;
+  return queryModelIntelligence(baseId, normalizedTask, "arena_elo");
 }
 
 export function setUserFitnessOverride(model: string, category: string, score: number): void {

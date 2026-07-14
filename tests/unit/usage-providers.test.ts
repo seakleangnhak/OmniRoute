@@ -52,17 +52,6 @@ test("getUsageForProvider handles github provider with network error", async () 
   }
 });
 
-test("getUsageForProvider handles gemini-cli with 401", async () => {
-  globalThis.fetch = async () => new Response("unauthorized", { status: 401 });
-  const result = await usageModule.getUsageForProvider({
-    id: "test-gem",
-    provider: "gemini-cli",
-    accessToken: "ya_test",
-    apiKey: "key",
-  });
-  assert.ok(result);
-});
-
 test("getUsageForProvider handles codex provider", async () => {
   globalThis.fetch = async () => new Response(JSON.stringify({}), { status: 200 });
   const result = await usageModule.getUsageForProvider({

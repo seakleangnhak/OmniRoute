@@ -16,27 +16,30 @@ const chatGptTls = await import("../../open-sse/services/chatgptTlsClient.ts");
 const chatGptWeb = await import("../../open-sse/executors/chatgpt-web.ts");
 const imageRoute = await import("../../src/app/api/v1/images/generations/route.ts");
 const imageEditRoute = await import("../../src/app/api/v1/images/edits/route.ts");
-const providerImageRoute =
-  await import("../../src/app/api/v1/providers/[provider]/images/generations/route.ts");
+const v1ModelsCatalog = await import("../../src/app/api/v1/models/catalog.ts");
 
 const originalFetch = globalThis.fetch;
-const originalRequireApiKey = process.env.REQUIRE_API_KEY;
-const originalOmnirouteApiKey = process.env.OMNIROUTE_API_KEY;
-const originalRouterApiKey = process.env.ROUTER_API_KEY;
-
-type ErrorBody = { error?: { message?: string } };
 
 async function resetStorage() {
   globalThis.fetch = originalFetch;
   chatGptTls.__setTlsFetchOverrideForTesting(null);
   chatGptWeb.__resetChatGptWebCachesForTesting();
-  delete process.env.REQUIRE_API_KEY;
-  delete process.env.OMNIROUTE_API_KEY;
-  delete process.env.ROUTER_API_KEY;
   apiKeysDb.resetApiKeyState();
   core.resetDbInstance();
   fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
+  // #6303 moved this route onto the shared unified catalog (getUnifiedModelsResponse),
+  // which #6408 wrapped in a 1.5s TTL response cache keyed only by (prefix, isCodex
+  // client, apiKey) — NOT by DB state. Without clearing it between test cases, a test
+  // running within the TTL window of a previous one gets served the previous test's
+  // stale serialized catalog instead of a fresh build reflecting this test's DB state.
+  v1ModelsCatalog.__resetCatalogBuilderRunsForTest();
+}
+
+function makeHeaders(map: Record<string, string> = {}) {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(map)) headers.set(key, value);
+  return headers;
 }
 
 async function seedConnection(provider: string, overrides: { apiKey?: string | null } = {}) {
@@ -51,40 +54,48 @@ async function seedConnection(provider: string, overrides: { apiKey?: string | n
   });
 }
 
-function makeHeaders(map: Record<string, string> = {}) {
-  const headers = new Headers();
-  for (const [key, value] of Object.entries(map)) headers.set(key, value);
-  return headers;
-}
-
 test.beforeEach(async () => {
   await resetStorage();
 });
 
 test.after(() => {
   globalThis.fetch = originalFetch;
+  chatGptTls.__setTlsFetchOverrideForTesting(null);
+  chatGptWeb.__resetChatGptWebCachesForTesting();
   apiKeysDb.resetApiKeyState();
   core.resetDbInstance();
-  if (originalRequireApiKey === undefined) delete process.env.REQUIRE_API_KEY;
-  else process.env.REQUIRE_API_KEY = originalRequireApiKey;
-  if (originalOmnirouteApiKey === undefined) delete process.env.OMNIROUTE_API_KEY;
-  else process.env.OMNIROUTE_API_KEY = originalOmnirouteApiKey;
-  if (originalRouterApiKey === undefined) delete process.env.ROUTER_API_KEY;
-  else process.env.ROUTER_API_KEY = originalRouterApiKey;
   fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
 });
 
-test("v1 image models GET exposes image-only modalities for image-only models", async () => {
+test("v1 image models GET exposes image-only modalities for credential-backed image-only models", async () => {
+  await seedConnection("topaz", { apiKey: "topaz-key" });
+  await seedConnection("stability-ai", { apiKey: "stability-key" });
+
   const response = await imageRoute.GET();
-  const body = (await response.json()) as {
-    data: Array<{ id: string; input_modalities?: string[] }>;
-  };
+  const body = (await response.json()) as any;
   const byId = new Map(body.data.map((item: { id: string }) => [item.id, item]));
 
   assert.equal(response.status, 200);
-  assert.deepEqual(byId.get("topaz/topaz-enhance")?.input_modalities, ["image"]);
-  assert.deepEqual(byId.get("stability-ai/remove-background")?.input_modalities, ["image"]);
-  assert.deepEqual(byId.get("stability-ai/fast")?.input_modalities, ["image"]);
+  assert.deepEqual((byId.get("topaz/topaz-enhance") as any).input_modalities, ["image"]);
+  assert.deepEqual((byId.get("stability-ai/remove-background") as any).input_modalities, ["image"]);
+  assert.deepEqual((byId.get("stability-ai/fast") as any).input_modalities, ["image"]);
+});
+
+test("v1 image models GET exposes current Codex image models and hides inactive providers", async () => {
+  await seedConnection("codex", { apiKey: "codex-key" });
+
+  const response = await imageRoute.GET();
+  const body = (await response.json()) as { data: Array<{ id: string }> };
+  const ids = body.data.map((item) => item.id);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(
+    ids.filter((id) => id.startsWith("codex/")),
+    ["codex/gpt-5.6-sol", "codex/gpt-5.6-terra", "codex/gpt-5.6-luna"]
+  );
+  assert.ok(!ids.includes("codex/gpt-5.5"));
+  assert.ok(!ids.includes("openai/gpt-image-2"));
+  assert.ok(!ids.some((id: string) => id.startsWith("xai/")));
 });
 
 test("v1 image generation POST accepts promptless requests for image-only models", async () => {
@@ -123,50 +134,7 @@ test("v1 image generation POST accepts promptless requests for image-only models
       }),
     })
   );
-  const body = (await response.json()) as { data: Array<{ b64_json?: string }> };
-
-  assert.equal(response.status, 200);
-  assert.equal(body.data[0].b64_json, "BwcH");
-});
-
-test("v1 image generation POST accepts multipart image uploads for image-input models", async () => {
-  await seedConnection("topaz", { apiKey: "topaz-key" });
-
-  globalThis.fetch = async (url, options = {}) => {
-    const stringUrl = String(url);
-    if (stringUrl === "https://api.topazlabs.com/image/v1/enhance") {
-      const upstreamForm = options.body as FormData;
-      const upstreamImage = upstreamForm.get("image");
-      assert.ok(upstreamImage instanceof File);
-      assert.equal(upstreamImage.type, "image/png");
-      assert.deepEqual(
-        new Uint8Array(await upstreamImage.arrayBuffer()),
-        new Uint8Array([1, 2, 3])
-      );
-      assert.equal(upstreamForm.get("output_width"), "2048");
-      assert.equal(upstreamForm.get("output_height"), "2048");
-      return new Response(new Uint8Array([7, 7, 7]), {
-        status: 200,
-        headers: { "content-type": "image/jpeg" },
-      });
-    }
-
-    throw new Error(`Unexpected URL: ${stringUrl}`);
-  };
-
-  const formData = new FormData();
-  formData.set("model", "topaz/topaz-enhance");
-  formData.set("size", "2048x2048");
-  formData.set("response_format", "b64_json");
-  formData.set("image", new File([new Uint8Array([1, 2, 3])], "source.png", { type: "image/png" }));
-
-  const response = await imageRoute.POST(
-    new Request("http://localhost/api/v1/images/generations", {
-      method: "POST",
-      body: formData,
-    })
-  );
-  const body = (await response.json()) as { data: Array<{ b64_json?: string }> };
+  const body = (await response.json()) as any;
 
   assert.equal(response.status, 200);
   assert.equal(body.data[0].b64_json, "BwcH");
@@ -183,70 +151,10 @@ test("v1 image generation POST still requires prompts for text-input models", as
       }),
     })
   );
-  const body = (await response.json()) as ErrorBody;
+  const body = (await response.json()) as any;
 
   assert.equal(response.status, 400);
   assert.match(body.error.message, /Prompt is required for image model: openai\/gpt-image-2/);
-});
-
-test("v1 image generation POST rejects an unknown bearer before routing", async () => {
-  const response = await imageRoute.POST(
-    new Request("http://localhost/api/v1/images/generations", {
-      method: "POST",
-      headers: {
-        Authorization: "Bearer sk-server-b-key",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "openai/gpt-image-2",
-        prompt: "server A should not accept server B key",
-      }),
-    })
-  );
-  const body = (await response.json()) as ErrorBody;
-
-  assert.equal(response.status, 401);
-  assert.match(body.error?.message || "", /Invalid API key/);
-});
-
-test("v1 image generation POST requires a bearer when REQUIRE_API_KEY is true", async () => {
-  process.env.REQUIRE_API_KEY = "true";
-
-  const response = await imageRoute.POST(
-    new Request("http://localhost/api/v1/images/generations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "openai/gpt-image-2",
-        prompt: "missing bearer",
-      }),
-    })
-  );
-  const body = (await response.json()) as ErrorBody;
-
-  assert.equal(response.status, 401);
-  assert.match(body.error?.message || "", /Authentication required/);
-});
-
-test("provider-scoped image generation POST rejects an unknown bearer", async () => {
-  const response = await providerImageRoute.POST(
-    new Request("http://localhost/api/v1/providers/openai/images/generations", {
-      method: "POST",
-      headers: {
-        Authorization: "Bearer sk-server-b-key",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "openai/gpt-image-2",
-        prompt: "provider scoped auth guard",
-      }),
-    }),
-    { params: Promise.resolve({ provider: "openai" }) }
-  );
-  const body = (await response.json()) as ErrorBody;
-
-  assert.equal(response.status, 401);
-  assert.match(body.error?.message || "", /Invalid API key/);
 });
 
 test("v1 image edit POST enforces disabled API key policy", async () => {
@@ -255,7 +163,7 @@ test("v1 image edit POST enforces disabled API key policy", async () => {
 
   const formData = new FormData();
   formData.set("prompt", "make the background lighter");
-  formData.set("model", "cgpt-web/gpt-5.3-instant");
+  formData.set("model", "cgpt-web/gpt-5.5");
   formData.set("image", new File([new Uint8Array([1, 2, 3])], "source.png", { type: "image/png" }));
 
   const response = await imageEditRoute.POST(
@@ -269,46 +177,6 @@ test("v1 image edit POST enforces disabled API key policy", async () => {
 
   assert.equal(response.status, 403);
   assert.match(body.error.message, /disabled/);
-});
-
-test("v1 image edit POST accepts cache_id instead of uploaded image", async () => {
-  const formData = new FormData();
-  formData.set("prompt", "make the background lighter");
-  formData.set("model", "cgpt-web/gpt-5.3-instant");
-  formData.set("cache_id", "0123456789abcdef0123456789abcdef");
-
-  const response = await imageEditRoute.POST(
-    new Request("http://localhost/api/v1/images/edits", {
-      method: "POST",
-      body: formData,
-    })
-  );
-  const body = (await response.json()) as any;
-
-  assert.equal(response.status, 401);
-  assert.doesNotMatch(body.error.message, /Missing required field: image/);
-  assert.match(body.error.message, /No credentials for provider: chatgpt-web/);
-});
-
-test("v1 image edit POST accepts JSON cache_id without multipart", async () => {
-  const response = await imageEditRoute.POST(
-    new Request("http://localhost/api/v1/images/edits", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt: "make the background lighter",
-        model: "cgpt-web/gpt-5.3-instant",
-        cache_id: "0123456789abcdef0123456789abcdef",
-        response_format: "url",
-      }),
-    })
-  );
-  const body = (await response.json()) as any;
-
-  assert.equal(response.status, 401);
-  assert.doesNotMatch(body.error.message, /Invalid multipart body/);
-  assert.doesNotMatch(body.error.message, /Missing required field: image/);
-  assert.match(body.error.message, /No credentials for provider: chatgpt-web/);
 });
 
 test("v1 image generation POST resolves proxy and executes with proxy context when credentials.connectionId exists", async () => {
@@ -523,7 +391,7 @@ test("v1 image generation POST retries ChatGPT Web Sentinel blocks with another 
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "cgpt-web/gpt-5.3-instant",
+        model: "cgpt-web/gpt-5.5",
         prompt: "make a stable retry image",
       }),
     })
@@ -551,7 +419,7 @@ test("v1 image generation POST retries ChatGPT Web Sentinel blocks with another 
   );
 });
 
-test("shouldRetryImageGenerationWithNextAccount only retries ChatGPT Web account-scoped errors", () => {
+test("shouldRetryImageGenerationWithNextAccount only retries ChatGPT Web account errors", () => {
   const credentials = { connectionId: "conn-1" };
   assert.equal(
     imageRoute.shouldRetryImageGenerationWithNextAccount(

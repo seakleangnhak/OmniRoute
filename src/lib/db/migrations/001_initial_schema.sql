@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS call_logs (
   tokens_cache_creation INTEGER DEFAULT NULL,
   tokens_reasoning INTEGER DEFAULT NULL,
   cost_usd REAL DEFAULT NULL,
+  images_count INTEGER DEFAULT NULL,
   cache_source TEXT DEFAULT 'upstream',
   request_type TEXT,
   source_format TEXT,

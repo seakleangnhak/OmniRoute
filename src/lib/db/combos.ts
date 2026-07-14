@@ -7,6 +7,7 @@ import { getDbInstance } from "./core";
 import { backupDbFile } from "./backup";
 import { invalidateDbCache } from "./readCache";
 import { normalizeComboRecord } from "@/lib/combos/steps";
+import { clearSessionModelHistoryForCombo } from "./contextHandoffs";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -111,10 +112,6 @@ export async function getCombos() {
   );
 }
 
-export async function getAllCombos() {
-  return getCombos();
-}
-
 export async function getComboById(id: string) {
   const db = getDbInstance();
   const row = db
@@ -133,6 +130,24 @@ export async function getComboByName(name: string) {
   const combo = parseComboRow(row);
   if (!combo) return null;
   return normalizeStoredCombo(combo, db, [name]);
+}
+
+// #4446: case-insensitive name lookup. The opencode dispatch path forwards a
+// lowercased combo slug (e.g. "master-light") for a combo provisioned as
+// "MASTER-LIGHT"; the default BINARY collation of getComboByName misses it.
+// Used only as a fallback after the exact match fails, so it cannot change the
+// resolution of any combo that already resolves today.
+export async function getComboByNameInsensitive(name: string) {
+  const db = getDbInstance();
+  const row = db
+    .prepare(
+      "SELECT data, sort_order, context_cache_protection FROM combos WHERE name = ? COLLATE NOCASE"
+    )
+    .get(name);
+  const combo = parseComboRow(row);
+  if (!combo) return null;
+  const storedName = typeof combo.name === "string" ? combo.name : name;
+  return normalizeStoredCombo(combo, db, [storedName]);
 }
 
 export async function createCombo(data: JsonRecord) {
@@ -212,6 +227,18 @@ export async function updateCombo(id: string, data: JsonRecord) {
     contextCacheProtection,
     id
   );
+
+  // Invalidate stale context-cache pins when combo targets change.
+  // Without this, sessions pinned to removed models keep routing there forever.
+  if (data.models !== undefined) {
+    const cleared = clearSessionModelHistoryForCombo(currentName);
+    if (cleared > 0) {
+      // Also clear under the new name if the combo was renamed
+      if (nextName !== currentName) {
+        clearSessionModelHistoryForCombo(nextName);
+      }
+    }
+  }
 
   invalidateDbCache("combos");
   backupDbFile("pre-write");

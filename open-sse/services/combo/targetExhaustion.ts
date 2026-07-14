@@ -28,6 +28,16 @@ import type { ComboLogger, ResolvedComboTarget } from "./types.ts";
 // unreachable, proxy/gateway error), so remaining same-connection targets are skipped.
 const CONNECTION_LEVEL_ERROR_STATUSES = [408, 500, 502, 503, 504, 524];
 
+// #5085: an "empty content" 502 is the synthetic status chatCore assigns to a provider that
+// answered HTTP 200 with no usable completion (isEmptyContentResponse). The connection is
+// HEALTHY — it just returned an empty body — so this must NOT be classified as a connection
+// failure (which would exhaust the whole provider/connection and skip every remaining
+// same-provider leg via #1731v2). It is a model-level transient failure: advance to the next
+// leg, leaving the rest of that provider's legs eligible.
+function isEmptyContentFailure(status: number, errorText: string): boolean {
+  return status === 502 && /empty content/i.test(errorText);
+}
+
 export type ComboExhaustionSets = {
   exhaustedProviders: Set<string>;
   exhaustedConnections: Set<string>;
@@ -45,6 +55,8 @@ export type ApplyComboTargetExhaustionOptions = {
   log: ComboLogger;
   tag: string;
   exhaustedLogLevel: "info" | "debug";
+  /** Structured error object from upstream response — preferred over raw errorText for classification */
+  structuredError?: { code?: string; type?: string; message?: string };
 };
 
 /**
@@ -67,6 +79,7 @@ export function applyComboTargetExhaustion(
     log,
     tag,
     exhaustedLogLevel,
+    structuredError,
   } = opts;
   const { exhaustedProviders, exhaustedConnections, transientRateLimitedProviders } = sets;
   const provider = target.provider;
@@ -78,7 +91,7 @@ export function applyComboTargetExhaustion(
     Boolean(provider && provider !== "unknown") &&
     !hasPerModelQuota(provider, rawModel) &&
     (isProviderExhaustedReason(fallbackResult) ||
-      classifyErrorText(errorText) === RateLimitReason.QUOTA_EXHAUSTED ||
+      classifyErrorText(structuredError?.code || errorText) === RateLimitReason.QUOTA_EXHAUSTED ||
       allAccountsRateLimited);
   if (providerExhausted) {
     exhaustedProviders.add(provider);
@@ -91,7 +104,7 @@ export function applyComboTargetExhaustion(
     if (result.status === 429 && !isTokenLimitBreach && provider && provider !== "unknown") {
       transientRateLimitedProviders.add(provider);
     }
-    markConnectionLevelExhaustion(target, { result, errorText, sets, log, tag });
+    markConnectionLevelExhaustion(target, { result, errorText, sets, log, tag, rawModel });
   }
 
   return providerExhausted;
@@ -105,15 +118,28 @@ export function applyComboTargetExhaustion(
  */
 function markConnectionLevelExhaustion(
   target: ResolvedComboTarget,
-  opts: Pick<ApplyComboTargetExhaustionOptions, "result" | "errorText" | "sets" | "log" | "tag">
+  opts: Pick<
+    ApplyComboTargetExhaustionOptions,
+    "result" | "errorText" | "sets" | "log" | "tag" | "rawModel"
+  >
 ): void {
-  const { result, errorText, sets, log, tag } = opts;
+  const { result, errorText, sets, log, tag, rawModel } = opts;
   const provider = target.provider;
   if (
     !provider ||
     provider === "unknown" ||
     !CONNECTION_LEVEL_ERROR_STATUSES.includes(result.status) ||
-    isProviderCircuitOpenResult(result, errorText)
+    isProviderCircuitOpenResult(result, errorText) ||
+    // #5085: empty-content 502 is a healthy connection returning no body — model-level, not
+    // connection-level. Don't exhaust the provider; let the remaining legs (incl. same-provider)
+    // be tried in-request.
+    isEmptyContentFailure(result.status, errorText) ||
+    // Per-model-quota providers (gemini, github, passthrough, compatible) multiplex models
+    // behind one connection. A model-level 500 (e.g. Gemini "Internal error encountered")
+    // must NOT exhaust the connection — other models on the same connection may still succeed.
+    // Other connection-level statuses (408/502/503/504/524) indicate the connection itself is
+    // bad, so they correctly exhaust even for per-model-quota providers.
+    (result.status === 500 && hasPerModelQuota(provider, rawModel))
   ) {
     return;
   }

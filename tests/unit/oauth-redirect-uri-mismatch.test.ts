@@ -22,9 +22,6 @@ const { resolvePublicCred } = await import("../../open-sse/utils/publicCreds.ts"
 
 /** The default embedded antigravity client ID (decoded at runtime). */
 const DEFAULT_ANTIGRAVITY_CLIENT_ID = resolvePublicCred("antigravity_id");
-/** The default embedded gemini client ID (decoded at runtime). */
-const DEFAULT_GEMINI_CLIENT_ID = resolvePublicCred("gemini_id");
-
 // ---------------------------------------------------------------------------
 // resolvePublicCred sanity
 // ---------------------------------------------------------------------------
@@ -34,22 +31,6 @@ test("resolvePublicCred returns a valid Google client ID for antigravity_id", ()
   assert.ok(
     DEFAULT_ANTIGRAVITY_CLIENT_ID.endsWith(".apps.googleusercontent.com"),
     "must be a Google OAuth client ID"
-  );
-});
-
-test("resolvePublicCred returns a valid Google client ID for gemini_id", () => {
-  assert.ok(DEFAULT_GEMINI_CLIENT_ID.length > 0, "must not be empty");
-  assert.ok(
-    DEFAULT_GEMINI_CLIENT_ID.endsWith(".apps.googleusercontent.com"),
-    "must be a Google OAuth client ID"
-  );
-});
-
-test("antigravity and gemini default client IDs are different", () => {
-  assert.notEqual(
-    DEFAULT_ANTIGRAVITY_CLIENT_ID,
-    DEFAULT_GEMINI_CLIENT_ID,
-    "antigravity and gemini must have distinct client IDs"
   );
 });
 
@@ -72,43 +53,6 @@ test("antigravity with default public credentials keeps loopback redirect URI", 
     redirectUri,
     "http://127.0.0.1:20128/callback",
     "must stay on loopback when using built-in credentials"
-  );
-});
-
-test("gemini-cli with default public credentials keeps loopback redirect URI", () => {
-  const redirectUri = resolveBrowserOAuthRedirectUri(
-    "gemini-cli",
-    "http://127.0.0.1:20128/callback",
-    {
-      NEXT_PUBLIC_BASE_URL: "https://omniroute.example.com",
-      GEMINI_CLI_OAUTH_CLIENT_ID: DEFAULT_GEMINI_CLIENT_ID,
-      GEMINI_CLI_OAUTH_CLIENT_SECRET: "GOCSPX-SomeDefaultSecret",
-    }
-  );
-
-  assert.equal(
-    redirectUri,
-    "http://127.0.0.1:20128/callback",
-    "must stay on loopback when using built-in credentials"
-  );
-});
-
-test("gemini-cli with default credentials via GEMINI_OAUTH_* fallback env vars keeps loopback", () => {
-  const redirectUri = resolveBrowserOAuthRedirectUri(
-    "gemini-cli",
-    "http://127.0.0.1:20128/callback",
-    {
-      NEXT_PUBLIC_BASE_URL: "https://omniroute.example.com",
-      // No GEMINI_CLI_* vars → falls back to GEMINI_OAUTH_*
-      GEMINI_OAUTH_CLIENT_ID: DEFAULT_GEMINI_CLIENT_ID,
-      GEMINI_OAUTH_CLIENT_SECRET: "GOCSPX-SomeDefaultSecret",
-    }
-  );
-
-  assert.equal(
-    redirectUri,
-    "http://127.0.0.1:20128/callback",
-    "must stay on loopback when fallback env vars carry the default client ID"
   );
 });
 
@@ -144,20 +88,6 @@ test("antigravity with custom credentials switches loopback to public base URL",
   assert.equal(redirectUri, "https://omniroute.example.com/callback");
 });
 
-test("gemini-cli with custom credentials switches loopback to public base URL", () => {
-  const redirectUri = resolveBrowserOAuthRedirectUri(
-    "gemini-cli",
-    "http://127.0.0.1:20128/callback",
-    {
-      OMNIROUTE_PUBLIC_BASE_URL: "https://omniroute.example.com",
-      GEMINI_CLI_OAUTH_CLIENT_ID: "custom-gemini.apps.googleusercontent.com",
-      GEMINI_CLI_OAUTH_CLIENT_SECRET: "custom-gemini-secret",
-    }
-  );
-
-  assert.equal(redirectUri, "https://omniroute.example.com/callback");
-});
-
 test("agy with custom credentials switches loopback to public base URL", () => {
   const redirectUri = resolveBrowserOAuthRedirectUri("agy", "http://localhost:20128/callback", {
     NEXT_PUBLIC_BASE_URL: "https://omniroute.example.com",
@@ -180,24 +110,6 @@ test("antigravity with only client ID (no secret) keeps loopback", () => {
       NEXT_PUBLIC_BASE_URL: "https://omniroute.example.com",
       ANTIGRAVITY_OAUTH_CLIENT_ID: "custom-id.apps.googleusercontent.com",
       // No secret
-    }
-  );
-
-  assert.equal(
-    redirectUri,
-    "http://127.0.0.1:20128/callback",
-    "incomplete credentials must not trigger override"
-  );
-});
-
-test("gemini-cli with only client secret (no ID) keeps loopback", () => {
-  const redirectUri = resolveBrowserOAuthRedirectUri(
-    "gemini-cli",
-    "http://127.0.0.1:20128/callback",
-    {
-      NEXT_PUBLIC_BASE_URL: "https://omniroute.example.com",
-      GEMINI_CLI_OAUTH_CLIENT_SECRET: "custom-secret",
-      // No client ID
     }
   );
 
@@ -312,20 +224,6 @@ test("custom credentials override IPv6 loopback [::1] for antigravity", () => {
     ANTIGRAVITY_OAUTH_CLIENT_ID: "custom-id.apps.googleusercontent.com",
     ANTIGRAVITY_OAUTH_CLIENT_SECRET: "custom-secret",
   });
-
-  assert.equal(redirectUri, "https://omniroute.example.com/callback");
-});
-
-test("custom credentials override localhost for gemini-cli", () => {
-  const redirectUri = resolveBrowserOAuthRedirectUri(
-    "gemini-cli",
-    "http://localhost:20128/callback",
-    {
-      NEXT_PUBLIC_BASE_URL: "https://omniroute.example.com",
-      GEMINI_OAUTH_CLIENT_ID: "custom-gemini.apps.googleusercontent.com",
-      GEMINI_OAUTH_CLIENT_SECRET: "custom-gemini-secret",
-    }
-  );
 
   assert.equal(redirectUri, "https://omniroute.example.com/callback");
 });

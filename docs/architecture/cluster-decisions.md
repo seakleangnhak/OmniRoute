@@ -1,7 +1,7 @@
 ---
 title: "Cluster Decisions"
-version: 3.8.32
-lastUpdated: 2026-06-20
+version: 3.8.40
+lastUpdated: 2026-06-28
 ---
 
 # Cluster Decisions — Optional Sidecar Profiles

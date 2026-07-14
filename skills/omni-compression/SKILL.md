@@ -46,7 +46,7 @@ curl https://localhost:20128/api/compression/rules \
 
 ## Payloads
 
-See the full OpenAPI specification at `GET /api/openapi/spec` or `docs/reference/openapi.yaml` for detailed request/response schemas.
+See the full OpenAPI specification at `GET /api/openapi/spec` or `docs/openapi.yaml` for detailed request/response schemas.
 
 <!-- skill:custom-start -->
 <!-- Migrated from skills/omniroute-compression/SKILL.md (preserved curated content) -->
@@ -177,4 +177,5 @@ curl -X PUT $OMNIROUTE_URL/api/settings/compression \
 
 - `400 invalid mode` → use `off`, `lite`, `standard`, `aggressive`, `ultra`, `rtk`, or `stacked`
 - `400 invalid stackedPipeline` → array must contain valid engine ids (`rtk`, `caveman`)
+
 <!-- skill:custom-end -->

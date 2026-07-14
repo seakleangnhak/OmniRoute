@@ -1,7 +1,7 @@
 ---
 title: "Monitoring & Costs — Navigation Structure"
-version: 3.8.6
-lastUpdated: 2026-05-28
+version: 3.8.40
+lastUpdated: 2026-06-28
 ---
 
 # Monitoring & Costs — Navigation Structure

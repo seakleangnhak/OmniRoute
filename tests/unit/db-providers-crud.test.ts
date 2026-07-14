@@ -81,6 +81,34 @@ test("createProviderConnection assigns provider-scoped priorities and supports f
   assert.equal(second.isActive, false);
 });
 
+test("getProviderConnections filters by authType", async () => {
+  const apiKeyConnection = await providersDb.createProviderConnection({
+    provider: "openai",
+    authType: "apikey",
+    name: "API Key Connection",
+    apiKey: "sk-apikey",
+  });
+  const oauthConnection = await providersDb.createProviderConnection({
+    provider: "claude",
+    authType: "oauth",
+    email: "oauth@example.com",
+    accessToken: "token-a",
+    refreshToken: "refresh-a",
+  });
+
+  const oauthOnly = await providersDb.getProviderConnections({ authType: "oauth" });
+  const apiKeyOnly = await providersDb.getProviderConnections({ authType: "apikey" });
+
+  assert.deepEqual(
+    oauthOnly.map((connection) => connection.id),
+    [oauthConnection.id]
+  );
+  assert.deepEqual(
+    apiKeyOnly.map((connection) => connection.id),
+    [apiKeyConnection.id]
+  );
+});
+
 test("oauth connections upsert by provider and email instead of duplicating rows", async () => {
   const original = await providersDb.createProviderConnection({
     provider: "claude",
@@ -142,63 +170,35 @@ test("codex workspace uniqueness uses workspaceId alongside email", async () => 
   ]);
 });
 
-test("no-auth fingerprint providers collapse repeated creates into one connection", async () => {
-  const first = await providersDb.createProviderConnection({
-    provider: "mimocode",
+test("codex logins without a workspaceId are not merged on bare email match", async () => {
+  const loginA = await providersDb.createProviderConnection({
+    provider: "codex",
     authType: "oauth",
-    name: "MiMoCode Account bootstrap",
-    providerSpecificData: {
-      fingerprints: ["fp-bootstrap"],
-      accountProxies: [
-        {
-          fingerprint: "fp-bootstrap",
-          proxy: { type: "socks5", host: "127.0.0.1", port: 1080 },
-        },
-      ],
-    },
+    email: "shared@example.com",
+    accessToken: "token-account-a",
+    refreshToken: "refresh-account-a",
+    providerSpecificData: { chatgptUserId: "user-a" },
   });
-
-  const second = await providersDb.createProviderConnection({
-    provider: "mimocode",
+  const loginB = await providersDb.createProviderConnection({
+    provider: "codex",
     authType: "oauth",
-    name: "MiMoCode Account ratelimit",
-    providerSpecificData: {
-      fingerprints: ["fp-ratelimit"],
-      accountProxies: [
-        {
-          fingerprint: "fp-ratelimit",
-          proxy: { type: "http", host: "127.0.0.2", port: 8080 },
-        },
-      ],
-    },
+    email: "shared@example.com",
+    accessToken: "token-account-b",
+    refreshToken: "refresh-account-b",
+    providerSpecificData: { chatgptUserId: "user-b" },
   });
 
-  const rows = await providersDb.getProviderConnections({ provider: "mimocode" });
+  const rows = await providersDb.getProviderConnections({ provider: "codex" });
 
-  assert.equal(second.id, first.id);
-  assert.equal(rows.length, 1);
-  assert.deepEqual((rows[0].providerSpecificData as any).fingerprints, [
-    "fp-bootstrap",
-    "fp-ratelimit",
-  ]);
-  assert.deepEqual(
-    (rows[0].providerSpecificData as any).accountProxies.map((entry: any) => entry.fingerprint),
-    ["fp-bootstrap", "fp-ratelimit"]
-  );
-  assert.equal(rows[0].name, "MiMoCode Account bootstrap");
+  // Two distinct Codex accounts sharing an email but lacking a verifiable
+  // workspaceId must NOT collapse into a single row — that would silently
+  // overwrite the first account's token pair on the second login.
+  assert.notEqual(loginB.id, loginA.id);
+  assert.equal(rows.length, 2);
 
-  const cleared = await providersDb.updateProviderConnection(first.id, {
-    providerSpecificData: {
-      fingerprints: [],
-      accountProxies: [],
-    },
-  });
-  const reread = await providersDb.getProviderConnectionById(first.id);
-
-  assert.deepEqual((cleared?.providerSpecificData as any).fingerprints, []);
-  assert.deepEqual((cleared?.providerSpecificData as any).accountProxies, []);
-  assert.deepEqual((reread?.providerSpecificData as any).fingerprints, []);
-  assert.deepEqual((reread?.providerSpecificData as any).accountProxies, []);
+  const rowA = rows.find((row) => row.id === loginA.id);
+  assert.equal(rowA?.accessToken, "token-account-a");
+  assert.equal(rowA?.refreshToken, "refresh-account-a");
 });
 
 test("updateProviderConnection reorders priorities and returns decrypted payloads", async () => {

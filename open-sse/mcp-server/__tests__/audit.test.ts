@@ -61,7 +61,11 @@ describe("MCP audit shutdown", () => {
     expect(mockDb.pragma).toHaveBeenCalledWith("wal_checkpoint(TRUNCATE)");
     expect(mockDb.close).toHaveBeenCalledTimes(1);
     expect(audit.closeAuditDb()).toBe(false);
-  });
+  }, // Explicit generous timeout (vitest default is 5000ms): under contended
+  // CI-runner load, vi.resetModules() + a fresh dynamic import + mocked DB
+  // calls can exceed the default budget though the behavior is correct
+  // (issue #6803).
+  30000);
 
   it("still closes the audit database when checkpoint fails", async () => {
     const mockDb: MockAuditDb = {

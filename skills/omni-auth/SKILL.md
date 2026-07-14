@@ -39,7 +39,7 @@ curl -X POST https://localhost:20128/api/auth/logout \
 
 ## Payloads
 
-See the full OpenAPI specification at `GET /api/openapi/spec` or `docs/reference/openapi.yaml` for detailed request/response schemas.
+See the full OpenAPI specification at `GET /api/openapi/spec` or `docs/openapi.yaml` for detailed request/response schemas.
 
 <!-- skill:custom-start -->
 <!-- Migrated from skills/omniroute/SKILL.md (preserved curated content) -->
@@ -115,4 +115,5 @@ Use `data[].id` as `model` field in requests. Combos appear with `owned_by:"comb
 - **MCP + A2A** servers built-in (this is the only AI router that exposes both protocols)
 - **Memory** with FTS5 + Qdrant for persistent agent context
 - **Guardrails** for PII masking, prompt injection detection, vision policies
+
 <!-- skill:custom-end -->

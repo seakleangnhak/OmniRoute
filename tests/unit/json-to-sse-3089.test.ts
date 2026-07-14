@@ -79,6 +79,58 @@ describe("synthesizeOpenAiSseFromJson (#3089)", () => {
     );
   });
 
+  test("preserves client-readable reasoning alias", () => {
+    const sse = synthesizeOpenAiSseFromJson(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              reasoning: "client-readable thinking",
+              content: "final text",
+            },
+          },
+        ],
+      })
+    );
+    const deltas = parseDataChunks(sse)
+      .filter((c) => c !== "[DONE]")
+      .map((c) => JSON.parse(c).choices[0].delta);
+
+    assert.equal(
+      deltas.find((d) => d.reasoning !== undefined)?.reasoning,
+      "client-readable thinking"
+    );
+    assert.equal(
+      deltas.some((d) => d.reasoning_content !== undefined),
+      false
+    );
+  });
+
+  test("mirrors unsupported reasoning aliases to reasoning_content", () => {
+    const sse = synthesizeOpenAiSseFromJson(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              reasoning_text: "alias thinking",
+              content: "final text",
+            },
+          },
+        ],
+      })
+    );
+    const deltas = parseDataChunks(sse)
+      .filter((c) => c !== "[DONE]")
+      .map((c) => JSON.parse(c).choices[0].delta);
+
+    assert.equal(
+      deltas.find((d) => d.reasoning_content !== undefined)?.reasoning_content,
+      "alias thinking"
+    );
+  });
+
   test("forwards tool_calls in the delta", () => {
     const sse = synthesizeOpenAiSseFromJson(
       JSON.stringify({
@@ -101,6 +153,29 @@ describe("synthesizeOpenAiSseFromJson (#3089)", () => {
     const toolDelta = deltas.find((d) => Array.isArray(d.tool_calls));
     assert.ok(toolDelta, "a delta must carry tool_calls");
     assert.equal(toolDelta.tool_calls[0].id, "t1");
+  });
+
+  test("normalizes prohibited content finish reasons in synthesized SSE", () => {
+    const sse = synthesizeOpenAiSseFromJson(
+      JSON.stringify({
+        choices: [
+          {
+            message: { role: "assistant", content: "partial text" },
+            finish_reason: "prohibited_content",
+          },
+        ],
+      })
+    );
+    const events = parseDataChunks(sse)
+      .filter((c) => c !== "[DONE]")
+      .map((c) => JSON.parse(c));
+    const finishChunk = events.at(-1);
+
+    assert.equal(finishChunk.choices[0].finish_reason, "content_filter");
+    assert.equal(
+      events.some((event) => event.choices[0].delta.content === "partial text"),
+      true
+    );
   });
 
   test("returns empty string for non-completion JSON / invalid JSON", () => {

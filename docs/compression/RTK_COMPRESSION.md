@@ -1,7 +1,7 @@
 ---
 title: "RTK Compression"
-version: 3.8.31
-lastUpdated: 2026-06-20
+version: 3.8.40
+lastUpdated: 2026-06-28
 ---
 
 # RTK Compression
@@ -381,9 +381,7 @@ Both the **head** and **tail** of each section are preserved; middle content is 
 ```json
 {
   "combo": "my-coding-combo",
-  "routing": {
-    /* ... */
-  },
+  "routing": {/* ... */},
   "compression": {
     "engine": "rtk",
     "intensity": "aggressive"

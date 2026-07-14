@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { Card, Button, Input, Modal, CardSkeleton, SegmentedControl } from "@/shared/components";
+import Toggle from "@/shared/components/Toggle";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { useDisplayBaseUrl } from "@/shared/hooks";
 import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
@@ -18,12 +19,7 @@ const CLOUD_ACTION_TIMEOUT_MS = 15000;
 
 type TranslationValues = Record<string, string | number | boolean | Date>;
 type CloudflaredTunnelPhase =
-  | "unsupported"
-  | "not_installed"
-  | "stopped"
-  | "starting"
-  | "running"
-  | "error";
+  "unsupported" | "not_installed" | "stopped" | "starting" | "running" | "error";
 
 type CloudflaredTunnelStatus = {
   supported: boolean;
@@ -42,12 +38,7 @@ type CloudflaredTunnelStatus = {
 };
 
 type TailscaleTunnelPhase =
-  | "unsupported"
-  | "not_installed"
-  | "needs_login"
-  | "stopped"
-  | "running"
-  | "error";
+  "unsupported" | "not_installed" | "needs_login" | "stopped" | "running" | "error";
 
 type TailscaleTunnelStatus = {
   supported: boolean;
@@ -69,13 +60,7 @@ type TailscaleTunnelStatus = {
 };
 
 type NgrokTunnelPhase =
-  | "unsupported"
-  | "not_installed"
-  | "stopped"
-  | "needs_auth"
-  | "starting"
-  | "running"
-  | "error";
+  "unsupported" | "not_installed" | "stopped" | "needs_auth" | "starting" | "running" | "error";
 
 type NgrokTunnelStatus = {
   supported: boolean;
@@ -189,6 +174,8 @@ export default function APIPageClient({ machineId }: Readonly<APIPageClientProps
   const [lanUrls, setLanUrls] = useState<string[]>([]);
   const [tailscaleIpUrl, setTailscaleIpUrl] = useState<string | null>(null);
   const [activeEndpointTab, setActiveEndpointTab] = useState<EndpointTab>("apis");
+  const [customSystemPromptEnabled, setCustomSystemPromptEnabled] = useState(false);
+  const [customSystemPrompt, setCustomSystemPrompt] = useState("");
 
   const { copied, copy } = useCopyToClipboard();
 
@@ -496,6 +483,8 @@ export default function APIPageClient({ machineId }: Readonly<APIPageClientProps
         setShowTailscaleFunnel(tunnelVisibility.showTailscaleFunnel);
         setShowNgrokTunnel(tunnelVisibility.showNgrokTunnel);
         if (data.ngrokAuthToken) setNgrokToken(data.ngrokAuthToken);
+        setCustomSystemPromptEnabled(!!data.customSystemPromptEnabled);
+        setCustomSystemPrompt(data.customSystemPrompt || "");
 
         if (!tunnelVisibility.showCloudflaredTunnel) {
           setCloudflaredStatus(null);
@@ -517,6 +506,24 @@ export default function APIPageClient({ machineId }: Readonly<APIPageClientProps
     }
 
     return DEFAULT_TUNNEL_VISIBILITY;
+  };
+
+  const handleCustomSystemPromptEnabledChange = (value: boolean) => {
+    setCustomSystemPromptEnabled(value);
+    void fetch("/api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customSystemPromptEnabled: value }),
+    });
+  };
+
+  const handleCustomSystemPromptChange = (value: string) => {
+    setCustomSystemPrompt(value);
+    void fetch("/api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customSystemPrompt: value }),
+    });
   };
 
   const handleCloudToggle = (checked) => {
@@ -1748,6 +1755,31 @@ export default function APIPageClient({ machineId }: Readonly<APIPageClientProps
               )}
             </div>
           )}
+        </div>
+
+        {/* Custom System Prompt */}
+        <div className="flex items-center justify-between pt-4 mt-4 border-t border-border gap-4 flex-wrap">
+          <div className="min-w-0 flex-1">
+            <p className="font-medium text-sm">{t("customSystemPromptTitle")}</p>
+            <p className="text-sm text-text-muted">{t("customSystemPromptDescription")}</p>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            {customSystemPromptEnabled && (
+              <Input
+                type="text"
+                value={customSystemPrompt}
+                onChange={(e) => handleCustomSystemPromptChange(e.target.value)}
+                placeholder={t("customSystemPromptPlaceholder")}
+                className="w-64 text-xs"
+              />
+            )}
+            <Toggle
+              checked={customSystemPromptEnabled}
+              onChange={handleCustomSystemPromptEnabledChange}
+              ariaLabel={t("customSystemPromptTitle")}
+              size="sm"
+            />
+          </div>
         </div>
       </Card>
 

@@ -19,6 +19,14 @@ import path from "path";
 import { fileURLToPath } from "url";
 import type { SqliteAdapter } from "./adapters/types";
 import { DEFAULT_DATABASE_SETTINGS } from "@/types/databaseSettings";
+import {
+  RENAMED_MIGRATION_COMPATIBILITY,
+  LEGACY_VERSION_SLOT_MIGRATIONS,
+  SUPERSEDED_DUPLICATE_MIGRATIONS,
+  PHYSICAL_SCHEMA_SENTINELS,
+  INITIAL_SCHEMA_SENTINELS,
+  OPTIONAL_FTS5_MIGRATION_VERSIONS,
+} from "./migrationRunner/constants";
 
 const isNodeTestRunnerChild = typeof process.env.NODE_TEST_CONTEXT === "string";
 
@@ -130,184 +138,29 @@ function resolveMaxPendingMigrations(): number {
   return DEFAULT_MAX_PENDING_MIGRATIONS_ON_EXISTING_DB;
 }
 
-const RENAMED_MIGRATION_COMPATIBILITY = [
-  {
-    fromVersion: "022",
-    fromName: "call_logs_summary_storage",
-    toVersion: "025",
-    toName: "call_logs_summary_storage",
-  },
-  {
-    fromVersion: "028",
-    fromName: "provider_connection_max_concurrent",
-    toVersion: "029",
-    toName: "provider_connection_max_concurrent",
-  },
-  {
-    fromVersion: "028",
-    fromName: "compression_settings",
-    toVersion: "034",
-    toName: "compression_settings",
-  },
-  {
-    fromVersion: "032",
-    fromName: "create_reasoning_cache",
-    toVersion: "033",
-    toName: "create_reasoning_cache",
-  },
-  {
-    fromVersion: "032",
-    fromName: "compression_analytics",
-    toVersion: "038",
-    toName: "compression_analytics",
-  },
-  {
-    fromVersion: "033",
-    fromName: "compression_cache_stats",
-    toVersion: "039",
-    toName: "compression_cache_stats",
-  },
-  {
-    fromVersion: "041",
-    fromName: "session_account_affinity",
-    toVersion: "050",
-    toName: "session_account_affinity",
-  },
-  {
-    fromVersion: "051",
-    fromName: "usage_history_service_tier",
-    toVersion: "054",
-    toName: "usage_history_service_tier",
-  },
-  {
-    fromVersion: "052",
-    fromName: "manifest_routing",
-    toVersion: "059",
-    toName: "manifest_routing",
-  },
-  {
-    fromVersion: "056",
-    fromName: "manifest_routing",
-    toVersion: "059",
-    toName: "manifest_routing",
-  },
-  {
-    fromVersion: "059",
-    fromName: "chatgpt_image_cache",
-    toVersion: "073",
-    toName: "chatgpt_image_cache",
-  },
-  {
-    fromVersion: "068",
-    fromName: "call_log_images_count",
-    toVersion: "074",
-    toName: "call_log_images_count",
-  },
-  {
-    fromVersion: "073",
-    fromName: "per_model_token_limits",
-    toVersion: "097",
-    toName: "per_model_token_limits",
-  },
-  {
-    fromVersion: "077",
-    fromName: "per_model_token_limits",
-    toVersion: "097",
-    toName: "per_model_token_limits",
-  },
-  {
-    fromVersion: "074",
-    fromName: "discovery_results",
-    toVersion: "098",
-    toName: "discovery_results",
-  },
-  {
-    fromVersion: "078",
-    fromName: "discovery_results",
-    toVersion: "098",
-    toName: "discovery_results",
-  },
-  {
-    fromVersion: "097",
-    fromName: "model_intelligence",
-    toVersion: "103",
-    toName: "model_intelligence",
-  },
-  {
-    fromVersion: "098",
-    fromName: "clear_semantic_cache_for_key_isolation",
-    toVersion: "104",
-    toName: "clear_semantic_cache_for_key_isolation",
-  },
-  {
-    fromVersion: "100",
-    fromName: "model_intelligence",
-    toVersion: "103",
-    toName: "model_intelligence",
-  },
-  {
-    fromVersion: "101",
-    fromName: "clear_semantic_cache_for_key_isolation",
-    toVersion: "104",
-    toName: "clear_semantic_cache_for_key_isolation",
-  },
-] as const;
+/**
+ * Raised by the mass-migration safety check when far more migrations are pending
+ * than the resolved threshold — a strong signal the migration tracking table was
+ * wiped (e.g. a restored backup). Given its own type so callers/loggers can
+ * recognize the memoized cascade and keep repeated logs concise (#6260).
+ */
+export class MigrationSafetyAbortError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MigrationSafetyAbortError";
+  }
+}
 
-const LEGACY_VERSION_SLOT_MIGRATIONS = [
-  { version: "028", name: "evals_tables" },
-  { version: "029", name: "webhooks_templates" },
-  { version: "030", name: "mcp_scopes_api_keys" },
-  { version: "031", name: "api_keys_expires" },
-  { version: "032", name: "detailed_logs_warnings" },
-  { version: "033", name: "provider_connections_block_extra_usage" },
-  { version: "033", name: "add_batch_id_to_call_logs" },
-  { version: "034", name: "call_log_cost_usd" },
-  { version: "040", name: "call_log_cost_usd" },
-  { version: "046", name: "remove_status_from_files" },
-  { version: "051", name: "remove_status_from_files" },
-  { version: "051", name: "proxy_rotation_metadata" },
-  { version: "052", name: "proxy_quarantine_metadata" },
-  { version: "053", name: "proxy_observability" },
-  { version: "060", name: "call_log_images_count" },
-  { version: "062", name: "call_log_images_count" },
-] as const;
+/**
+ * Memoized mass-migration abort (#6260). After a backup restore wipes the
+ * migration tracking table, EVERY downstream `ensureDbInitialized()` re-opens
+ * the DB and re-calls `runMigrations()`, which used to recompute the abort and
+ * re-`console.error` the full banner 11+ times. Caching the thrown instance
+ * (keyed by the exact message it would compute) lets repeated calls in the same
+ * process throw the SAME instance and log a single concise line instead.
+ */
+let memoizedSafetyAbort: MigrationSafetyAbortError | null = null;
 
-const SUPERSEDED_DUPLICATE_MIGRATIONS = [
-  {
-    version: "041",
-    name: "session_account_affinity",
-    supersededByVersion: "050",
-    supersededByName: "session_account_affinity",
-  },
-] as const;
-
-const PHYSICAL_SCHEMA_SENTINELS = [
-  { version: "067", tableName: "relay_tokens", description: "relay_tokens table" },
-  { version: "066", tableName: "key_groups", description: "key_groups table" },
-  { version: "065", tableName: "middleware_hooks", description: "middleware_hooks table" },
-  {
-    version: "064",
-    tableName: "session_model_history",
-    description: "session_model_history table",
-  },
-  { version: "028", tableName: "batches", description: "batches table" },
-  { version: "024", tableName: "sync_tokens", description: "sync_tokens table" },
-  { version: "022", tableName: "memory_fts", description: "memory_fts virtual table" },
-  { version: "019", tableName: "context_handoffs", description: "context_handoffs table" },
-  { version: "017", tableName: "version_manager", description: "version_manager table" },
-  { version: "016", tableName: "skill_executions", description: "skill_executions table" },
-  { version: "015", tableName: "memories", description: "memories table" },
-  { version: "013", tableName: "quota_snapshots", description: "quota_snapshots table" },
-  { version: "011", tableName: "webhooks", description: "webhooks table" },
-  { version: "010", tableName: "model_combo_mappings", description: "model_combo_mappings table" },
-  { version: "008", tableName: "registered_keys", description: "registered_keys table" },
-  { version: "006", tableName: "request_detail_logs", description: "request_detail_logs table" },
-  { version: "004", tableName: "proxy_registry", description: "proxy_registry table" },
-  { version: "002", tableName: "mcp_tool_audit", description: "mcp_tool_audit table" },
-] as const;
-
-const INITIAL_SCHEMA_SENTINELS = ["provider_connections", "combos", "call_logs"] as const;
-const OPTIONAL_FTS5_MIGRATION_VERSIONS = new Set(["022", "023"]);
 const fts5SupportCache = new WeakMap<SqliteAdapter, boolean>();
 
 /**
@@ -334,7 +187,7 @@ function supportsFts5(db: SqliteAdapter): boolean {
   }
 
   try {
-    const probeTable = `__omniroute_fts5_probe_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const probeTable = `__omniroute_fts5_probe_${crypto.randomUUID().replace(/-/g, "_")}`;
     db.transaction(() => {
       db.exec(`CREATE VIRTUAL TABLE "${probeTable}" USING fts5(content);`);
       db.exec(`DROP TABLE "${probeTable}";`);
@@ -602,7 +455,9 @@ function isSchemaAlreadyApplied(
       // missing on DBs that re-execute the script after a partial first run.
       return hasColumn(db, "memories", "needs_reindex");
     case "085":
-      // Retroactive guard for quota_pools migration renumbered from 077 → 085.
+      // Retroactive guard for quota_pools migration renumbered from 077 → 085
+      // (077 collided with 077_api_key_stream_default_mode). DBs that already
+      // applied quota_pools under the old 077 number should not re-run as 085.
       return hasTable(db, "quota_pools") && hasTable(db, "quota_allocations");
     case "088":
       // Quota groups migration (renumbered 087 → 088 on merge into v3.8.8).
@@ -638,7 +493,13 @@ function isSchemaAlreadyApplied(
         hasColumn(db, "api_keys", "daily_usage_limit_usd") &&
         hasColumn(db, "api_keys", "weekly_usage_limit_usd")
       );
-    case "103":
+    case "117":
+      // Proxy-pool rotation (#6365): the assignments table was rebuilt to add a
+      // `position` column and drop UNIQUE(scope, scope_id). If `position` already
+      // exists the rebuild ran — skip re-executing the rename/copy/drop, which
+      // would fail on the missing proxy_assignments_pre117 table.
+      return hasColumn(db, "proxy_assignments", "position");
+    case "123":
       return hasTable(db, "model_intelligence");
     default:
       return false;
@@ -849,8 +710,7 @@ function reconcileRenumberedMigrations(
     const legacyRow = db
       .prepare("SELECT version, name FROM _omniroute_migrations WHERE version = ? AND name = ?")
       .get(compatibility.fromVersion, compatibility.fromName) as
-      | { version: string; name: string }
-      | undefined;
+      { version: string; name: string } | undefined;
     if (!legacyRow) {
       continue;
     }
@@ -905,6 +765,25 @@ function reconcileRenumberedMigrations(
   }
 
   return repaired;
+}
+
+function reconcileMissingFreeProxiesTable(db: SqliteAdapter): boolean {
+  const applied = db
+    .prepare("SELECT version FROM _omniroute_migrations WHERE version = ? AND name = ?")
+    .get("068", "free_proxies") as { version: string } | undefined;
+
+  if (!applied || hasTable(db, "free_proxies")) {
+    return false;
+  }
+
+  db.prepare("DELETE FROM _omniroute_migrations WHERE version = ? AND name = ?").run(
+    "068",
+    "free_proxies"
+  );
+  console.warn(
+    "[Migration] Removed stale 068_free_proxies marker because the physical table is missing."
+  );
+  return true;
 }
 
 function rehomeLegacyVersionSlotMigrations(
@@ -1001,6 +880,7 @@ export function runMigrations(db: SqliteAdapter, options?: { isNewDb?: boolean }
   ensureMigrationsTable(db);
 
   const files = filterSupersededDuplicateMigrations(getMigrationFiles());
+  reconcileMissingFreeProxiesTable(db);
   rehomeLegacyVersionSlotMigrations(db, files);
   reconcileRenumberedMigrations(db, files);
   const applied = getAppliedVersions(db);
@@ -1105,14 +985,31 @@ export function runMigrations(db: SqliteAdapter, options?: { isNewDb?: boolean }
             `(${physicalBaseline.description}), so at most ${plausiblePendingCount} pending ` +
             `migration(s) are expected from a legitimate upgrade.`
           : "";
+      const bypassHint =
+        ` To bypass this check (e.g. after restoring a backup where the migration ` +
+        `tracking table was wiped), set OMNIROUTE_MAX_PENDING_MIGRATIONS=0 in your ` +
+        `server.env or DATA_DIR/.env and restart.`;
       const msg =
         `[Migration] 🛑 ABORT: Detected ${actionablePending.length} pending migrations on an existing database ` +
         `(threshold is ${maxPendingMigrations}). ` +
         `This usually means the migration tracking table was accidentally wiped. ` +
         `Running all migrations from scratch will cause data loss or schema errors.` +
-        schemaHint;
+        schemaHint +
+        bypassHint;
+
+      // #6260: memoize so the cascade of downstream ensureDbInitialized() calls
+      // that re-open the DB throw the SAME instance and only log once.
+      if (memoizedSafetyAbort && memoizedSafetyAbort.message === msg) {
+        console.error(
+          `[Migration] 🛑 ABORT (repeat — see earlier detail): ` +
+            `${actionablePending.length} pending > threshold ${maxPendingMigrations}. ` +
+            `Set OMNIROUTE_MAX_PENDING_MIGRATIONS=0 to bypass.`
+        );
+        throw memoizedSafetyAbort;
+      }
       console.error(msg);
-      throw new Error(msg);
+      memoizedSafetyAbort = new MigrationSafetyAbortError(msg);
+      throw memoizedSafetyAbort;
     }
   }
 

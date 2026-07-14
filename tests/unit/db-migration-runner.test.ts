@@ -246,6 +246,42 @@ test("runMigrations skips versions that are already tracked as applied", serial,
   }
 });
 
+test("runMigrations reapplies 068 when its free_proxies table is missing", serial, async () => {
+  const runner = await importFresh("src/lib/db/migrationRunner.ts");
+  const db = createDb();
+
+  try {
+    db.exec(`
+      CREATE TABLE _omniroute_migrations (
+        version TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO _omniroute_migrations (version, name) VALUES ('068', 'free_proxies');
+    `);
+
+    const appliedCount = withMockedMigrationFs(
+      {
+        "068_free_proxies.sql": "CREATE TABLE free_proxies (id TEXT PRIMARY KEY);",
+      },
+      () => runner.runMigrations(db)
+    );
+
+    assert.equal(appliedCount, 1);
+    assert.ok(
+      db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get("free_proxies")
+    );
+    assert.equal(
+      db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("068")?.name,
+      "free_proxies"
+    );
+  } finally {
+    db.close();
+  }
+});
+
 test(
   "runMigrations applies api key lifecycle migration idempotently when columns already exist",
   serial,
@@ -1736,7 +1772,7 @@ test(
 );
 
 test(
-  "reconcileRenumberedMigrations rehomes merged 097/098 collision markers to 103/104",
+  "reconcileRenumberedMigrations rehomes merged 097/098 collision markers to 123/124",
   serial,
   async () => {
     const runner = await importFresh("src/lib/db/migrationRunner.ts");
@@ -1792,9 +1828,9 @@ test(
               ALTER TABLE api_keys ADD COLUMN daily_usage_limit_usd REAL;
               ALTER TABLE api_keys ADD COLUMN weekly_usage_limit_usd REAL;
             `,
-            "103_model_intelligence.sql":
+            "123_model_intelligence.sql":
               "CREATE TABLE IF NOT EXISTS model_intelligence (model TEXT PRIMARY KEY, source TEXT, category TEXT, score REAL);",
-            "104_clear_semantic_cache_for_key_isolation.sql": "DELETE FROM semantic_cache;",
+            "124_clear_semantic_cache_for_key_isolation.sql": "DELETE FROM semantic_cache;",
           },
           () => runner.runMigrations(db)
         );
@@ -1817,11 +1853,11 @@ test(
           "api_key_usage_limits"
         );
         assert.equal(
-          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("103")?.name,
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("123")?.name,
           "model_intelligence"
         );
         assert.equal(
-          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("104")?.name,
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("124")?.name,
           "clear_semantic_cache_for_key_isolation"
         );
 
@@ -1843,7 +1879,7 @@ test(
 );
 
 test(
-  "reconcileRenumberedMigrations rehomes pre-merge 100/101 collision markers to 103/104",
+  "reconcileRenumberedMigrations rehomes pre-merge 100/101 collision markers to 123/124",
   serial,
   async () => {
     const runner = await importFresh("src/lib/db/migrationRunner.ts");
@@ -1892,9 +1928,9 @@ test(
               ALTER TABLE api_keys ADD COLUMN daily_usage_limit_usd REAL;
               ALTER TABLE api_keys ADD COLUMN weekly_usage_limit_usd REAL;
             `,
-            "103_model_intelligence.sql":
+            "123_model_intelligence.sql":
               "CREATE TABLE IF NOT EXISTS model_intelligence (model TEXT PRIMARY KEY, source TEXT, category TEXT, score REAL);",
-            "104_clear_semantic_cache_for_key_isolation.sql": "DELETE FROM semantic_cache;",
+            "124_clear_semantic_cache_for_key_isolation.sql": "DELETE FROM semantic_cache;",
           },
           () => runner.runMigrations(db)
         );
@@ -1909,11 +1945,11 @@ test(
           "api_key_usage_limits"
         );
         assert.equal(
-          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("103")?.name,
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("123")?.name,
           "model_intelligence"
         );
         assert.equal(
-          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("104")?.name,
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("124")?.name,
           "clear_semantic_cache_for_key_isolation"
         );
 
@@ -1928,6 +1964,74 @@ test(
       } finally {
         console.error = originalError;
       }
+    } finally {
+      db.close();
+    }
+  }
+);
+
+test(
+  "reconcileRenumberedMigrations frees upstream 103/104 after local migrations",
+  serial,
+  async () => {
+    const runner = await importFresh("src/lib/db/migrationRunner.ts");
+    const db = createDb();
+
+    try {
+      db.exec(`
+        CREATE TABLE _omniroute_migrations (
+          version TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE semantic_cache (cache_key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE model_intelligence (
+          model TEXT NOT NULL,
+          source TEXT NOT NULL,
+          category TEXT NOT NULL,
+          score REAL NOT NULL,
+          PRIMARY KEY (model, source, category)
+        ) WITHOUT ROWID;
+      `);
+      db.prepare("INSERT INTO _omniroute_migrations (version, name) VALUES (?, ?)").run(
+        "103",
+        "model_intelligence"
+      );
+      db.prepare("INSERT INTO _omniroute_migrations (version, name) VALUES (?, ?)").run(
+        "104",
+        "clear_semantic_cache_for_key_isolation"
+      );
+
+      const count = withMockedMigrationFs(
+        {
+          "103_strip_legacy_combo_config_keys.sql":
+            "CREATE TABLE IF NOT EXISTS current_103_applied (id TEXT PRIMARY KEY);",
+          "104_normalize_database_cache_size.sql":
+            "CREATE TABLE IF NOT EXISTS current_104_applied (id TEXT PRIMARY KEY);",
+          "123_model_intelligence.sql":
+            "CREATE TABLE IF NOT EXISTS model_intelligence (model TEXT PRIMARY KEY, source TEXT, category TEXT, score REAL);",
+          "124_clear_semantic_cache_for_key_isolation.sql": "DELETE FROM semantic_cache;",
+        },
+        () => runner.runMigrations(db)
+      );
+
+      assert.equal(count, 2);
+      assert.equal(
+        db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("103")?.name,
+        "strip_legacy_combo_config_keys"
+      );
+      assert.equal(
+        db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("104")?.name,
+        "normalize_database_cache_size"
+      );
+      assert.equal(
+        db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("123")?.name,
+        "model_intelligence"
+      );
+      assert.equal(
+        db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("124")?.name,
+        "clear_semantic_cache_for_key_isolation"
+      );
     } finally {
       db.close();
     }

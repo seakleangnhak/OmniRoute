@@ -13,15 +13,18 @@ export interface ServiceConfig {
   healthIntervalMs: number;
   stopTimeoutMs: number;
   logsBufferBytes: number;
+  /**
+   * When true (#6205), the supervisor probes the port + health endpoint before
+   * spawning: a healthy prior instance is adopted, a held-but-unhealthy port
+   * yields a clear error instead of a raw EADDRINUSE stack. Opt-in so the
+   * default spawn path (and existing supervisor tests) stays byte-identical —
+   * enabled for services that bind a fixed port (e.g. 9router).
+   */
+  probeBeforeSpawn?: boolean;
 }
 
 export type ServiceState =
-  | "not_installed"
-  | "stopped"
-  | "starting"
-  | "running"
-  | "stopping"
-  | "error";
+  "not_installed" | "stopped" | "starting" | "running" | "stopping" | "error";
 
 export type HealthState = "healthy" | "unhealthy" | "unknown";
 

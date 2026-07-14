@@ -28,7 +28,7 @@ curl https://localhost:20128/api/monitoring/health \
 
 ## Payloads
 
-See the full OpenAPI specification at `GET /api/openapi/spec` or `docs/reference/openapi.yaml` for detailed request/response schemas.
+See the full OpenAPI specification at `GET /api/openapi/spec` or `docs/openapi.yaml` for detailed request/response schemas.
 
 <!-- skill:custom-start -->
 <!-- Migrated from skills/omniroute-monitoring/SKILL.md (preserved curated content) -->
@@ -142,4 +142,5 @@ Returns: server status, heartbeat, recent audit activity summary.
 - `503` on health endpoint → OmniRoute is starting up; retry in 5s
 - Circuit breaker `OPEN` → provider is temporarily blocked; check `resetAt` to know when it auto-recovers
 - `429 budget_exceeded` → budget guard limit reached; raise limit or wait for reset
+
 <!-- skill:custom-end -->

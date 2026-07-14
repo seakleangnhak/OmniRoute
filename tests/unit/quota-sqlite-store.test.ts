@@ -21,6 +21,7 @@ process.env.DATA_DIR = TEST_DATA_DIR;
 
 const core = await import("../../src/lib/db/core.ts");
 const poolsDb = await import("../../src/lib/db/quotaPools.ts");
+const sqliteQuotaStoreModule = await import("../../src/lib/quota/sqliteQuotaStore.ts");
 
 async function resetStorage() {
   core.resetDbInstance();
@@ -51,6 +52,12 @@ test.after(async () => {
   if (fs.existsSync(TEST_DATA_DIR)) {
     fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
   }
+});
+
+test("sqliteQuotaStore public surface excludes removed singleton reset helper", () => {
+  assert.equal(Object.hasOwn(sqliteQuotaStoreModule, "resetSqliteQuotaStore"), false);
+  assert.equal(typeof sqliteQuotaStoreModule.getSqliteQuotaStore, "function");
+  assert.equal(typeof sqliteQuotaStoreModule.SqliteQuotaStore, "function");
 });
 
 // Helper: make a dimension key

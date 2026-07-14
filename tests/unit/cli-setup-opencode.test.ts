@@ -40,12 +40,27 @@ function readConfig() {
   return JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, "opencode.json"), "utf8"));
 }
 
+// #5959-class deflake: the command under test prints CLI progress with multi-byte
+// glyphs (printInfo/printSuccess "✔"/printError "✖" via console.log). Under the
+// node:test runner those stdout writes interleave with the child's V8-serialized
+// report frames and can corrupt the stream ("Unable to deserialize cloned data
+// due to invalid or unsupported version"). No test here asserts on stdout, so
+// silence the stdout-writing console methods for the duration of this file
+// (same pattern as tests/unit/cli/setup-claude.test.ts, #6019/#6021).
+const _console = { log: console.log, info: console.info, warn: console.warn };
+
 describe("omniroute setup opencode", () => {
   before(() => {
+    console.log = () => {};
+    console.info = () => {};
+    console.warn = () => {};
     makeFakePluginDist();
   });
 
   after(() => {
+    console.log = _console.log;
+    console.info = _console.info;
+    console.warn = _console.warn;
     try {
       fs.rmSync(FIXTURE_ROOT, { recursive: true, force: true });
     } catch {

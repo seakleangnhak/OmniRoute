@@ -14,7 +14,7 @@
  */
 
 import { BaseExecutor, type ExecuteInput } from "./base.ts";
-import { sanitizeErrorMessage } from "../utils/error.ts";
+import { errorResponse } from "../utils/error.ts";
 import { prepareToolMessages, buildToolAwareResult } from "../translator/webTools.ts";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -25,7 +25,7 @@ export const T3_CHAT_BASE = "https://t3.chat";
 const SERVER_FN_PREFIX = `${T3_CHAT_BASE}/_serverFn/`;
 
 const USER_AGENT =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36";
 
 /** TanStack Start accepts these content types, in priority order */
 const TSS_ACCEPT = "application/x-tss-framed, application/x-ndjson, application/json";
@@ -110,16 +110,7 @@ export function validateT3Credentials(creds: T3ChatCredentials | null | undefine
 }
 
 function buildErrorResponse(status: number, message: string): Response {
-  return new Response(
-    JSON.stringify({
-      error: {
-        message: sanitizeErrorMessage(message),
-        type: "upstream_error",
-        code: `HTTP_${status}`,
-      },
-    }),
-    { status, headers: { "Content-Type": "application/json" } }
-  );
+  return errorResponse(status, message);
 }
 
 /**

@@ -18,7 +18,7 @@ const DB_KEY = "cursorupdate.lastUpdatedAndShown.version";
  * `CURSOR_REGISTRY_VERSION` in providerHeaderProfiles.ts. Exported so tests
  * assert against the single source of truth instead of a drifting literal.
  */
-export const FALLBACK_VERSION = "3.3";
+export const FALLBACK_VERSION = "3.9";
 
 let cachedVersion: string | null = null;
 let cachedAt = 0;
@@ -50,8 +50,7 @@ export function getCursorVersion(): string {
     const db = new Database(getCursorDbPath(), { readonly: true, fileMustExist: true });
     try {
       const row = db.prepare("SELECT value FROM itemTable WHERE key = ?").get(DB_KEY) as
-        | { value: string }
-        | undefined;
+        { value: string } | undefined;
       if (row?.value) {
         cachedVersion = row.value;
         cachedAt = now;

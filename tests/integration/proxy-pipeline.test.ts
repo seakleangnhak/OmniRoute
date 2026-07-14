@@ -71,8 +71,11 @@ describe("Chat Pipeline — handleSingleModelChat decomposition", () => {
   });
 
   it("chatCore should record cost for both non-streaming and streaming responses", () => {
+    // Non-streaming cost is still recorded inline; streaming cost was extracted to
+    // the recordStreamingCost leaf (open-sse/handlers/chatCore/streamingCost.ts,
+    // #4790 / #3501), so chatCore now delegates streaming cost to it.
     assert.match(coreSrc, /if \(apiKeyInfo\?\.id && estimatedCost > 0\)/);
-    assert.match(coreSrc, /if \(apiKeyInfo\?\.id && streamUsage\)/);
+    assert.match(coreSrc, /recordStreamingCost\(/);
   });
 });
 

@@ -1,17 +1,11 @@
+import { lastCommandSegment } from "./splitCompositeCommand.ts";
+
 export interface CommandDetectionResult {
   type: string;
   command: string | null;
   confidence: number;
   category:
-    | "git"
-    | "test"
-    | "build"
-    | "shell"
-    | "docker"
-    | "package"
-    | "infra"
-    | "cloud"
-    | "generic";
+    "git" | "test" | "build" | "shell" | "docker" | "package" | "infra" | "cloud" | "generic";
   matchedPatterns: string[];
 }
 
@@ -25,6 +19,9 @@ type Detector = {
 const COMMAND_PREFIXES = [
   "git",
   "make",
+  "gradle",
+  "gradlew",
+  "dotnet",
   "terraform",
   "tofu",
   "opentofu",
@@ -111,6 +108,18 @@ const DETECTORS: Detector[] = [
     category: "build",
     commandPatterns: [/^make\b/i],
     contentPatterns: [/^make\[\d+\]: (?:Entering|Leaving) directory/m, /make: \*\*\* /],
+  },
+  {
+    type: "gradle",
+    category: "build",
+    commandPatterns: [/^(?:gradle|gradlew|\.\/gradlew)\b/i],
+    contentPatterns: [/^> Task :/m, /^BUILD (?:SUCCESSFUL|FAILED)\b/m],
+  },
+  {
+    type: "dotnet",
+    category: "build",
+    commandPatterns: [/^dotnet\s+(?:build|test|run|restore|publish|pack|msbuild)\b/i, /^dotnet\b/i],
+    contentPatterns: [/^Build (?:succeeded|FAILED)\b/m, /\b(?:error|warning) CS\d+\b/m],
   },
   {
     type: "terraform-plan",
@@ -412,14 +421,15 @@ export function detectCommandFromText(text: string): string | null {
     const trimmed = line.trim().replace(/^\$\s+/, "");
     if (!trimmed) continue;
     if (COMMAND_PREFIX_PATTERN.test(trimmed)) {
-      return trimmed;
+      return lastCommandSegment(trimmed);
     }
   }
   return null;
 }
 
 export function detectCommandType(text: string, command?: string | null): CommandDetectionResult {
-  const detectedCommand = command?.trim() || detectCommandFromText(text);
+  const detectedCommand =
+    lastCommandSegment(command?.trim() || detectCommandFromText(text) || "") || null;
   let best: CommandDetectionResult | null = null;
 
   for (const detector of DETECTORS) {

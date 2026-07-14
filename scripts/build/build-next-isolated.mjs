@@ -11,6 +11,11 @@ import {
   syncStandaloneNativeAssets as _syncNativeAssets,
   syncStandaloneExtraModules as _syncExtraModules,
 } from "./assembleStandalone.mjs";
+import {
+  isBackendOnlyBuild,
+  stubDashboardPages,
+  restoreDashboardPages,
+} from "./backendOnlyPages.mjs";
 
 /**
  * Layer 1: `app/` has been renamed to `dist/` and the App-Router collision is gone.
@@ -107,6 +112,15 @@ function runNextBuild() {
   });
 }
 
+export function resolveNextBuildBundlerFlag(baseEnv = process.env) {
+  // Turbopack is the default production bundler (Next 16 stable). Benchmarked on
+  // this codebase: 2-3x faster than the single-threaded webpack pass (17min -> 9min
+  // on a 32-core box; ~20min -> 7min on ubuntu-latest), artifact validated
+  // end-to-end (standalone smoke + e2e/package/electron CI jobs). Webpack stays as
+  // the explicit escape hatch (=0) for bundler-compat regressions.
+  return baseEnv.OMNIROUTE_USE_TURBOPACK === "0" ? "--webpack" : "--turbopack";
+}
+
 function withoutMaxOldSpaceSize(nodeOptions = "") {
   const tokens = String(nodeOptions).split(/\s+/).filter(Boolean);
   const kept = [];
@@ -137,7 +151,6 @@ function readConstrainedMemoryBytes() {
       if (!raw || raw === "max") continue;
       const parsed = Number.parseInt(raw, 10);
       if (!Number.isFinite(parsed) || parsed <= 0) continue;
-      // Ignore bogus "effectively unlimited" cgroup values.
       if (parsed >= 9_000_000_000_000_000_000) continue;
       return parsed;
     } catch {
@@ -167,8 +180,7 @@ export function resolveBuildMemoryMb(baseEnv = process.env) {
   if (constrainedBytes === null && isLikelyContainerBuild(baseEnv)) {
     return String(DEFAULT_CONTAINER_BUILD_MEMORY_MB);
   }
-  const totalMemoryBytes =
-    typeof constrainedBytes === "number" && constrainedBytes > 0 ? constrainedBytes : os.totalmem();
+  const totalMemoryBytes = constrainedBytes ?? os.totalmem();
   const totalMemoryMb = Math.floor(totalMemoryBytes / 1024 / 1024);
 
   if (!Number.isFinite(totalMemoryMb) || totalMemoryMb <= 0) {
@@ -188,10 +200,6 @@ export function resolveBuildMemoryMb(baseEnv = process.env) {
   return String(boundedMb);
 }
 
-export function resolveNextBuildBundlerFlag(baseEnv = process.env) {
-  return baseEnv.OMNIROUTE_USE_TURBOPACK === "1" ? "--turbopack" : "--webpack";
-}
-
 export function resolveNextBuildEnv(baseEnv = process.env) {
   const nodeOptions = withoutMaxOldSpaceSize(baseEnv.NODE_OPTIONS);
   const buildMemoryMb = resolveBuildMemoryMb(baseEnv);
@@ -201,25 +209,6 @@ export function resolveNextBuildEnv(baseEnv = process.env) {
     NEXT_PRIVATE_BUILD_WORKER: baseEnv.NEXT_PRIVATE_BUILD_WORKER || "0",
     NODE_OPTIONS: `${nodeOptions} --max-old-space-size=${buildMemoryMb}`.trim(),
   };
-}
-
-async function generateDocsIndexIfPresent(rootDir = projectRoot) {
-  const scriptPath = path.join(rootDir, "scripts", "docs", "generate-docs-index.mjs");
-  if (!(await exists(scriptPath))) {
-    console.log("[build-next-isolated] Skipping legacy docs index generator; script not present");
-    return;
-  }
-
-  console.log("[build-next-isolated] Generating docs index...");
-  try {
-    const { execSync } = await import("node:child_process");
-    execSync("node scripts/docs/generate-docs-index.mjs", { cwd: rootDir, stdio: "inherit" });
-  } catch (docGenErr) {
-    console.warn(
-      "[build-next-isolated] Docs index generation failed (non-fatal):",
-      docGenErr?.message
-    );
-  }
 }
 
 async function resetStandaloneOutput(rootDir = projectRoot, fsImpl = fs) {
@@ -274,23 +263,39 @@ export async function main() {
   const movedPaths = [];
   const transientBuildPaths = getTransientBuildPaths();
 
-  try {
-    const effectiveBuildEnv = resolveNextBuildEnv(process.env);
-    console.log(
-      `[build-next-isolated] Next.js build heap limit: ${
-        effectiveBuildEnv.NODE_OPTIONS.match(/--max-old-space-size=(\d+)/)?.[1] || "unknown"
-      } MB`
-    );
+  // Backend-only fast build: replace the dashboard leaf pages with zero-cost stubs so
+  // `next build` skips the frontend (client vendor chunks + prerender) while keeping every
+  // API route handler. Restored in `finally` and on SIGINT/SIGTERM (git-recoverable regardless).
+  let stubbedPages = [];
+  const restoreStubbedPagesOnce = () => {
+    if (stubbedPages.length > 0) {
+      restoreDashboardPages(stubbedPages);
+      stubbedPages = [];
+    }
+  };
+  const onFatalSignal = (signal) => {
+    console.warn(`[build-next-isolated] Received ${signal} — restoring stubbed pages before exit`);
+    restoreStubbedPagesOnce();
+    process.exit(1);
+  };
 
+  try {
     for (const entry of transientBuildPaths) {
       if (!(await exists(entry.sourcePath))) continue;
       await movePath(entry.sourcePath, entry.backupPath);
       movedPaths.push(entry);
     }
 
-    await resetStandaloneOutput(projectRoot);
+    if (isBackendOnlyBuild()) {
+      console.log(
+        "[build-next-isolated] OMNIROUTE_BUILD_BACKEND_ONLY set — building API only (dashboard UI stubbed)"
+      );
+      stubbedPages = stubDashboardPages(projectRoot);
+      process.once("SIGINT", onFatalSignal);
+      process.once("SIGTERM", onFatalSignal);
+    }
 
-    await generateDocsIndexIfPresent(projectRoot);
+    await resetStandaloneOutput(projectRoot);
 
     const result = await runNextBuild();
     const standaloneDir = path.join(distDir, "standalone");
@@ -313,6 +318,25 @@ export async function main() {
         );
       }
 
+      // Best-effort: build the TPROXY native addon (Linux-only, opt-in) BEFORE
+      // assembling, so its transparent.node is present for assembleStandalone's
+      // NATIVE_ASSET_ENTRIES copy. Non-Linux / no-toolchain is non-fatal — the
+      // capture mode degrades gracefully when the addon is absent.
+      try {
+        const { buildTproxyNative } = await import("./build-tproxy-native.mjs");
+        const res = buildTproxyNative(projectRoot);
+        console.log(
+          res.built
+            ? "[build-next-isolated] Built TPROXY native addon (transparent.node)"
+            : `[build-next-isolated] TPROXY native addon skipped: ${res.reason}`
+        );
+      } catch (nativeErr) {
+        console.warn(
+          "[build-next-isolated] Non-fatal error building TPROXY native addon:",
+          nativeErr?.message
+        );
+      }
+
       try {
         console.log(
           "[build-next-isolated] Assembling standalone bundle (static + public + natives + extras)..."
@@ -332,6 +356,12 @@ export async function main() {
     console.error("[build-next-isolated] Build failed:", error);
     process.exitCode = 1;
   } finally {
+    // Restore the stubbed dashboard pages FIRST so the working tree is clean even if the
+    // transient-path restore below throws.
+    restoreStubbedPagesOnce();
+    process.off("SIGINT", onFatalSignal);
+    process.off("SIGTERM", onFatalSignal);
+
     while (movedPaths.length > 0) {
       const entry = movedPaths.pop();
       if (!entry) continue;

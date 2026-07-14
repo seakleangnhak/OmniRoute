@@ -1,7 +1,7 @@
 /**
  * omniroute setup-qwen — configure Qwen Code (QwenLM/qwen-code) for OmniRoute.
  *
- * Qwen Code is a terminal AI agent (gemini-cli fork) with a file-based config at
+ * Qwen Code is a terminal AI agent with a file-based config at
  * ~/.qwen/settings.json. For a custom OpenAI-compatible endpoint it uses a
  * `modelProviders` entry with authType "openai", baseUrl WITH /v1, and an
  * `envKey` naming the env var holding the key (secret stays in the env, never the

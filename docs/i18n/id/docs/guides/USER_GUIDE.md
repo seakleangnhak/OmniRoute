@@ -22,30 +22,27 @@ Panduan lengkap untuk mengonfigurasi penyedia, membuat combo, mengintegrasikan a
 
 ## 💰 Harga Sekilas
 
-| Tingkatan        | Penyedia          | Biaya       | Reset Kuota      | Terbaik Untuk               |
-| ---------------- | ----------------- | ----------- | ---------------- | --------------------------- |
-| **💳 LANGGANAN** | Claude Code (Pro) | $20/bln     | 5j + mingguan    | Sudah berlangganan          |
-|                  | Codex (Plus/Pro)  | $20-200/bln | 5j + mingguan    | Pengguna OpenAI             |
-|                  | Gemini CLI        | **GRATIS**  | 180K/bln + 1K/hr | Semua orang!                |
-|                  | GitHub Copilot    | $10-19/bln  | Bulanan          | Pengguna GitHub             |
-| **🔑 KUNCI API** | DeepSeek          | Bayar pakai | Tidak ada        | Penalaran murah             |
-|                  | Groq              | Bayar pakai | Tidak ada        | Inferensi sangat cepat      |
-|                  | xAI (Grok)        | Bayar pakai | Tidak ada        | Penalaran Grok 4            |
-|                  | Mistral           | Bayar pakai | Tidak ada        | Model berbasis EU           |
-|                  | Perplexity        | Bayar pakai | Tidak ada        | Dilengkapi pencarian        |
-|                  | Together AI       | Bayar pakai | Tidak ada        | Model sumber terbuka        |
-|                  | Fireworks AI      | Bayar pakai | Tidak ada        | Gambar FLUX cepat           |
-|                  | Cerebras          | Bayar pakai | Tidak ada        | Kecepatan skala wafer       |
-|                  | Cohere            | Bayar pakai | Tidak ada        | RAG Command R+              |
-|                  | NVIDIA NIM        | Bayar pakai | Tidak ada        | Model enterprise            |
-| **💰 MURAH**     | GLM-4.7           | $0.6/1M     | Harian pukul 10  | Cadangan hemat              |
-|                  | MiniMax M2.1      | $0.2/1M     | Bergulir 5 jam   | Pilihan termurah            |
-|                  | Kimi K2           | $9/bln flat | 10M token/bln    | Biaya yang dapat diprediksi |
-| **🆓 GRATIS**    | Qoder             | $0          | Tidak terbatas   | 8 model gratis              |
-|                  | Qwen              | $0          | Tidak terbatas   | 3 model gratis              |
-|                  | Kiro              | $0          | Tidak terbatas   | Claude gratis               |
-
-**💡 Tips Pro:** Mulai dengan combo Gemini CLI (180K gratis/bulan) + Qoder (gratis tanpa batas) = biaya $0!
+| Tingkatan        | Penyedia          | Biaya       | Reset Kuota     | Terbaik Untuk               |
+| ---------------- | ----------------- | ----------- | --------------- | --------------------------- |
+| **💳 LANGGANAN** | Claude Code (Pro) | $20/bln     | 5j + mingguan   | Sudah berlangganan          |
+|                  | Codex (Plus/Pro)  | $20-200/bln | 5j + mingguan   | Pengguna OpenAI             |
+|                  | GitHub Copilot    | $10-19/bln  | Bulanan         | Pengguna GitHub             |
+| **🔑 KUNCI API** | DeepSeek          | Bayar pakai | Tidak ada       | Penalaran murah             |
+|                  | Groq              | Bayar pakai | Tidak ada       | Inferensi sangat cepat      |
+|                  | xAI (Grok)        | Bayar pakai | Tidak ada       | Penalaran Grok 4            |
+|                  | Mistral           | Bayar pakai | Tidak ada       | Model berbasis EU           |
+|                  | Perplexity        | Bayar pakai | Tidak ada       | Dilengkapi pencarian        |
+|                  | Together AI       | Bayar pakai | Tidak ada       | Model sumber terbuka        |
+|                  | Fireworks AI      | Bayar pakai | Tidak ada       | Gambar FLUX cepat           |
+|                  | Cerebras          | Bayar pakai | Tidak ada       | Kecepatan skala wafer       |
+|                  | Cohere            | Bayar pakai | Tidak ada       | RAG Command R+              |
+|                  | NVIDIA NIM        | Bayar pakai | Tidak ada       | Model enterprise            |
+| **💰 MURAH**     | GLM-4.7           | $0.6/1M     | Harian pukul 10 | Cadangan hemat              |
+|                  | MiniMax M2.1      | $0.2/1M     | Bergulir 5 jam  | Pilihan termurah            |
+|                  | Kimi K2           | $9/bln flat | 10M token/bln   | Biaya yang dapat diprediksi |
+| **🆓 GRATIS**    | Qoder             | $0          | Tidak terbatas  | 8 model gratis              |
+|                  | Qwen              | $0          | Tidak terbatas  | 3 model gratis              |
+|                  | Kiro              | $0          | Tidak terbatas  | Claude gratis               |
 
 ---
 
@@ -71,9 +68,8 @@ vs. $20 + terkena batas = frustrasi
 
 ```
 Combo: "free-forever"
-  1. gc/gemini-3-flash         (180K gratis/bulan)
-  2. if/kimi-k2-thinking       (gratis tanpa batas)
-  3. qw/qwen3-coder-plus       (gratis tanpa batas)
+  1. if/kimi-k2-thinking       (unlimited free)
+  2. qw/qwen3-coder-plus       (unlimited free)
 
 Biaya bulanan: $0
 Kualitas: Model siap produksi
@@ -141,20 +137,6 @@ Models:
   cx/gpt-5.2-codex
   cx/gpt-5.1-codex-max
 ```
-
-#### Gemini CLI (GRATIS 180K/bulan!)
-
-```bash
-Dashboard → Providers → Connect Gemini CLI
-→ Google OAuth
-→ 180K completions/month + 1K/day
-
-Models:
-  gc/gemini-3-flash-preview
-  gc/gemini-2.5-pro
-```
-
-**Nilai Terbaik:** Tingkat gratis yang sangat besar! Gunakan ini sebelum tingkatan berbayar.
 
 #### GitHub Copilot
 
@@ -244,9 +226,8 @@ Use in CLI: premium-coding
 ```
 Name: free-combo
 Models:
-  1. gc/gemini-3-flash-preview (180K gratis/bulan)
-  2. if/kimi-k2-thinking (tanpa batas)
-  3. qw/qwen3-coder-plus (tanpa batas)
+  1. if/kimi-k2-thinking (unlimited)
+  2. qw/qwen3-coder-plus (unlimited)
 
 Cost: $0 selamanya!
 ```
@@ -557,8 +538,6 @@ Untuk referensi variabel lingkungan lengkap, lihat [README](../README.md).
 **Claude Code (`cc/`)** — Pro/Max: `cc/claude-opus-4-7`, `cc/claude-sonnet-4-5-20250929`, `cc/claude-haiku-4-5-20251001`
 
 **Codex (`cx/`)** — Plus/Pro: `cx/gpt-5.2-codex`, `cx/gpt-5.1-codex-max`
-
-**Gemini CLI (`gc/`)** — GRATIS: `gc/gemini-3-flash-preview`, `gc/gemini-2.5-pro`
 
 **GitHub Copilot (`gh/`)**: `gh/gpt-5`, `gh/claude-4.5-sonnet`
 

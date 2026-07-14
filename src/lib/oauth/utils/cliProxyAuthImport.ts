@@ -24,8 +24,6 @@ export const CLIPROXY_TYPE_TO_PROVIDER: Record<string, string> = {
   claude: "claude",
   codex: "codex",
   antigravity: "antigravity",
-  gemini: "gemini-cli",
-  "gemini-cli": "gemini-cli",
   qwen: "qwen",
   kimi: "kimi",
 };

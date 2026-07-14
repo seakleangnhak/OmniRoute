@@ -9,6 +9,7 @@ import { ENGINE_IDS, engineMeta } from "../../../open-sse/services/compression/e
 // labels/descriptions, engine ids, data-testid hooks, and the PUT request body.
 vi.mock("next-intl", () => ({
   useTranslations: () => (key: string) => key,
+  useLocale: () => "en",
 }));
 
 // ── Harness ─────────────────────────────────────────────────────────────────

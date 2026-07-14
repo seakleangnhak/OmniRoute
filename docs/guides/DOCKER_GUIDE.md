@@ -1,7 +1,7 @@
 ---
 title: "🐳 Docker Guide — OmniRoute"
-version: 3.8.2
-lastUpdated: 2026-05-13
+version: 3.8.40
+lastUpdated: 2026-06-28
 ---
 
 # 🐳 Docker Guide — OmniRoute
@@ -152,11 +152,11 @@ docker build --target runner-base -t omniroute:base .
 docker build --target runner-cli  -t omniroute:cli  .
 ```
 
-Defaults exported by `runner-base`: `PORT=20128`, `HOSTNAME=0.0.0.0`, `OMNIROUTE_MEMORY_MB=2048`, `NODE_OPTIONS=--max-old-space-size=2048`, `DATA_DIR=/app/data`, `SQLITE_MAX_SIZE_MB=2048`, `OMNIROUTE_MIGRATIONS_DIR=/app/migrations`.
+Defaults exported by `runner-base`: `PORT=20128`, `HOSTNAME=0.0.0.0`, `OMNIROUTE_MEMORY_MB=1024`, `NODE_OPTIONS=--max-old-space-size=1024`, `DATA_DIR=/app/data`, `SQLITE_MAX_SIZE_MB=2048`, `OMNIROUTE_MIGRATIONS_DIR=/app/migrations`.
 
 Memory behavior in Docker:
 
-- `NODE_OPTIONS=--max-old-space-size=2048` is baked into the image as a fallback.
+- `NODE_OPTIONS=--max-old-space-size=1024` is baked into the image as a fallback.
 - The actual server process is started by the standalone launcher, which reads `OMNIROUTE_MEMORY_MB` and appends `--max-old-space-size=<OMNIROUTE_MEMORY_MB>`.
 - Node uses the last repeated `--max-old-space-size` value, so setting `OMNIROUTE_MEMORY_MB` controls the effective Docker heap limit.
 - If `OMNIROUTE_MEMORY_MB` is unset in a non-Docker standalone launch, the launcher uses `512`.
@@ -171,7 +171,7 @@ Beyond the defaults documented in [ENVIRONMENT.md](../reference/ENVIRONMENT.md),
 | `REDIS_URL`                   | Connection string for the rate limiter / cache backend                                              | `redis://redis:6379`       |
 | `REDIS_PORT`                  | Host-side port for the bundled Redis container                                                      | `6379`                     |
 | `AUTO_UPDATE_HOST_REPO_DIR`   | Host path mounted into `cli` profile at `/workspace/omniroute` for self-update workflows            | `.` (current directory)    |
-| `OMNIROUTE_MEMORY_MB`         | Node heap ceiling (`NODE_OPTIONS=--max-old-space-size`) for the server process                      | `2048` (set in Dockerfile) |
+| `OMNIROUTE_MEMORY_MB`         | Node heap ceiling (`NODE_OPTIONS=--max-old-space-size`) for the server process                      | `1024` (set in Dockerfile) |
 | `SQLITE_MAX_SIZE_MB`          | SQLite database file size cap in MB, applied on startup                                             | `2048` (set in Dockerfile) |
 | `DASHBOARD_PORT` / `API_PORT` | Override exposed ports for dashboard (20128) and API (20129)                                        | `20128` / `20129`          |
 | `PROD_DASHBOARD_PORT`         | Host-side dashboard port for `docker-compose.prod.yml`                                              | `20130`                    |
@@ -191,7 +191,11 @@ services:
       - omniroute-data:/app/data
     environment:
       - PORT=20128
+      # Browser-facing origin for OAuth callbacks, dashboard links, and generated public URLs.
       - NEXT_PUBLIC_BASE_URL=https://your-domain.com
+      # Internal server-to-server URL for scheduled jobs / self-fetches.
+      - BASE_URL=http://omniroute:20128
+      - AUTH_COOKIE_SECURE=true
 
   caddy:
     image: caddy:latest
@@ -205,6 +209,13 @@ services:
 volumes:
   omniroute-data:
 ```
+
+Caddy sets the standard forwarding headers for the upstream container. OmniRoute uses
+`NEXT_PUBLIC_BASE_URL` as the canonical public origin for OAuth callbacks and generated public
+links; authenticated dashboard writes use same-origin requests plus session-bound CSRF
+protection. Only enable `OMNIROUTE_TRUST_PROXY` for advanced deployments where you intentionally
+want OmniRoute to derive the public origin from trusted forwarded headers instead of explicit
+configuration.
 
 ## Cloudflare Quick Tunnel
 

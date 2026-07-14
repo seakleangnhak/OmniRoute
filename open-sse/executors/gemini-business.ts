@@ -34,7 +34,7 @@ import { makeExecutorErrorResult as makeErrorResult } from "../utils/error.ts";
 const GEMINI_BUSINESS_FETCH_TIMEOUT_MS = 60_000;
 
 const GEMINI_BUSINESS_USER_AGENT =
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36";
 
 // Default entry URL — user can override via providerSpecificData.entryUrl
 const DEFAULT_ENTRY_URL = "https://business.gemini.google/home";

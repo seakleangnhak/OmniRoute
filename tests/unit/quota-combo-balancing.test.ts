@@ -3,7 +3,7 @@
  *
  * Task 4 TDD — Fix same-provider combo collision:
  * a pool with N connections to the same provider must produce ONE combo
- * per model with ALL connection steps + strategy "fill-first".
+ * per model with ALL connection steps + strategy "quota-share".
  *
  * Uses "openrouter" (1 model: "auto") as test provider.
  */
@@ -115,7 +115,7 @@ const FIRST_MODEL = "auto"; // single model in openrouter registry
 // B1 — 2-connection same-provider pool: one combo per model with 2 steps
 // ---------------------------------------------------------------------------
 
-test("B1: syncQuotaCombos — 2-connection same-provider pool produces ONE combo per model with 2 steps + fill-first", async () => {
+test("B1: syncQuotaCombos — 2-connection same-provider pool produces ONE combo per model with 2 steps + quota-share", async () => {
   const modelsForProvider = (PROVIDER_MODELS[PROVIDER] ?? []).map((m) => m.id);
   assert.ok(modelsForProvider.length > 0, `${PROVIDER} must have at least one model in registry`);
 
@@ -151,7 +151,7 @@ test("B1: syncQuotaCombos — 2-connection same-provider pool produces ONE combo
     `expected exactly ${modelsForProvider.length} combo(s), one per model`
   );
 
-  // For each model, assert: one combo, 2 steps, fill-first, both connIds present.
+  // For each model, assert: one combo, 2 steps, quota-share, both connIds present.
   for (const modelId of modelsForProvider) {
     // B4: combos are named with the GROUP name ("GroupDemo"), not pool name.
     const comboName = quotaModelName("GroupDemo", PROVIDER, modelId);
@@ -166,11 +166,11 @@ test("B1: syncQuotaCombos — 2-connection same-provider pool produces ONE combo
 
     const combo = matchingCombos[0];
 
-    // Strategy must be fill-first.
+    // Strategy must be quota-share.
     assert.equal(
       combo.strategy,
-      "fill-first",
-      `combo "${comboName}" strategy should be "fill-first", got "${combo.strategy}"`
+      "quota-share",
+      `combo "${comboName}" strategy should be "quota-share", got "${combo.strategy}"`
     );
 
     // Must have exactly 2 steps (one per connection).
@@ -285,8 +285,8 @@ test("B3: syncQuotaCombos — idempotent on 2-connection pool (no duplicates aft
     );
     assert.equal(
       combo.strategy,
-      "fill-first",
-      `combo "${combo.name}" strategy must remain "fill-first"`
+      "quota-share",
+      `combo "${combo.name}" strategy must remain "quota-share"`
     );
   }
 });
@@ -391,8 +391,8 @@ test("B5: after syncQuotaCombos on 2-connection pool, getComboByName returns the
   );
   assert.equal(
     found.strategy,
-    "fill-first",
-    `combo "${comboName}" strategy should be "fill-first"`
+    "quota-share",
+    `combo "${comboName}" strategy should be "quota-share"`
   );
 
   // Verify no second combo by scanning all combos for the same name.

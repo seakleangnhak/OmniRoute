@@ -9,6 +9,7 @@ import { generateId } from "@/shared/utils";
 import { isCcCompatibleProviderEnabled } from "@/shared/utils/featureFlags";
 import { createProviderNodeSchema } from "@/shared/validation/schemas";
 import { isValidationFailure, validateBody } from "@/shared/validation/helpers";
+import { validateProviderNodeBaseUrl } from "./urlGuard";
 
 const OPENAI_COMPATIBLE_DEFAULTS = {
   baseUrl: "https://api.openai.com/v1",
@@ -78,21 +79,27 @@ export async function POST(request) {
       chatPath,
       modelsPath,
       customHeaders,
+      iconUrl,
     } = validation.data;
 
     // Determine type
     const nodeType = type || "openai-compatible";
 
     if (nodeType === "openai-compatible") {
+      const resolvedBaseUrl = (baseUrl || OPENAI_COMPATIBLE_DEFAULTS.baseUrl).trim();
+      const baseUrlError = validateProviderNodeBaseUrl(resolvedBaseUrl);
+      if (baseUrlError) return baseUrlError;
+
       const node = await createProviderNode({
         id: `${OPENAI_COMPATIBLE_PREFIX}${apiType}-${generateId()}`,
         type: "openai-compatible",
         prefix: prefix.trim(),
         apiType,
-        baseUrl: (baseUrl || OPENAI_COMPATIBLE_DEFAULTS.baseUrl).trim(),
+        baseUrl: resolvedBaseUrl,
         name: name.trim(),
         chatPath: chatPath || null,
         modelsPath: modelsPath || null,
+        iconUrl: iconUrl?.trim() || null,
         customHeaders: customHeaders || null,
       });
       return NextResponse.json({ node }, { status: 201 });
@@ -108,6 +115,8 @@ export async function POST(request) {
         compatMode === "cc"
           ? sanitizeClaudeCodeCompatibleBaseUrl(rawBaseUrl)
           : sanitizeAnthropicBaseUrl(rawBaseUrl);
+      const baseUrlError = validateProviderNodeBaseUrl(sanitizedBaseUrl);
+      if (baseUrlError) return baseUrlError;
 
       const node = await createProviderNode({
         id:
@@ -120,6 +129,7 @@ export async function POST(request) {
         name: name.trim(),
         chatPath: chatPath || null,
         modelsPath: compatMode === "cc" ? null : modelsPath || null,
+        iconUrl: iconUrl?.trim() || null,
         customHeaders: customHeaders || null,
       });
       return NextResponse.json({ node }, { status: 201 });

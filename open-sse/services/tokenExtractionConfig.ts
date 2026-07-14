@@ -189,14 +189,11 @@ const RAW_CONFIGS: TokenExtractionConfig[] = [
   config(
     "kimi-web",
     "Kimi (Moonshot)",
-    "https://kimi.moonshot.cn/",
-    "https://kimi.moonshot.cn",
-    [
-      { type: "cookie", name: "kimi_token", domain: ".kimi.moonshot.cn" },
-      { type: "localStorage", key: "kimi_token" },
-    ],
-    "Log in to Kimi at kimi.moonshot.cn via phone/WeChat. The session token will be extracted.",
-    { cookieDomain: ".kimi.moonshot.cn" }
+    "https://www.kimi.com/",
+    "https://www.kimi.com",
+    [{ type: "cookie", name: "kimi-auth", domain: ".kimi.com" }],
+    "Log in to Kimi at www.kimi.com (international). The kimi-auth JWT cookie will be extracted.",
+    { cookieDomain: ".kimi.com" }
   ),
 
   // ── Blackbox Web ──────────────────────────────────────────
@@ -249,15 +246,19 @@ const RAW_CONFIGS: TokenExtractionConfig[] = [
     }
   ),
 
-  // ── DouBao Web ────────────────────────────────────────────
+  // ── Dola Web ──────────────────────────────────────────────
   config(
     "doubao-web",
-    "DouBao (ByteDance)",
-    "https://www.doubao.com/",
-    "https://www.doubao.com",
-    [{ type: "cookie", name: "sessionid", domain: ".doubao.com" }],
-    "Log in to DouBao at doubao.com with your ByteDance account. The sessionid will be extracted.",
-    { cookieDomain: ".doubao.com" }
+    "Dola (ByteDance)",
+    "https://www.dola.com/",
+    "https://www.dola.com",
+    [
+      { type: "cookie", name: "sessionid", domain: ".dola.com" },
+      { type: "cookie", name: "ttwid", domain: ".dola.com" },
+      { type: "cookie", name: "s_v_web_id", domain: ".dola.com" },
+    ],
+    "Log in to Dola at www.dola.com with your ByteDance account. sessionid, ttwid, and s_v_web_id will be extracted.",
+    { cookieDomain: ".dola.com" }
   ),
 
   // ── T3 Chat Web ───────────────────────────────────────────
@@ -372,6 +373,17 @@ const RAW_CONFIGS: TokenExtractionConfig[] = [
     ],
     "Log in to Manus at manus.im. The session cookie will be extracted.",
     { cookieDomain: ".manus.im" }
+  ),
+
+  // ── Z.ai Web (#4056) ────────────────────────────────────────
+  config(
+    "zai-web",
+    "Z.ai Web (Free)",
+    "https://chat.z.ai/",
+    "https://chat.z.ai",
+    [{ type: "cookie", name: "token", domain: ".z.ai" }],
+    "Log in to Z.ai at chat.z.ai. The session token will be extracted.",
+    { cookieDomain: ".z.ai" }
   ),
 ];
 

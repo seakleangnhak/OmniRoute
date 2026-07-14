@@ -5,6 +5,7 @@ import {
   deleteSemanticCacheBySignature,
   deleteSemanticCacheByModel,
 } from "@/lib/db/semanticCache";
+import { sanitizeErrorMessage } from "@omniroute/open-sse/utils/error";
 
 export async function GET(req: NextRequest) {
   if (!(await isAuthenticated(req))) {
@@ -39,7 +40,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    return NextResponse.json({ error: sanitizeErrorMessage(error) }, { status: 500 });
   }
 }
 
@@ -65,6 +66,6 @@ export async function DELETE(req: NextRequest) {
 
     return NextResponse.json({ error: "Provide signature or model parameter" }, { status: 400 });
   } catch (error) {
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    return NextResponse.json({ error: sanitizeErrorMessage(error) }, { status: 500 });
   }
 }

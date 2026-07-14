@@ -29,6 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import * as comboSteps from "../../src/lib/combos/steps.ts";
 import { getComboModelString } from "../../src/lib/combos/steps.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -37,6 +38,13 @@ const MODEL_SERVICE_SRC = path.resolve(__dirname, "../../src/sse/services/model.
 // ── 1. Reproduce the exact model string from the bug screenshot ───────────────
 
 const FAKE_UUID_NODE_ID = "openai-compatible-responses-d302c75f-f133-48d3-afa1-066e594e0d29";
+
+test("combo step public surface excludes removed type-guard helpers", () => {
+  assert.equal(Object.hasOwn(comboSteps, "isComboRefStep"), false);
+  assert.equal(Object.hasOwn(comboSteps, "isComboModelStep"), false);
+  assert.equal(typeof comboSteps.getComboModelString, "function");
+  assert.equal(typeof comboSteps.getComboStepWeight, "function");
+});
 
 test("#2778 getComboModelString with UUID-prefixed providerId assembles the UUID-prefixed model string", () => {
   // This is what a combo step looks like when the UI stores the internal node id as

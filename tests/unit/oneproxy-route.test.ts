@@ -9,7 +9,7 @@ process.env.DATA_DIR = TEST_DATA_DIR;
 process.env.API_KEY_SECRET = "oneproxy-route-secret";
 
 const core = await import("../../src/lib/db/core.ts");
-const oneproxyRoute = await import("../../src/app/api/settings/oneproxy/route.ts");
+const freeProxySyncRoute = await import("../../src/app/api/settings/free-proxies/sync/route.ts");
 
 function resetStorage() {
   delete process.env.INITIAL_PASSWORD;
@@ -21,28 +21,29 @@ function resetStorage() {
 
 test.beforeEach(() => {
   resetStorage();
+  freeProxySyncRoute._setProvidersForTests([]);
 });
 
 test.after(() => {
+  freeProxySyncRoute._setProvidersForTests(null);
   core.resetDbInstance();
   fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
 });
 
-test("oneproxy sync accepts an empty POST body", async () => {
-  process.env.ONEPROXY_ENABLED = "false";
-  const response = await oneproxyRoute.POST(
-    new Request("http://localhost/api/settings/oneproxy", { method: "POST" })
+test("free proxy sync accepts an empty POST body", async () => {
+  const response = await freeProxySyncRoute.POST(
+    new Request("http://localhost/api/settings/free-proxies/sync", { method: "POST" })
   );
   const body = await response.json();
 
   assert.equal(response.status, 200);
-  assert.equal(body.success, false);
-  assert.equal(body.error, "1proxy integration disabled");
+  assert.equal(body.success, true);
+  assert.deepEqual(body.results, {});
 });
 
-test("oneproxy sync still rejects malformed JSON bodies", async () => {
-  const response = await oneproxyRoute.POST(
-    new Request("http://localhost/api/settings/oneproxy", {
+test("free proxy sync still rejects malformed JSON bodies", async () => {
+  const response = await freeProxySyncRoute.POST(
+    new Request("http://localhost/api/settings/free-proxies/sync", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{bad",
@@ -51,5 +52,5 @@ test("oneproxy sync still rejects malformed JSON bodies", async () => {
   const body = await response.json();
 
   assert.equal(response.status, 400);
-  assert.equal(body.error.message, "Invalid JSON body");
+  assert.equal(body.error.message, "Invalid JSON");
 });

@@ -280,7 +280,3 @@ export function getSqliteQuotaStore(): SqliteQuotaStore {
   }
   return _instance;
 }
-
-export function resetSqliteQuotaStore(): void {
-  _instance = null;
-}

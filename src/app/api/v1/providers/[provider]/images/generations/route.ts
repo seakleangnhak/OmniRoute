@@ -1,14 +1,18 @@
 import { handleImageGeneration } from "@omniroute/open-sse/handlers/imageGeneration.ts";
 import { errorResponse, unavailableResponse } from "@omniroute/open-sse/utils/error.ts";
 import { HTTP_STATUS } from "@omniroute/open-sse/config/constants.ts";
-import { getProviderCredentials, clearRecoveredProviderState } from "@/sse/services/auth";
+import {
+  getProviderCredentialsWithQuotaPreflight,
+  clearRecoveredProviderState,
+  extractApiKey,
+  isValidApiKey,
+} from "@/sse/services/auth";
 import { getImageProvider } from "@omniroute/open-sse/config/imageRegistry.ts";
 import * as log from "@/sse/utils/logger";
 import { toJsonErrorPayload } from "@/shared/utils/upstreamError";
 import { enforceApiKeyPolicy } from "@/shared/utils/apiKeyPolicy";
 import { v1ImageGenerationSchema } from "@/shared/validation/schemas";
 import { isValidationFailure, validateBody } from "@/shared/validation/helpers";
-import { enforceClientApiAuth } from "../../../../_helpers/clientApiAuth";
 
 /**
  * Handle CORS preflight
@@ -26,9 +30,6 @@ export async function OPTIONS() {
  * POST /v1/providers/{provider}/images/generations
  */
 export async function POST(request, { params }) {
-  const authRejection = await enforceClientApiAuth(request);
-  if (authRejection) return authRejection;
-
   const { provider: rawProvider } = await params;
 
   // Verify this is a valid image provider
@@ -67,7 +68,7 @@ export async function POST(request, { params }) {
     );
   }
 
-  const credentials = await getProviderCredentials(rawProvider);
+  const credentials = await getProviderCredentialsWithQuotaPreflight(rawProvider);
   if (!credentials) {
     return errorResponse(
       HTTP_STATUS.BAD_REQUEST,

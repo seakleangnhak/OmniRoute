@@ -69,8 +69,7 @@ export interface UseProviderConnectionsReturn {
   setBatchTestResults: (r: BatchTestResults) => void;
   setConnections: (
     updater:
-      | ConnectionRowConnection[]
-      | ((prev: ConnectionRowConnection[]) => ConnectionRowConnection[])
+      ConnectionRowConnection[] | ((prev: ConnectionRowConnection[]) => ConnectionRowConnection[])
   ) => void;
   setProviderNode: (node: any) => void;
 
@@ -542,7 +541,7 @@ export function useProviderConnections(
       const res = await fetch(`/api/providers/${connectionId}/test`, { method: "POST" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        alert(data.error || t("failedRetestConnection"));
+        notify.error(data.error || t("failedRetestConnection"));
         return;
       }
       await fetchConnections();

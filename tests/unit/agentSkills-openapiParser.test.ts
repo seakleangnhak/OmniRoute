@@ -16,7 +16,9 @@ const { parseOpenapi, getEndpointsForArea } =
  */
 function withFixtureOpenapi(yamlContent: string): { cleanup: () => void } {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "omni-openapi-test-"));
-  const docsDir = path.join(tmpDir, "docs", "reference");
+  // openapiParser reads docs/openapi.yaml (consolidated location since #4781,
+  // previously docs/reference/openapi.yaml) — the fixture must mirror that path.
+  const docsDir = path.join(tmpDir, "docs");
   fs.mkdirSync(docsDir, { recursive: true });
   fs.writeFileSync(path.join(docsDir, "openapi.yaml"), yamlContent, "utf-8");
 

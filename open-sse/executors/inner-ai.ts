@@ -8,7 +8,7 @@ const INNER_AI_PROFILE_URL = "https://platformapi.innerai.com/api/v1/users/profi
 const INNER_AI_MODELS_URL = "https://platformapi.innerai.com/api/v1/ai_models";
 
 const INNER_AI_USER_AGENT =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36";
 
 const MODELS_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 

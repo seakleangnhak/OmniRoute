@@ -96,13 +96,12 @@ test("extractExecutorAliases parses quoted and bare keys from the executors lite
     'import { Foo } from "./foo.ts";',
     "const executors = {",
     "  antigravity: new Foo(),",
-    '  "gemini-cli": new Foo(),',
     "  agy: new Foo(), // Alias",
     '  "amazon-q": new Foo("amazon-q"),',
     "};",
     "export function getExecutor() {}",
   ].join("\n");
-  assert.deepEqual(extractExecutorAliases(src), ["antigravity", "gemini-cli", "agy", "amazon-q"]);
+  assert.deepEqual(extractExecutorAliases(src), ["antigravity", "agy", "amazon-q"]);
 });
 
 test("extractExecutorAliases throws when the executors map cannot be located", () => {

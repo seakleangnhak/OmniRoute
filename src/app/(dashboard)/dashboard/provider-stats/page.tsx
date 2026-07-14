@@ -9,6 +9,7 @@
 
 import { useState, useEffect, useCallback, Fragment } from "react";
 import { Card } from "@/shared/components";
+import { useProviderNodeMap, resolveProviderName } from "@/lib/display/useProviderNodeMap";
 
 interface ProviderStat {
   provider: string;
@@ -62,6 +63,7 @@ function successRate(successful: number, total: number): string {
 }
 
 export default function ProviderStatsPage() {
+  const nodeMap = useProviderNodeMap();
   const [data, setData] = useState<{
     providers: ProviderStat[];
     models: ModelStat[];
@@ -312,7 +314,9 @@ export default function ProviderStatsPage() {
                         )
                       }
                     >
-                      <td className="py-2.5 px-3 font-medium text-text-main">{p.provider}</td>
+                      <td className="py-2.5 px-3 font-medium text-text-main">
+                        {resolveProviderName(p.provider, nodeMap)}
+                      </td>
                       <td className="py-2.5 px-3 text-right tabular-nums text-text-main">
                         {formatNumber(p.totalRequests)}
                       </td>

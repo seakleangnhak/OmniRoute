@@ -36,7 +36,7 @@ class AmeliaClient {
     const res = await fetch(`${BASE_URL}/Amelia/api/init`, {
       headers: {
         "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
         Origin: BASE_URL,
         Referer: `${BASE_URL}/Amelia/ui/chipotle/chat?embed=iframe`,
       },

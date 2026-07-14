@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { resolveEmbeddingSource } from "../../src/lib/memory/embedding/index";
+const embeddingPublicApi = await import("../../src/lib/memory/embedding/index");
 import type { MemorySettingsExtended } from "../../src/shared/schemas/memory";
 
 function makeSettings(overrides: Partial<MemorySettingsExtended> = {}): MemorySettingsExtended {
@@ -17,13 +18,17 @@ function makeSettings(overrides: Partial<MemorySettingsExtended> = {}): MemorySe
 }
 
 describe("resolveEmbeddingSource", () => {
+  it("public surface excludes unused cache invalidation wrapper", () => {
+    assert.equal("invalidateEmbeddingCache" in embeddingPublicApi, false);
+  });
+
   it("auto + no key + no static + no transformers => source null", () => {
     const res = resolveEmbeddingSource(makeSettings({ embeddingSource: "auto" }));
     assert.strictEqual(res.source, null);
     // The reason must indicate the lack of any source — not just be non-empty.
     assert.ok(
-      res.reason.toLowerCase().includes("nenhuma"),
-      `expected reason to mention "nenhuma", got: ${res.reason}`
+      res.reason.toLowerCase().includes("no embedding source"),
+      `expected reason to mention "no embedding source", got: ${res.reason}`
     );
   });
 
@@ -72,8 +77,8 @@ describe("resolveEmbeddingSource", () => {
     assert.strictEqual(res.source, null);
     // The reason must reference the missing key, not just be non-empty.
     assert.ok(
-      res.reason.includes("no_key") || res.reason.includes("configurado"),
-      `expected reason to mention "no_key" or "configurado", got: ${res.reason}`
+      res.reason.includes("no_key") || res.reason.includes("configured"),
+      `expected reason to mention "no_key" or "configured", got: ${res.reason}`
     );
   });
 

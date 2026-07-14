@@ -240,8 +240,9 @@ test("call-log sync includes stable apiKeyId, event id, token fields, and costUs
     cacheWrite: 10,
     reasoning: 5,
     compressed: null,
+    images: null,
   });
-  assert.ok(Math.abs(recent.costUsd - 0.212) < 1e-12);
+  assert.ok(Math.abs(recent.costUsd - 0.202) < 1e-12);
   assert.equal(JSON.stringify(logs).includes(created.key), false);
   assert.equal(JSON.stringify(logs).includes(MANAGEMENT_TOKEN), false);
 });

@@ -82,6 +82,28 @@ describe("LMArena split Supabase SSR cookie (#4271)", () => {
     assert.ok(reconstructed.includes("sidebar=open"), "should keep sidebar");
   });
 
+  it("reconstructs from separately stored providerSpecificData chunk keys", () => {
+    const header = cookieHeaderFor({
+      providerSpecificData: {
+        "arena-auth-prod-v1.0": "base64-eyJABC",
+        "arena-auth-prod-v1.1": "DEF.ghi",
+      },
+    });
+
+    assert.ok(header, "should set a Cookie header");
+    assert.equal(header, "arena-auth-prod-v1=base64-eyJABCDEF.ghi");
+  });
+
+  it("reconstructs from separately stored top-level chunk keys", () => {
+    const header = cookieHeaderFor({
+      "arena-auth-prod-v1.0": "base64-eyJABC",
+      "arena-auth-prod-v1.1": "DEF.ghi",
+    });
+
+    assert.ok(header, "should set a Cookie header");
+    assert.equal(header, "arena-auth-prod-v1=base64-eyJABCDEF.ghi");
+  });
+
   it("treats an empty base with no chunks as no usable session (returned as-is)", () => {
     const raw = "arena-auth-prod-v1=";
     const reconstructed = reconstructLMArenaCookie(raw);

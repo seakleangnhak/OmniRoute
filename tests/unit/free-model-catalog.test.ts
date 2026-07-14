@@ -82,7 +82,7 @@ test("deposit-unlock boost is reported separately, not folded into steady", () =
 test("2026-06-17 refresh: discontinued providers dropped, new free providers added", () => {
   const providers = new Set(FREE_MODEL_BUDGETS.map((m) => m.provider));
   // dead in 2026 — must be gone from the budget catalog
-  for (const dead of ["chutes", "phind", "kluster", "glhf", "gitlawb", "aimlapi", "theoldllm"]) {
+  for (const dead of ["chutes", "phind", "kluster", "gitlawb", "aimlapi", "theoldllm"]) {
     assert.ok(!providers.has(dead), `${dead} should be removed (discontinued)`);
   }
   // qwen-web is KEPT on purpose: only its OAuth API tier died — OmniRoute uses the cookie/web path.

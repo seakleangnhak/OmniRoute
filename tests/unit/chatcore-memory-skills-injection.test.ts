@@ -32,7 +32,7 @@ test("getSkillsProviderForFormat maps GEMINI -> google", () => {
 test("getSkillsProviderForFormat maps OPENAI and any unknown format -> openai (default)", () => {
   assert.equal(getSkillsProviderForFormat(FORMATS.OPENAI), "openai");
   // any other / unknown format falls through to the default branch
-  assert.equal(getSkillsProviderForFormat("gemini-cli"), "openai");
+  assert.equal(getSkillsProviderForFormat("removed-google-cli"), "openai");
   assert.equal(getSkillsProviderForFormat("codex"), "openai");
   assert.equal(getSkillsProviderForFormat("totally-unknown"), "openai");
   assert.equal(getSkillsProviderForFormat(""), "openai");

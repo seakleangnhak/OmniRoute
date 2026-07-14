@@ -765,7 +765,7 @@ test("Auth: JWT auth sends Authorization Bearer header", async () => {
 
 // ─── Test: Model mapping ────────────────────────────────────────────────────
 
-test("Model mapping: pplx-gpt sends correct internal preference", async () => {
+test("Model mapping: pplx-gpt sends current GPT-5.5 internal preference", async () => {
   let capturedBody = null;
   const original = globalThis.fetch;
   globalThis.fetch = async (url, opts) => {
@@ -797,8 +797,8 @@ test("Model mapping: pplx-gpt sends correct internal preference", async () => {
       log: null,
     });
 
-    assert.equal(capturedBody.params.model_preference, "gpt54");
-    assert.equal(capturedBody.params.mode, "copilot");
+    assert.equal(capturedBody.params.model_preference, "gpt55");
+    assert.equal(capturedBody.params.mode, "search");
   } finally {
     globalThis.fetch = original;
   }
@@ -840,7 +840,8 @@ test("Model mapping: thinking mode uses thinking variant", async () => {
       log: null,
     });
 
-    assert.equal(capturedBody.params.model_preference, "claude46sonnetthinking");
+    assert.equal(capturedBody.params.model_preference, "claude50sonnetthinking");
+    assert.equal(capturedBody.params.mode, "search");
   } finally {
     globalThis.fetch = original;
   }
@@ -853,17 +854,31 @@ test("Provider registry: perplexity-web is registered with correct models", asyn
 
   const models = PROVIDER_MODELS["pplx-web"];
   assert.ok(models, "pplx-web should be in PROVIDER_MODELS");
-  assert.ok(models.length === 8, `Expected 8 models, got ${models.length}`);
+  assert.ok(models.length === 10, `Expected 10 models, got ${models.length}`);
 
   const modelIds = models.map((m) => m.id);
   assert.ok(modelIds.includes("pplx-auto"));
   assert.ok(modelIds.includes("pplx-gpt"));
+  assert.ok(modelIds.includes("pplx-gpt-5.4"));
   assert.ok(modelIds.includes("pplx-sonnet"));
   assert.ok(modelIds.includes("pplx-opus"));
   assert.ok(modelIds.includes("pplx-gemini"));
   assert.ok(modelIds.includes("pplx-nemotron"));
   assert.ok(modelIds.includes("pplx-sonar"));
   assert.ok(modelIds.includes("pplx-kimi"));
+  assert.ok(modelIds.includes("pplx-glm"));
+});
+
+test("Provider registry: every advertised perplexity-web model has an explicit internal mapping", async () => {
+  const { PROVIDER_MODELS } = await import("../../open-sse/config/providerModels.ts");
+  const { MODEL_MAP } = await import("../../open-sse/executors/perplexity-web/protocol.ts");
+
+  const missing = PROVIDER_MODELS["pplx-web"].filter((model) => !MODEL_MAP[model.id]);
+  assert.deepEqual(
+    missing.map((model) => model.id),
+    [],
+    "all advertised Perplexity Web models should map to an explicit model_preference"
+  );
 });
 
 // ─── Test: Fallback text field ──────────────────────────────────────────────

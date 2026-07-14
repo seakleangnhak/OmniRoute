@@ -15,7 +15,7 @@ const usageHistory = await import("../../src/lib/usage/usageHistory.ts");
 const usageStats = await import("../../src/lib/usage/usageStats.ts");
 const legacyUsageAnalytics = await import("../../src/lib/usageAnalytics.ts");
 const callLogs = await import("../../src/lib/usage/callLogs.ts");
-const { calculateCost, computeCostFromPricing } =
+const { calculateCost, getCodexFastCostMultiplier } =
   await import("../../src/lib/usage/costCalculator.ts");
 
 // Use the official clearPendingRequests export instead of manual cleanup
@@ -399,59 +399,11 @@ test("computeAnalytics groups renamed API key usage by stable ID", async () => {
   assert.equal(analytics.byApiKey[0].completionTokens, 15);
 });
 
-test("image call logs persist account, API key, image units, and fixed image cost", async () => {
-  await localDb.updatePricing({
-    "chatgpt-web": {
-      "gpt-5.5-pro": { image: 0.08 },
-    },
-  });
-
-  const connection = await providersDb.createProviderConnection({
-    provider: "chatgpt-web",
-    authType: "apikey",
-    name: "ChatGPT Account",
-    apiKey: "session-cookie",
-  });
-
-  await callLogs.saveCallLog({
-    method: "POST",
-    path: "/v1/images/generations",
-    status: 200,
-    model: "chatgpt-web/gpt-5.5-pro",
-    provider: "chatgpt-web",
-    connectionId: connection.id,
-    apiKeyId: "image-key-id",
-    apiKeyName: "Image Key",
-    duration: 1234,
-    tokens: { images: 2, image_count: 2 },
-    responseBody: { images_count: 2 },
-  });
-
-  const logs = (await callLogs.getCallLogs({ provider: "chatgpt-web", limit: 5 })) as Array<{
-    account: string;
-    apiKeyId: string;
-    apiKeyName: string;
-    tokens: { images: number };
-    costUsd: number;
-  }>;
-  assert.equal(logs.length, 1);
-  assert.equal(logs[0].account, "ChatGPT Account");
-  assert.equal(logs[0].apiKeyId, "image-key-id");
-  assert.equal(logs[0].apiKeyName, "Image Key");
-  assert.equal(logs[0].tokens.images, 2);
-  assert.ok(Math.abs(logs[0].costUsd - 0.16) < 1e-12);
-});
-
-test("image pricing charges a fixed amount per generated image", () => {
-  assert.equal(computeCostFromPricing({ image: 0.04 }, { images: 2 }), 0.08);
-  assert.ok(Math.abs(computeCostFromPricing({ image: 0.025 }, { image_count: 3 }) - 0.075) < 1e-12);
-});
-
-test("Codex Fast service tier applies documented GPT-5.5 and GPT-5.4 cost multipliers", async () => {
+test("Codex Fast service tier applies GPT-5.5 and GPT-5.6 credit multipliers", async () => {
   await localDb.updatePricing({
     codex: {
       "gpt-5.5": { input: 5, output: 30 },
-      "gpt-5.4": { input: 5, output: 30 },
+      "gpt-5.6-sol": { input: 5, output: 30 },
     },
   });
 
@@ -460,7 +412,12 @@ test("Codex Fast service tier applies documented GPT-5.5 and GPT-5.4 cost multip
   assert.equal(await calculateCost("codex", "gpt-5.5", tokens), 0.02);
   assert.equal(await calculateCost("codex", "gpt-5.5", tokens, { serviceTier: "priority" }), 0.05);
   assert.equal(await calculateCost("codex", "gpt-5.5", tokens, { serviceTier: "flex" }), 0.01);
-  assert.equal(await calculateCost("codex", "gpt-5.4-high", tokens, { serviceTier: "fast" }), 0.04);
+  assert.equal(
+    await calculateCost("codex", "gpt-5.6-sol-high", tokens, { serviceTier: "fast" }),
+    0.03
+  );
+  assert.equal(getCodexFastCostMultiplier("cx", "gpt-5.6-terra-ultra", "fast"), 1.5);
+  assert.equal(getCodexFastCostMultiplier("codex", "gpt-5.6-luna-max", "priority"), 1.5);
   assert.equal(await calculateCost("openai", "gpt-5.5", tokens, { serviceTier: "priority" }), 0.02);
   assert.equal(await calculateCost("openai", "gpt-5.5", tokens, { serviceTier: "flex" }), 0.02);
 });

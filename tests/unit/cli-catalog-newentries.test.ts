@@ -131,14 +131,6 @@ test("forge was added/confirmed: category=code, acpSpawnable=true, baseUrlSuppor
   assert.equal(entry.baseUrlSupport, "full");
 });
 
-test("gemini-cli was added: category=code, acpSpawnable=true, defaultCommand=gemini", () => {
-  const entry = CLI_TOOLS["gemini-cli"];
-  assert.ok(entry, "gemini-cli entry must exist");
-  assert.equal(entry.category, "code");
-  assert.equal(entry.acpSpawnable, true);
-  assert.equal(entry.defaultCommand, "gemini");
-});
-
 test("cursor-cli was added: category=code, acpSpawnable=true", () => {
   const entry = CLI_TOOLS["cursor-cli"];
   assert.ok(entry, "cursor-cli entry must exist");

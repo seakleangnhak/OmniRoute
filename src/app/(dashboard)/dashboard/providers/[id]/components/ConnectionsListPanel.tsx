@@ -31,8 +31,6 @@ type ConnectionsListPanelProps = {
   exportingCodexAuthId: string | null;
   applyingClaudeAuthId: string | null;
   exportingClaudeAuthId: string | null;
-  applyingGeminiAuthId: string | null;
-  exportingGeminiAuthId: string | null;
   emailsVisible: boolean;
   // Setters
   setSelectedIds: React.Dispatch<React.SetStateAction<Set<string>>>;
@@ -65,8 +63,6 @@ type ConnectionsListPanelProps = {
   onExportCodexAuthFile: (connId: string) => void;
   onOpenApplyClaudeModal: (connId: string) => void;
   onExportClaudeAuthFile: (connId: string) => void;
-  onOpenApplyGeminiModal: (connId: string) => void;
-  onExportGeminiAuthFile: (connId: string) => void;
   gateConnectionFlow: (callback: () => void) => void;
   t: any; // ProviderMessageTranslator
 };
@@ -94,8 +90,6 @@ export default function ConnectionsListPanel({
   exportingCodexAuthId,
   applyingClaudeAuthId,
   exportingClaudeAuthId,
-  applyingGeminiAuthId,
-  exportingGeminiAuthId,
   emailsVisible,
   setSelectedIds,
   setPage,
@@ -125,8 +119,6 @@ export default function ConnectionsListPanel({
   onExportCodexAuthFile,
   onOpenApplyClaudeModal,
   onExportClaudeAuthFile,
-  onOpenApplyGeminiModal,
-  onExportGeminiAuthFile,
   gateConnectionFlow,
   t,
 }: ConnectionsListPanelProps) {
@@ -343,7 +335,6 @@ export default function ConnectionsListPanel({
                   handleToggleClaudeExtraUsage(conn.id, enabled)
                 }
                 isCodex={providerId === "codex"}
-                isGeminiCli={providerId === "gemini-cli"}
                 isCcCompatible={isCcCompatible}
                 cliproxyapiEnabled={cpaProviderEnabled}
                 onToggleCliproxyapiMode={(enabled) => handleToggleCliproxyapiMode(conn.id, enabled)}
@@ -380,14 +371,6 @@ export default function ConnectionsListPanel({
                   providerId === "claude" ? () => onExportClaudeAuthFile(conn.id) : undefined
                 }
                 isExportingClaudeAuthFile={exportingClaudeAuthId === conn.id}
-                onApplyGeminiAuthLocal={
-                  providerId === "gemini-cli" ? () => onOpenApplyGeminiModal(conn.id) : undefined
-                }
-                isApplyingGeminiAuthLocal={applyingGeminiAuthId === conn.id}
-                onExportGeminiAuthFile={
-                  providerId === "gemini-cli" ? () => onExportGeminiAuthFile(conn.id) : undefined
-                }
-                isExportingGeminiAuthFile={exportingGeminiAuthId === conn.id}
                 onProxy={() =>
                   onSetProxyTarget({
                     level: "key",
@@ -519,7 +502,6 @@ export default function ConnectionsListPanel({
                       handleToggleClaudeExtraUsage(conn.id, enabled)
                     }
                     isCodex={providerId === "codex"}
-                    isGeminiCli={providerId === "gemini-cli"}
                     isCcCompatible={isCcCompatible}
                     cliproxyapiEnabled={cpaProviderEnabled}
                     onToggleCliproxyapiMode={(enabled) =>
@@ -558,18 +540,6 @@ export default function ConnectionsListPanel({
                       providerId === "claude" ? () => onExportClaudeAuthFile(conn.id) : undefined
                     }
                     isExportingClaudeAuthFile={exportingClaudeAuthId === conn.id}
-                    onApplyGeminiAuthLocal={
-                      providerId === "gemini-cli"
-                        ? () => onOpenApplyGeminiModal(conn.id)
-                        : undefined
-                    }
-                    isApplyingGeminiAuthLocal={applyingGeminiAuthId === conn.id}
-                    onExportGeminiAuthFile={
-                      providerId === "gemini-cli"
-                        ? () => onExportGeminiAuthFile(conn.id)
-                        : undefined
-                    }
-                    isExportingGeminiAuthFile={exportingGeminiAuthId === conn.id}
                     onProxy={() =>
                       onSetProxyTarget({
                         level: "key",

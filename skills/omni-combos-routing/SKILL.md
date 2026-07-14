@@ -110,7 +110,7 @@ curl -X DELETE https://localhost:20128/api/fallback/chains \
 
 ## Payloads
 
-See the full OpenAPI specification at `GET /api/openapi/spec` or `docs/reference/openapi.yaml` for detailed request/response schemas.
+See the full OpenAPI specification at `GET /api/openapi/spec` or `docs/openapi.yaml` for detailed request/response schemas.
 
 <!-- skill:custom-start -->
 <!-- Migrated from skills/omniroute-routing/SKILL.md (preserved curated content) -->
@@ -239,4 +239,5 @@ omniroute_best_combo_for_task → get recommendation by task type
 - `404 combo not found` → check `id` from `/api/combos`
 - `400 invalid strategy` → use one of the 14 strategies above
 - `409 name conflict` → combo name already exists
+
 <!-- skill:custom-end -->

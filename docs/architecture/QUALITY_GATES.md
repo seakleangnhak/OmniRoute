@@ -13,7 +13,7 @@ in `CLAUDE.md`.
 
 ---
 
-## Gate Inventory (~48 scripts)
+## Gate Inventory (~50 scripts)
 
 Scripts live under `scripts/check/` (policy gates) and `scripts/quality/` (ratchet engine).
 The CI source of truth is `.github/workflows/ci.yml`.
@@ -34,7 +34,7 @@ Runs on every PR to `main`. Blocks merge on failure.
 | `audit:deps`                   | `npm audit` (root + electron) — no high/critical advisories (overlaps osv `check:vuln-ratchet`; see Rationalization Backlog)                                       | Yes                                      |
 | `check:lockfile`               | `package-lock.json` integrity — https registry, integrity hashes, no host overrides                                                                                | Yes                                      |
 | `check:licenses`               | SPDX license allowlist for production dependencies                                                                                                                 | Yes                                      |
-| `check:tracked-artifacts`      | No build artifacts / committed `node_modules` symlinks (also runs in husky pre-push)                                                                               | Yes                                      |
+| `check:tracked-artifacts`      | No build artifacts / committed `node_modules` symlinks (also runs in husky pre-commit; pre-push is intentionally light — #6716)                                    | Yes                                      |
 | `check:file-size`              | No source file exceeds the per-extension cap (ratchet: frozen large files in `frozen` list)                                                                        | Yes                                      |
 | `check:error-helper`           | Error responses in executors/handlers use `buildErrorBody()` / `sanitizeErrorMessage()` (Hard Rule #12)                                                            | Yes                                      |
 | `check:migration-numbering`    | Migration SQL files are sequentially numbered, no gaps or duplicates                                                                                               | Yes                                      |
@@ -127,19 +127,19 @@ Runs after `build`. Blocks merge on failure.
 
 | Suite            | Validates                                               | Blocking                                                                   |
 | ---------------- | ------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `test:vitest`    | MCP server (87 tools), autoCombo, cache — vitest runner | Yes                                                                        |
+| `test:vitest`    | MCP server (94 tools), autoCombo, cache — vitest runner | Yes                                                                        |
 | `test:vitest:ui` | UI component tests — vitest runner                      | **Advisory** (`continue-on-error: true`) — failing until Fase 6A UI triage |
 
 ### Nightly workflows (scheduled, advisory)
 
 These run on a cron schedule (and `workflow_dispatch`), never on PRs. All are advisory.
 
-| Workflow               | Validates                                                                                                                                                     | Blocking     |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
-| `nightly-property`     | fast-check property tests with a random seed + high run count                                                                                                 | **Advisory** |
-| `nightly-resilience`   | heap-growth gate, chaos fault-injection, k6 load/soak                                                                                                         | **Advisory** |
-| `nightly-llm-security` | promptfoo injection guard (block mode) + garak probes (skipped without a provider secret)                                                                     | **Advisory** |
-| `nightly-schemathesis` | OpenAPI contract fuzzing (schemathesis) against a live OmniRoute using `docs/reference/openapi.yaml` — surfaces spec violations / unhandled 500s (Fase 8 B.4) | **Advisory** |
+| Workflow               | Validates                                                                                                                                           | Blocking     |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| `nightly-property`     | fast-check property tests with a random seed + high run count                                                                                       | **Advisory** |
+| `nightly-resilience`   | heap-growth gate, chaos fault-injection, k6 load/soak                                                                                               | **Advisory** |
+| `nightly-llm-security` | promptfoo injection guard (block mode) + garak probes (skipped without a provider secret)                                                           | **Advisory** |
+| `nightly-schemathesis` | OpenAPI contract fuzzing (schemathesis) against a live OmniRoute using `docs/openapi.yaml` — surfaces spec violations / unhandled 500s (Fase 8 B.4) | **Advisory** |
 
 ---
 
@@ -226,7 +226,7 @@ allowlist is a false sense of quality.
 ## Agent tooling: LSP-in-the-loop (opt-in)
 
 Beyond the CI gates, OmniRoute ships an **opt-in** `agent-lsp` scaffold
-([`.mcp.json.example`](../../.mcp.json.example), Fase 7 Task 15). Copy it to `.mcp.json`
+(a project-level `.mcp.json`, Fase 7 Task 15). Create `.mcp.json`
 to expose a TypeScript language server to coding agents, so they resolve symbols /
 diagnostics **before** writing code — a compile-before-claim companion to
 `typecheck:core` that cuts "invented symbol" errors at the source. It is intentionally
@@ -259,9 +259,10 @@ several "obvious" merges turned out to hide debt and are **not** clean drop-ins.
 - **`check:docs-sync` runs twice** — standalone in the `lint` job and again inside `check:docs-all` (`docs-sync-strict`) and the husky pre-commit hook. ✅ **DONE** — standalone `lint` invocation removed.
 - **CVE scanning** — ❌ **NOT a clean merge.** `audit:deps` hard-fails on any high/critical CVE; `check:vuln-ratchet` (osv) only fails on a _regression_ vs baseline (currently 1 MODERATE). Different semantics — dropping `audit:deps` would lose the absolute high/critical gate. Keep both.
 - **Cycle detection** — ❌ **NOT a clean merge.** `check:circular-deps` (dpdm) reports **91 cycles** (that is why it is advisory); it cannot be promoted to blocking without first resolving them, and it has a broader scope than the green, curated `check:cycles`. Keep `check:cycles` blocking; resolving the 91 dpdm cycles is its own backlog.
-- **Complexity** — ⏳ valid but real surgery. `check:complexity` (core ESLint) + `check:cognitive-complexity` (sonarjs) are two ESLint passes over `src` + `open-sse`; merging into one config emitting both metrics needs careful ratchet re-wiring. Deferred.
-- **`/api` anti-hallucination** — ⏳ valid but script surgery. `check:openapi-routes` (spec→route) + `check:docs-symbols` (prose→route) share resolution logic; collapsing them is a non-trivial script change. Deferred.
+- **Complexity** — ✅ **DONE** (`check:complexity-ratchets` / `eslint.complexity-ratchets.config.mjs`): one ESLint walk, counts by ruleId so cyclomatic+max-lines and cognitive baselines stay independent; individual `check:complexity` / `check:cognitive-complexity` remain for local `--update`.
+- **`/api` anti-hallucination** — ✅ **DONE** (`check:api-docs-refs` + `scripts/check/lib/apiRoutes.mjs`): one FS inventory of `src/app/api`, openapi-routes + docs-symbols still report independently; individuals remain for local runs.
 - **`check:node-runtime` runs in 11 jobs** — ⚠️ **low ROI.** Each is a separate runner and the check is <1s; total savings ~10s, against losing a cheap per-job guard. Not worth the churn.
+- **`typecheck:noimplicit:core` on CI lint** — ✅ **removed from lint job** (was advisory `continue-on-error`); blocking type surface is `typecheck:core` + `check:type-coverage`. Local script retained.
 
 ### Flip / decide (operator policy)
 

@@ -15,6 +15,10 @@ import { stripIpv6Brackets } from "@omniroute/open-sse/utils/proxyFamily";
 // Configurable via env vars
 const FAST_FAIL_TIMEOUT_MS = parseInt(process.env.PROXY_FAST_FAIL_TIMEOUT_MS ?? "2000", 10);
 const HEALTH_CACHE_TTL_MS = parseInt(process.env.PROXY_HEALTH_CACHE_TTL_MS ?? "30000", 10);
+const UNHEALTHY_CACHE_TTL_MS = parseInt(
+  process.env.PROXY_HEALTH_UNHEALTHY_CACHE_TTL_MS ?? "2000",
+  10
+);
 
 interface ProxyHealthEntry {
   healthy: boolean;
@@ -22,57 +26,12 @@ interface ProxyHealthEntry {
   ttlMs: number;
 }
 
-export interface ProxyHealthTarget {
-  host: string;
-  port: number;
-}
-
 // In-memory cache: proxyUrl → health entry
 const proxyHealthCache = new Map<string, ProxyHealthEntry>();
+const proxyHealthInflight = new Map<string, Promise<boolean>>();
 
-/**
- * Preserve explicit default ports before URL parsing. URL parsing clears
- * http://host:80 to an empty port, but an explicit proxy :80 must remain 80.
- */
-function extractExplicitPort(proxyUrl: string): string | null {
-  try {
-    const schemeIndex = proxyUrl.indexOf("://");
-    if (schemeIndex === -1) return null;
-    const authorityStart = schemeIndex + 3;
-    const authorityEnd = proxyUrl.indexOf("/", authorityStart);
-    const authority =
-      authorityEnd === -1
-        ? proxyUrl.slice(authorityStart)
-        : proxyUrl.slice(authorityStart, authorityEnd);
-    const lastColon = authority.lastIndexOf(":");
-    const atSign = authority.lastIndexOf("@");
-    if (lastColon !== -1 && lastColon > atSign) {
-      const portStr = authority.slice(lastColon + 1);
-      if (/^\d+$/.test(portStr)) {
-        const port = Number(portStr);
-        if (Number.isInteger(port) && port >= 1 && port <= 65535) return String(port);
-      }
-    }
-  } catch {}
-  return null;
-}
-
-export function resolveProxyHealthTarget(proxyUrl: string): ProxyHealthTarget | null {
-  const explicitPort = extractExplicitPort(proxyUrl);
-
-  let url: URL;
-  try {
-    url = new URL(proxyUrl);
-  } catch {
-    return null;
-  }
-
-  const host = url.hostname;
-  const port = parseInt(explicitPort || url.port || defaultPortForScheme(url.protocol), 10);
-
-  if (!host || isNaN(port)) return null;
-  return { host, port };
-}
+type TcpCheck = (host: string, port: number, timeoutMs: number) => Promise<boolean>;
+let tcpCheckImpl: TcpCheck = tcpCheck;
 
 /**
  * T14: Perform a fast TCP check to see if a proxy host:port is reachable.
@@ -93,8 +52,11 @@ export async function isProxyReachable(
     return cached.healthy;
   }
 
-  const target = resolveProxyHealthTarget(proxyUrl);
-  if (!target) {
+  let url: URL;
+  try {
+    url = new URL(proxyUrl);
+  } catch {
+    // Malformed URL — treat as unreachable
     proxyHealthCache.set(proxyUrl, {
       healthy: false,
       checkedAt: Date.now(),
@@ -103,9 +65,40 @@ export async function isProxyReachable(
     return false;
   }
 
-  const healthy = await tcpCheck(stripIpv6Brackets(target.host), target.port, timeoutMs);
-  proxyHealthCache.set(proxyUrl, { healthy, checkedAt: Date.now(), ttlMs: cacheTtlMs });
-  return healthy;
+  const host = stripIpv6Brackets(url.hostname);
+  const port = parseInt(url.port || defaultPortForScheme(url.protocol), 10);
+
+  if (!host || isNaN(port)) {
+    proxyHealthCache.set(proxyUrl, {
+      healthy: false,
+      checkedAt: Date.now(),
+      ttlMs: cacheTtlMs,
+    });
+    return false;
+  }
+
+  const existingProbe = proxyHealthInflight.get(proxyUrl);
+  if (existingProbe) {
+    return existingProbe;
+  }
+
+  const probe = tcpCheckImpl(host, port, timeoutMs).then((healthy) => {
+    proxyHealthCache.set(proxyUrl, {
+      healthy,
+      checkedAt: Date.now(),
+      ttlMs: healthy ? cacheTtlMs : Math.min(cacheTtlMs, UNHEALTHY_CACHE_TTL_MS),
+    });
+    return healthy;
+  });
+
+  proxyHealthInflight.set(proxyUrl, probe);
+  try {
+    return await probe;
+  } finally {
+    if (proxyHealthInflight.get(proxyUrl) === probe) {
+      proxyHealthInflight.delete(proxyUrl);
+    }
+  }
 }
 
 /**
@@ -124,6 +117,7 @@ export function getCachedProxyHealth(proxyUrl: string): boolean | null {
  */
 export function invalidateProxyHealth(proxyUrl: string): void {
   proxyHealthCache.delete(proxyUrl);
+  proxyHealthInflight.delete(proxyUrl);
 }
 
 /**
@@ -172,4 +166,8 @@ function tcpCheck(host: string, port: number, timeoutMs: number): Promise<boolea
       resolve(false);
     });
   });
+}
+
+export function __setProxyHealthTcpCheckForTesting(check: TcpCheck | null): void {
+  tcpCheckImpl = check ?? tcpCheck;
 }

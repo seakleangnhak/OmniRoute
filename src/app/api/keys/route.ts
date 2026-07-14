@@ -60,24 +60,60 @@ export async function POST(request) {
     if (isValidationFailure(validation)) {
       return NextResponse.json({ error: validation.error }, { status: 400 });
     }
-    const { name, noLog, scopes } = validation.data;
+    const {
+      name,
+      noLog,
+      scopes,
+      allowUsageCommand,
+      usageLimitEnabled,
+      dailyUsageLimitUsd,
+      weeklyUsageLimitUsd,
+      chaosModeEnabled,
+    } = validation.data;
 
     // Always get machineId from server
     const machineId = await getConsistentMachineId();
     const normalizedScopes = normalizeSelfServiceScopesForCreate(scopes);
     const apiKey = await createApiKey(name, machineId, normalizedScopes);
-    if (noLog === true) {
-      await updateApiKeyPermissions(apiKey.id, { noLog: true });
+    if (
+      noLog === true ||
+      allowUsageCommand === true ||
+      usageLimitEnabled === true ||
+      dailyUsageLimitUsd !== undefined ||
+      weeklyUsageLimitUsd !== undefined ||
+      chaosModeEnabled === true
+    ) {
+      await updateApiKeyPermissions(apiKey.id, {
+        ...(noLog === true && { noLog: true }),
+        ...(allowUsageCommand === true && { allowUsageCommand: true }),
+        ...(usageLimitEnabled === true && { usageLimitEnabled: true }),
+        ...(dailyUsageLimitUsd !== undefined && { dailyUsageLimitUsd }),
+        ...(weeklyUsageLimitUsd !== undefined && { weeklyUsageLimitUsd }),
+        ...(chaosModeEnabled === true && { chaosModeEnabled: true }),
+      });
     }
 
-    // Auto sync to Cloud if enabled
-    await syncKeysToCloudIfEnabled();
+    // Auto sync to Cloud if enabled — fire-and-forget. Cloud sync is a
+    // background side-effect, not part of the key-creation contract, and it
+    // performs an outbound network call. Awaiting it here blocked the HTTP
+    // response on a slow/unreachable Cloud endpoint (e.g. a fresh/offline
+    // install with a misconfigured or unreachable CLOUD_URL): the request
+    // would hang until the fetch settled or timed out (#6570). Errors inside
+    // syncKeysToCloudIfEnabled() are already caught and logged internally, so
+    // this is safe to leave unawaited.
+    void syncKeysToCloudIfEnabled();
 
     return NextResponse.json(
       toSafeApiKeyMetadata(
         {
           ...apiKey,
           noLog: noLog === true,
+          allowUsageCommand: allowUsageCommand === true,
+          usageLimitEnabled: usageLimitEnabled === true,
+          dailyUsageLimitUsd: dailyUsageLimitUsd ?? null,
+          weeklyUsageLimitUsd: weeklyUsageLimitUsd ?? null,
+          chaosModeEnabled: chaosModeEnabled === true,
+          streamDefaultMode: "legacy",
           isActive: true,
           status: "active",
         },

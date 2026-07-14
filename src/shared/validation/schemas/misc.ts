@@ -23,7 +23,14 @@ export function isHttpUrl(value: string): boolean {
   }
 }
 
-export const CODEX_REASONING_EFFORT_VALUES = new Set(["none", "low", "medium", "high", "xhigh"]);
+export const CODEX_REASONING_EFFORT_VALUES = new Set([
+  "none",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
 
 export const REQUEST_DEFAULT_SERVICE_TIER_VALUES = new Set(["default", "priority", "fast", "flex"]);
 

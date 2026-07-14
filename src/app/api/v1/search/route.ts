@@ -1,5 +1,9 @@
 import { handleSearch } from "@omniroute/open-sse/handlers/search.ts";
-import { getProviderCredentials } from "@/sse/services/auth";
+import {
+  getProviderCredentialsWithQuotaPreflight,
+  extractApiKey,
+  isValidApiKey,
+} from "@/sse/services/auth";
 import {
   getAllSearchProviders,
   getSearchProvider,
@@ -26,7 +30,6 @@ import {
   rateLimitedProviderResponse,
   type RateLimitedCredentials,
 } from "@/app/api/v1/_shared/rateLimit";
-import { enforceClientApiAuth } from "../_helpers/clientApiAuth";
 import { withInjectionGuard } from "@/middleware/promptInjectionGuard";
 
 const CORS_HEADERS = {
@@ -65,13 +68,15 @@ type SearchCredentials = Record<string, any>;
 type SearchCredentialLookup = SearchCredentials | RateLimitedCredentials | null;
 
 async function resolveSearchCredentials(providerId: string): Promise<SearchCredentialLookup> {
-  const credentials = await getProviderCredentials(providerId).catch(() => null);
+  const credentials = await getProviderCredentialsWithQuotaPreflight(providerId).catch(() => null);
   if (credentials && !isAllRateLimitedCredentials(credentials)) return credentials;
 
   const fallbackId = SEARCH_CREDENTIAL_FALLBACKS[providerId];
   if (!fallbackId) return credentials;
 
-  const fallbackCredentials = await getProviderCredentials(fallbackId).catch(() => null);
+  const fallbackCredentials = await getProviderCredentialsWithQuotaPreflight(fallbackId).catch(
+    () => null
+  );
   if (fallbackCredentials && !isAllRateLimitedCredentials(fallbackCredentials)) {
     return fallbackCredentials;
   }
@@ -103,9 +108,7 @@ function buildDomainFilter(filters?: {
 /**
  * POST /v1/search — execute a web search
  */
-async function postHandler(request: Request) {
-  const authRejection = await enforceClientApiAuth(request);
-  if (authRejection) return authRejection;
+async function postHandler(request: Request, context: unknown) {
   let rawBody: unknown;
   try {
     rawBody = await request.json();

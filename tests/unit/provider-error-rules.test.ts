@@ -63,6 +63,26 @@ test("S2: Minimax 429 with x-model-quota-remaining header → QUOTA_EXHAUSTED wi
   );
 });
 
+test("S2b: provider error rules match canonical-cased plain header records", async () => {
+  const { getProviderErrorRuleMatch } = await import("../../open-sse/config/providerErrorRules.ts");
+
+  const opencodeMatch = getProviderErrorRuleMatch("OpenCode", 429, {
+    "X-RateLimit-Remaining-Requests": "0",
+  });
+  assert.ok(opencodeMatch, "Opencode quota headers must be case-insensitive");
+  assert.equal(opencodeMatch.reason, "quota_exhausted");
+  // #6061: opencode quota is per-account, so the lock scopes to the CONNECTION
+  // (locking the whole provider would disable every other account's connection).
+  assert.equal(opencodeMatch.scope, "connection");
+
+  const minimaxMatch = getProviderErrorRuleMatch("Minimax", 429, {
+    "X-Model-Quota-Remaining": "haiku=0,sonnet=42",
+  });
+  assert.ok(minimaxMatch, "Minimax quota headers must be case-insensitive");
+  assert.equal(minimaxMatch.reason, "quota_exhausted");
+  assert.equal(minimaxMatch.scope, "model");
+});
+
 test("S3: Regression — provider with no rules falls back to global ERROR_RULES unchanged", () => {
   // A provider not in the registry (e.g. "unknown-vendor") must NOT cause
   // classifyError to crash or return a different result. It must behave

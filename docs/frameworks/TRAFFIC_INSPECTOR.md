@@ -1,7 +1,7 @@
 ---
 title: "Traffic Inspector"
-version: 3.8.31
-lastUpdated: 2026-06-20
+version: 3.8.40
+lastUpdated: 2026-06-28
 ---
 
 # Traffic Inspector
@@ -174,7 +174,7 @@ This is a substantial subsystem with its own dedicated operator guide — see **
 | Control          | Action                                                                |
 | ---------------- | --------------------------------------------------------------------- |
 | ⎉ Pause          | Stops rendering new requests; "X new" badge accumulates               |
-| 🗑 Clear         | Clears the UI list (server buffer is not affected)                    |
+| 🗑 Clear          | Clears the UI list (server buffer is not affected)                    |
 | ⬇ Export .har    | Downloads current filtered list as HAR file                           |
 | ● Record session | Starts a named recording session                                      |
 | Profile selector | LLM only / Custom hosts / All                                         |
@@ -488,4 +488,4 @@ Base path: `/api/tools/traffic-inspector/`
 | ------ | ------------------ | ----------------------------------------------------------------------------------------------------------------- |
 | POST   | `/internal/ingest` | Accepts intercepted request from `server.cjs` passthrough path; requires `INSPECTOR_INTERNAL_INGEST_TOKEN` header |
 
-Full OpenAPI schemas: `docs/reference/openapi.yaml` → tag `Traffic Inspector`.
+Full OpenAPI schemas: `docs/openapi.yaml` → tag `Traffic Inspector`.

@@ -285,7 +285,7 @@ function main() {
   // ARCHITECTURE.md still says "177 providers / 37 MCP tools" while the wiki cover was
   // hand-patched to 226/87). Overwriting from a staler source would REGRESS the wiki, so
   // by default we only ADD missing pages and sync Home counts. Pass --update-existing
-  // once the docs sources are regenerated (see docs/ops/DOCUMENTATION_AUDIT_REPORT.md).
+  // once the docs sources are regenerated.
   const updates = updateExisting ? plan.update : [];
   const total = updates.length + plan.add.length + (plan.countsChanged ? 1 : 0);
   console.log(`[wiki-sync] counts: ${JSON.stringify(counts)}`);

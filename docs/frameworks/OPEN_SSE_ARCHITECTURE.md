@@ -1,14 +1,14 @@
 ---
 title: "open-sse Architecture"
-version: 3.8.16
-lastUpdated: 2026-06-08
+version: 3.8.40
+lastUpdated: 2026-06-28
 ---
 
 # open-sse Architecture
 
-> **TL;DR**: `open-sse/` is the core streaming engine that powers every LLM request in OmniRoute. It contains ~406 files implementing the request pipeline, executors, services, MCP server, and translation layer. This guide explains how the pieces fit together.
+> **TL;DR**: `open-sse/` is the core streaming engine that powers every LLM request in OmniRoute. It contains ~900 files implementing the request pipeline, executors, services, MCP server, and translation layer. This guide explains how the pieces fit together.
 
-**Source:** `open-sse/` (workspace package, ~143K LOC across 406 files)
+**Source:** `open-sse/` (workspace package, ~900 files; 811 `.ts`)
 
 ---
 
@@ -36,11 +36,11 @@ open-sse/
 ├── types.d.ts            # Public type exports
 ├── package.json          # @omniroute/open-sse
 ├── config/               # Provider configs, constants, registries
-├── executors/            # Per-provider HTTP executors (59 files)
+├── executors/            # Per-provider HTTP executors (67 + base.ts/index.ts)
 ├── handlers/             # Request handlers (chatCore, responses, etc.)
 ├── lib/                  # Internal utilities
 ├── mcp-server/           # Model Context Protocol server
-├── services/             # ~114 service modules
+├── services/             # ~298 service modules
 ├── transformer/          # Responses API format transformer
 ├── translator/           # Format translation (OpenAI ↔ Claude ↔ Gemini)
 └── utils/                # Shared utilities (logging, error, stream, etc.)
@@ -49,12 +49,12 @@ open-sse/
 ### Module Counts
 
 | Directory | Files | Purpose |
-| `executors/` | 62 | Per-provider HTTP executors (unified via DefaultExecutor factory) |
-| `handlers/` | ~15 | Request entry points (chatCore, responses, embeddings) |
-| `services/` | ~114 | Routing, caching, rate limiting, refresh, etc. |
-| `translator/` | ~10 | Format conversion (OpenAI ↔ Claude ↔ Gemini) |
-| `mcp-server/` | 30 | MCP tools and transports |
-| `utils/` | ~30 | Cross-cutting utilities (logging, error, stream) |
+| `executors/` | 68 | Per-provider HTTP executors (unified via DefaultExecutor factory) |
+| `handlers/` | 16 | Request entry points (chatCore, responses, embeddings) |
+| `services/` | ~298 | Routing, caching, rate limiting, refresh, etc. |
+| `translator/` | ~27 | Format conversion (OpenAI ↔ Claude ↔ Gemini) |
+| `mcp-server/` | 32 | MCP tools and transports |
+| `utils/` | ~65 | Cross-cutting utilities (logging, error, stream) |
 | `config/` | ~10 | Provider configs, constants, registries |
 
 ---
@@ -228,29 +228,31 @@ export async function handleComboChat(body, comboId): Promise<ChatResult> {
 }
 ```
 
-Supports **15 routing strategies** (see `src/shared/constants/routingStrategies.ts`):
+Supports **17 routing strategies** (see `src/shared/constants/routingStrategies.ts`):
 
-| Strategy            | Behavior                             |
-| ------------------- | ------------------------------------ |
-| `priority`          | First-target ordered list            |
-| `weighted`          | Probabilistic by per-target weight   |
-| `round-robin`       | Cycle through targets in order       |
-| `context-relay`     | Hand off context across targets      |
-| `fill-first`        | Fill quota before moving to next     |
-| `p2c`               | Power of two choices                 |
-| `random`            | Uniform random                       |
-| `least-used`        | Pick the one with fewest recent uses |
-| `cost-optimized`    | Cheapest healthy target first        |
-| `reset-aware`       | Aware of provider reset windows      |
-| `reset-window`      | Reset window-based routing           |
-| `strict-random`     | Truly uniform (no quality weighting) |
-| `auto`              | Use 9-factor scoring (`autoCombo/`)  |
-| `lkgp`              | Last known good provider first       |
-| `context-optimized` | Best for long-context requests       |
+| Strategy            | Behavior                                                                  |
+| ------------------- | ------------------------------------------------------------------------- |
+| `priority`          | First-target ordered list                                                 |
+| `weighted`          | Probabilistic by per-target weight                                        |
+| `round-robin`       | Cycle through targets in order                                            |
+| `context-relay`     | Hand off context across targets                                           |
+| `fill-first`        | Fill quota before moving to next                                          |
+| `p2c`               | Power of two choices                                                      |
+| `random`            | Uniform random                                                            |
+| `least-used`        | Pick the one with fewest recent uses                                      |
+| `cost-optimized`    | Cheapest healthy target first                                             |
+| `reset-aware`       | Aware of provider reset windows                                           |
+| `reset-window`      | Reset window-based routing                                                |
+| `headroom`          | Most remaining quota headroom first                                       |
+| `strict-random`     | Truly uniform (no quality weighting)                                      |
+| `auto`              | Use 9-factor scoring (`autoCombo/`)                                       |
+| `lkgp`              | Last known good provider first                                            |
+| `context-optimized` | Best for long-context requests                                            |
+| `fusion`            | Fan out to a panel in parallel, then synthesize via a judge (`fusion.ts`) |
 
 ### base.ts (1170 LOC)
 
-The **abstract executor** that all 59 executors extend. It contains:
+The **abstract executor** that all 67 executors extend. It contains:
 
 - `buildUrl()` — default URL construction (subclasses override for custom)
 - `buildHeaders()` — default headers (auth, content-type)

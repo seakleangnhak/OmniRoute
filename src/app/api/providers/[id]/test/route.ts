@@ -59,18 +59,26 @@ const OAUTH_TEST_CONFIG = {
     acceptStatuses: [400],
     refreshable: true,
   },
-  "gemini-cli": {
+  antigravity: {
     url: "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
     method: "GET",
     authHeader: "Authorization",
     authPrefix: "Bearer ",
     refreshable: true,
   },
-  antigravity: {
-    url: "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
-    method: "GET",
+  xai: {
+    url: "https://api.x.ai/v1/chat/completions",
+    method: "POST",
     authHeader: "Authorization",
     authPrefix: "Bearer ",
+    extraHeaders: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "grok-4.3",
+      messages: [{ role: "user", content: "ping" }],
+      max_tokens: 1,
+      stream: false,
+      reasoning: { effort: "high" },
+    }),
     refreshable: true,
   },
   github: {
@@ -119,6 +127,13 @@ const OAUTH_TEST_CONFIG = {
     refreshable: true,
   },
   "amazon-q": {
+    checkExpiry: true,
+    refreshable: true,
+  },
+  "codebuddy-cn": {
+    // Upstream test endpoint mirrors "tokenExists: true" from the CodeBuddy port —
+    // validate auth via token presence + refresh path. Live connectivity is
+    // verified through real /v2/chat/completions traffic.
     checkExpiry: true,
     refreshable: true,
   },

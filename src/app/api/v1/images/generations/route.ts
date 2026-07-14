@@ -1,9 +1,13 @@
 import { handleImageGeneration } from "@omniroute/open-sse/handlers/imageGeneration.ts";
 import { withInjectionGuard } from "@/middleware/promptInjectionGuard";
-import { getProviderCredentials, clearRecoveredProviderState } from "@/sse/services/auth";
+import {
+  getProviderCredentialsWithQuotaPreflight,
+  clearRecoveredProviderState,
+  extractApiKey,
+  isValidApiKey,
+} from "@/sse/services/auth";
 import {
   parseImageModel,
-  getAllImageModels,
   getImageProvider,
   getImageModelEntry,
 } from "@omniroute/open-sse/config/imageRegistry.ts";
@@ -14,7 +18,6 @@ import { toJsonErrorPayload } from "@/shared/utils/upstreamError";
 import { enforceApiKeyPolicy } from "@/shared/utils/apiKeyPolicy";
 import { v1ImageGenerationSchema } from "@/shared/validation/schemas";
 import { isValidationFailure, validateBody } from "@/shared/validation/helpers";
-import { enforceClientApiAuth } from "../../_helpers/clientApiAuth";
 
 import { getAllCustomModels, resolveProxyForConnection } from "@/lib/localDb";
 import { resolveImageRouteModel } from "@/lib/images/imageRouteModel";
@@ -22,6 +25,9 @@ import { runWithProxyContext } from "@omniroute/open-sse/utils/proxyFetch.ts";
 import { attachOmniRouteMetaHeaders } from "@/domain/omnirouteResponseMeta";
 import { calculateModalCost } from "@/lib/usage/costCalculator";
 import { generateRequestId } from "@/shared/utils/requestId";
+import { getSpecialtyModelsResponse } from "@/app/api/v1/_shared/specialtyCatalog";
+
+export const dynamic = "force-dynamic";
 
 /**
  * Handle CORS preflight
@@ -38,49 +44,12 @@ export async function OPTIONS() {
 /**
  * GET /v1/images/generations — list available image models
  */
-export async function GET() {
-  const builtInModels = getAllImageModels();
-  const timestamp = Math.floor(Date.now() / 1000);
-
-  const data = builtInModels.map((m) => ({
-    id: m.id,
-    object: "model",
-    created: timestamp,
-    owned_by: m.provider,
-    type: "image",
-    supported_sizes: m.supportedSizes,
-    input_modalities: m.inputModalities || ["text"],
-    output_modalities: ["image"],
-    ...(m.description ? { description: m.description } : {}),
-  }));
-
-  // Include custom models tagged for images
-  try {
-    const customModelsMap = (await getAllCustomModels()) as Record<string, any>;
-    for (const [providerId, models] of Object.entries(customModelsMap)) {
-      if (!Array.isArray(models)) continue;
-      for (const model of models) {
-        if (!model?.id || !Array.isArray(model.supportedEndpoints)) continue;
-        if (!model.supportedEndpoints.includes("images")) continue;
-        const fullId = `${providerId}/${model.id}`;
-        if (data.some((d) => d.id === fullId)) continue;
-        data.push({
-          id: fullId,
-          object: "model",
-          created: timestamp,
-          owned_by: providerId,
-          type: "image",
-          supported_sizes: null,
-          input_modalities: ["text"],
-          output_modalities: ["image"],
-        });
-      }
-    }
-  } catch {}
-
-  return new Response(JSON.stringify({ object: "list", data }), {
-    headers: { "Content-Type": "application/json" },
-  });
+export async function GET(request?: Request) {
+  return getSpecialtyModelsResponse(
+    request,
+    "/v1/images/generations",
+    (model) => model.type === "image"
+  );
 }
 
 /**
@@ -108,23 +77,6 @@ function hasImageGenerationInput(body: Record<string, unknown>) {
 // would silently drop entries if a wider helper were reused for headers
 // that can legitimately repeat (e.g., set-cookie).
 const PUBLIC_BASE_URL_HEADER_KEYS = ["host", "x-forwarded-host", "x-forwarded-proto"] as const;
-
-function publicBaseUrlHeaders(headers: Headers): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const key of PUBLIC_BASE_URL_HEADER_KEYS) {
-    const value = headers.get(key);
-    if (value !== null) out[key] = value;
-  }
-  return out;
-}
-
-const MULTIPART_IMAGE_URL_FIELDS = ["image_url", "image_urls", "imageUrls"] as const;
-const MULTIPART_IMAGE_FILE_FIELDS = ["image", "image[]"] as const;
-const MULTIPART_IMAGE_FIELDS = new Set<string>([
-  ...MULTIPART_IMAGE_URL_FIELDS,
-  ...MULTIPART_IMAGE_FILE_FIELDS,
-]);
-const MULTIPART_NUMBER_FIELDS = new Set(["n", "timeout_ms", "poll_interval_ms"]);
 const CHATGPT_WEB_IMAGE_MAX_ACCOUNT_ATTEMPTS = 5;
 const CHATGPT_WEB_RETRYABLE_ACCOUNT_ERROR_CODES = new Set([
   "SENTINEL_BLOCKED",
@@ -133,73 +85,13 @@ const CHATGPT_WEB_RETRYABLE_ACCOUNT_ERROR_CODES = new Set([
   "HTTP_429",
 ]);
 
-function isMultipartRequest(request: Request) {
-  return (
-    request.headers.get("content-type")?.toLowerCase().includes("multipart/form-data") === true
-  );
-}
-
-function setMultipartField(body: Record<string, unknown>, key: string, value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return;
-
-  let parsedValue: unknown = trimmed;
-  if (MULTIPART_NUMBER_FIELDS.has(key)) {
-    const numeric = Number(trimmed);
-    parsedValue = Number.isFinite(numeric) ? numeric : trimmed;
+function publicBaseUrlHeaders(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of PUBLIC_BASE_URL_HEADER_KEYS) {
+    const value = headers.get(key);
+    if (value !== null) out[key] = value;
   }
-
-  const existing = body[key];
-  if (existing === undefined) {
-    body[key] = parsedValue;
-  } else if (Array.isArray(existing)) {
-    existing.push(parsedValue);
-  } else {
-    body[key] = [existing, parsedValue];
-  }
-}
-
-async function fileToDataUrl(file: File): Promise<string> {
-  const buffer = Buffer.from(await file.arrayBuffer());
-  const mime = file.type || "application/octet-stream";
-  return `data:${mime};base64,${buffer.toString("base64")}`;
-}
-
-async function readMultipartImageGenerationBody(formData: FormData) {
-  const body: Record<string, unknown> = {};
-  const imageUrls: string[] = [];
-
-  for (const [key, value] of formData.entries()) {
-    if (MULTIPART_IMAGE_FIELDS.has(key) || typeof value !== "string") continue;
-    setMultipartField(body, key, value);
-  }
-
-  for (const key of MULTIPART_IMAGE_URL_FIELDS) {
-    for (const value of formData.getAll(key)) {
-      if (typeof value !== "string") continue;
-      const trimmed = value.trim();
-      if (trimmed) imageUrls.push(trimmed);
-    }
-  }
-
-  for (const key of MULTIPART_IMAGE_FILE_FIELDS) {
-    for (const value of formData.getAll(key)) {
-      if (typeof value === "string") {
-        const trimmed = value.trim();
-        if (trimmed) imageUrls.push(trimmed);
-        continue;
-      }
-      imageUrls.push(await fileToDataUrl(value));
-    }
-  }
-
-  if (imageUrls.length > 0) {
-    body.image_url = imageUrls[0];
-    body.image_urls = imageUrls;
-    body.imageUrls = imageUrls;
-  }
-
-  return body;
+  return out;
 }
 
 function toRecord(value: unknown): Record<string, unknown> | null {
@@ -256,28 +148,13 @@ export function shouldRetryImageGenerationWithNextAccount(
   return status === HTTP_STATUS.FORBIDDEN && /\b(?:sentinel|turnstile)\b/i.test(message);
 }
 
-async function postHandler(request: Request) {
-  const authRejection = await enforceClientApiAuth(request);
-  if (authRejection) return authRejection;
-
-  let rawBody: Record<string, unknown>;
-  if (isMultipartRequest(request)) {
-    try {
-      rawBody = await readMultipartImageGenerationBody(await request.formData());
-    } catch (err) {
-      log.warn(
-        "IMAGE",
-        `Invalid multipart body: ${err instanceof Error ? err.message : String(err)}`
-      );
-      return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid multipart body");
-    }
-  } else {
-    try {
-      rawBody = await request.json();
-    } catch {
-      log.warn("IMAGE", "Invalid JSON body");
-      return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
-    }
+async function postHandler(request, context) {
+  let rawBody;
+  try {
+    rawBody = await request.json();
+  } catch {
+    log.warn("IMAGE", "Invalid JSON body");
+    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
   }
 
   const validation = validateBody(v1ImageGenerationSchema, rawBody);
@@ -290,6 +167,10 @@ async function postHandler(request: Request) {
   // Enforce API key policies (model restrictions + budget limits)
   const policy = await enforceApiKeyPolicy(request, body.model);
   if (policy.rejection) return policy.rejection;
+  const allowedConnections =
+    policy.apiKeyInfo?.allowedConnections && policy.apiKeyInfo.allowedConnections.length > 0
+      ? policy.apiKeyInfo.allowedConnections
+      : null;
 
   // #3205/#3215: resolve a combo/alias name (`image`) or a user-prefixed custom image
   // model (`myImg/gpt-image-2`) to its internal `<nodeId>/<model>` form so the
@@ -334,7 +215,7 @@ async function postHandler(request: Request) {
   const imageModelEntry = getImageModelEntry(body.model);
   const inputModalities = imageModelEntry?.inputModalities || ["text"];
   const requiresPrompt = inputModalities.includes("text");
-  const requiresImageInput = inputModalities.includes("image");
+  const requiresImageInput = inputModalities.includes("image") && !inputModalities.includes("text");
   const hasPrompt = typeof body.prompt === "string" && body.prompt.trim().length > 0;
   const hasImageInput = hasImageGenerationInput(body);
 
@@ -367,9 +248,13 @@ async function postHandler(request: Request) {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     if (needsCredentials) {
-      credentials = await getProviderCredentials(provider, excludedConnectionId, null, null, {
-        excludeConnectionIds: excludedConnectionIds,
-      });
+      credentials = await getProviderCredentialsWithQuotaPreflight(
+        provider,
+        excludedConnectionId,
+        allowedConnections,
+        body.model,
+        { excludeConnectionIds: excludedConnectionIds }
+      );
       if (!credentials) {
         if (result) break;
         return errorResponse(HTTP_STATUS.BAD_REQUEST, noCredentialsMessage);
@@ -385,7 +270,6 @@ async function postHandler(request: Request) {
       }
     }
 
-    // Resolve proxy for the selected connection on each attempt (#1904).
     let proxyInfo = null;
     if (credentials?.connectionId) {
       try {
@@ -406,7 +290,6 @@ async function postHandler(request: Request) {
         clientHeaders: publicBaseUrlHeaders(request.headers),
       });
 
-    // Execute with proxy context when available, direct otherwise (#1904)
     result = await (credentials?.connectionId
       ? runWithProxyContext(proxyInfo?.proxy || null, generateImage).catch((err: any) => ({
           success: false,

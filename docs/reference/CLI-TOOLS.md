@@ -1,18 +1,18 @@
 ---
 title: "CLI Tools — OmniRoute"
-version: 3.8.31
-lastUpdated: 2026-06-20
+version: 3.8.40
+lastUpdated: 2026-06-28
 ---
 
 # CLI Tools — OmniRoute
 
-Last updated: 2026-06-20
+Last updated: 2026-06-28
 
 OmniRoute integrates with three categories of CLI tools spread across three dedicated dashboard pages:
 
 | Page           | Route                   | Concept                                                                   | Count        |
 | -------------- | ----------------------- | ------------------------------------------------------------------------- | ------------ |
-| **CLI Code's** | `/dashboard/cli-code`   | Coding tools you point at OmniRoute (Client → CLI → OmniRoute → Provider) | 19           |
+| **CLI Code's** | `/dashboard/cli-code`   | Coding tools you point at OmniRoute (Client → CLI → OmniRoute → Provider) | 20           |
 | **CLI Agents** | `/dashboard/cli-agents` | Autonomous agents you point at OmniRoute (same flow, broader scope)       | 6            |
 | **ACP Agents** | `/dashboard/acp-agents` | CLIs that OmniRoute spawns as backend via stdio/ACP (reverse flow)        | see registry |
 
@@ -56,7 +56,6 @@ omniroute setup-codex        omniroute setup-claude       omniroute setup-openco
 omniroute setup-cline        omniroute setup-kilo         omniroute setup-continue
 omniroute setup-cursor       omniroute setup-roo          omniroute setup-crush
 omniroute setup-goose        omniroute setup-qwen         omniroute setup-aider
-omniroute setup-gemini
 ```
 
 Each accepts `--remote <url> --api-key <key>` (configure a local tool against a
@@ -91,7 +90,7 @@ Entries with `baseUrlSupport: "none"` are **not shown** in the dashboard pages �
 
 ---
 
-## 1. CLI Code's Catalog (19 tools)
+## 1. CLI Code's Catalog (20 tools)
 
 Tools that support custom base URL and appear in `/dashboard/cli-code`:
 
@@ -108,10 +107,10 @@ Tools that support custom base URL and appear in `/dashboard/cli-code`:
 | forge        | ForgeCode            | Antinomy HQ         | full           | custom         | true         |
 | jcode        | jcode                | 1jehuang (OSS)      | full           | custom         | false        |
 | deepseek-tui | DeepSeek TUI         | Hunter Bown (OSS)   | full           | custom         | false        |
+| codewhale    | CodeWhale            | Hmbown (OSS)        | full           | custom         | false        |
 | opencode     | OpenCode             | Anomaly (ex-SST)    | full           | guide          | true         |
 | droid        | Factory Droid        | Factory AI          | partial        | guide          | false        |
 | copilot      | GitHub Copilot CLI   | GitHub/MS           | full           | custom         | false        |
-| gemini-cli   | Gemini CLI           | Google              | partial        | guide          | true         |
 | cursor-cli   | Cursor CLI           | Anysphere           | partial        | guide          | true         |
 | smelt        | Smelt                | leonardcser (OSS)   | full           | custom         | false        |
 | pi           | Pi (pi-coding-agent) | M. Zechner (OSS)    | full           | custom         | false        |
@@ -139,8 +138,6 @@ Autonomous agents that appear in `/dashboard/cli-agents`:
 ## 3. ACP Agents (/dashboard/acp-agents)
 
 This page (renamed from `/dashboard/agents`) shows CLIs that OmniRoute can **spawn** as backend execution engines via stdio/ACP protocol. The catalog is maintained separately in `src/lib/acp/registry.ts` and is **not** the same as `CLI_TOOLS`.
-
-Current ACP-spawnable CLIs (from `acpSpawnable: true` in `CLI_TOOLS` + ACP registry): codex, claude, goose, gemini-cli, openclaw, aider, opencode, cline, qwen-code, forge, interpreter, cursor-cli, warp.
 
 ---
 
@@ -197,13 +194,14 @@ interface ToolBatchStatus {
 
 New tools with `configType: "custom"` have dedicated settings API routes:
 
-| Route                                       | Tool                           |
-| ------------------------------------------- | ------------------------------ |
-| `POST /api/cli-tools/forge-settings`        | ForgeCode (.forge.toml)        |
-| `POST /api/cli-tools/jcode-settings`        | jcode (--base-url flag)        |
-| `POST /api/cli-tools/deepseek-tui-settings` | DeepSeek TUI (OPENAI_BASE_URL) |
-| `POST /api/cli-tools/smelt-settings`        | Smelt                          |
-| `POST /api/cli-tools/pi-settings`           | Pi coding agent                |
+| Route                                       | Tool                                                             |
+| ------------------------------------------- | ---------------------------------------------------------------- |
+| `POST /api/cli-tools/forge-settings`        | ForgeCode (.forge.toml)                                          |
+| `POST /api/cli-tools/jcode-settings`        | jcode (--base-url flag)                                          |
+| `POST /api/cli-tools/deepseek-tui-settings` | DeepSeek TUI (OPENAI_BASE_URL, legacy)                           |
+| `POST /api/cli-tools/codewhale-settings`    | CodeWhale (OPENAI_BASE_URL, primary + legacy `~/.deepseek` sync) |
+| `POST /api/cli-tools/smelt-settings`        | Smelt                                                            |
+| `POST /api/cli-tools/pi-settings`           | Pi coding agent                                                  |
 
 All routes use `sanitizeErrorMessage()` for error responses (Hard Rule #12).
 
@@ -276,7 +274,7 @@ Full PT-BR and EN translations are provided. 39 other locales fall back to EN au
 
 ### Step 2 — Install CLI Tools
 
-All npm-based tools require Node.js 20.20.2+, 22.22.2+ or 24.x:
+All npm-based tools require Node.js 22.22.2+ or 24.x:
 
 ```bash
 # Claude Code (Anthropic)
@@ -649,7 +647,7 @@ omniroute providers validate                        # Local-only structural vali
 ### Recovery & Reset
 
 ```bash
-omniroute reset-password                # Reset the admin password (legacy alias still works)
+omniroute reset-password                # Reset the admin password (also: omniroute-reset-password)
 omniroute reset-encrypted-columns       # Show warning + dry-run for encrypted credential reset
 omniroute reset-encrypted-columns --force  # Actually null out encrypted credentials in SQLite
 ```

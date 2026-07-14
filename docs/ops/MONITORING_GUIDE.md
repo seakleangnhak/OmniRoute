@@ -1,7 +1,7 @@
 ---
 title: "Monitoring & Observability Guide"
-version: 3.8.16
-lastUpdated: 2026-06-08
+version: 3.8.40
+lastUpdated: 2026-06-28
 ---
 
 # Monitoring & Observability Guide
@@ -272,9 +272,7 @@ The MCP tool `observability_snapshot` returns a **complete system snapshot** for
       "ageMs": 109
     }
   ],
-  "quotaMonitors": {
-    /* see above */
-  },
+  "quotaMonitors": {/* see above */},
   "uptime": 12345,
   "version": "3.8.16"
 }
@@ -468,7 +466,7 @@ node --expose-gc -e "global.gc(); console.log(process.memoryUsage())"
 
 ## See Also
 
-- [USAGE_QUOTA_GUIDE.md](../features/USAGE_QUOTA_GUIDE.md) — usage & cost tracking
+- [USAGE_QUOTA_GUIDE.md](../guides/USAGE_QUOTA_GUIDE.md) — usage & cost tracking
 - [DATABASE_GUIDE.md](./DATABASE_GUIDE.md) — DB schema + health
 - [PROXY_GUIDE.md](./PROXY_GUIDE.md) — proxy health (separate cache)
 - [ARCHITECTURE.md](../architecture/ARCHITECTURE.md) — system architecture
