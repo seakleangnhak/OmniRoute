@@ -191,6 +191,22 @@ export interface FallbackStatsRow {
   fallbacks: number;
 }
 
+export interface ImageCostRow {
+  date: string;
+  provider: string;
+  model: string;
+  account: string;
+  apiKeyId: string | null;
+  apiKeyName: string | null;
+  apiKeyGroupKey: string;
+  requests: number;
+  imagesCount: number;
+  cost: number;
+  avgLatencyMs: number;
+  firstUsed: string;
+  lastUsed: string;
+}
+
 /**
  * Scalar fallback-rate stats over `call_logs` for the usage analytics endpoint.
  *
@@ -232,4 +248,52 @@ export function getFallbackStats(
     )
     .get(params) as FallbackStatsRow | undefined;
   return row ?? { total: 0, with_requested: 0, fallback_eligible: 0, fallbacks: 0 };
+}
+
+/**
+ * Image-generation costs recorded in call_logs, grouped for the usage analytics endpoint.
+ */
+export function getImageCostRows(
+  whereClause: string,
+  params: Record<string, string>
+): ImageCostRow[] {
+  const db = getDbInstance();
+  return db
+    .prepare(
+      `
+      SELECT
+        DATE(timestamp) as date,
+        LOWER(provider) as provider,
+        LOWER(CASE WHEN instr(model, '/') > 0 THEN substr(model, instr(model, '/') + 1) ELSE model END) as model,
+        COALESCE(NULLIF(account, ''), 'unknown') as account,
+        NULLIF(api_key_id, '') as apiKeyId,
+        NULLIF(api_key_name, '') as apiKeyName,
+        COALESCE(NULLIF(api_key_id, ''), NULLIF(api_key_name, ''), 'unknown') as apiKeyGroupKey,
+        COUNT(*) as requests,
+        COALESCE(SUM(images_count), 0) as imagesCount,
+        COALESCE(SUM(cost_usd), 0) as cost,
+        COALESCE(AVG(duration), 0) as avgLatencyMs,
+        COALESCE(MIN(timestamp), '') as firstUsed,
+        COALESCE(MAX(timestamp), '') as lastUsed
+      FROM call_logs
+      ${whereClause}
+      GROUP BY DATE(timestamp), LOWER(provider), LOWER(CASE WHEN instr(model, '/') > 0 THEN substr(model, instr(model, '/') + 1) ELSE model END), account, apiKeyId, apiKeyName, apiKeyGroupKey
+    `
+    )
+    .all(params) as ImageCostRow[];
+}
+
+/** Total image-generation cost for a preset analytics window. */
+export function getImageCostTotal(whereClause: string, params: Record<string, string>): number {
+  const db = getDbInstance();
+  const row = db
+    .prepare(
+      `
+      SELECT COALESCE(SUM(cost_usd), 0) as cost
+      FROM call_logs
+      ${whereClause}
+    `
+    )
+    .get(params) as { cost: number } | undefined;
+  return Number(row?.cost || 0);
 }

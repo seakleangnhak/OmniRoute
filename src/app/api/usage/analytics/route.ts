@@ -20,7 +20,7 @@ import {
   getWeeklyPatternRows,
   getPresetCostModelRows,
 } from "@/lib/db/usageAnalytics";
-import { getFallbackStats } from "@/lib/db/callLogStats";
+import { getFallbackStats, getImageCostRows, getImageCostTotal } from "@/lib/db/callLogStats";
 
 function getRangeStartIso(range: string): string | null {
   const end = new Date();
@@ -506,29 +506,9 @@ export async function GET(request: Request) {
       whereClause,
       "path IN ('/v1/images/generations', '/v1/images/edits') AND cost_usd IS NOT NULL AND cost_usd > 0"
     );
-    const imageCostRows = db
-      .prepare(
-        `
-        SELECT
-          DATE(timestamp) as date,
-          LOWER(provider) as provider,
-          LOWER(CASE WHEN instr(model, '/') > 0 THEN substr(model, instr(model, '/') + 1) ELSE model END) as model,
-          COALESCE(NULLIF(account, ''), 'unknown') as account,
-          NULLIF(api_key_id, '') as apiKeyId,
-          NULLIF(api_key_name, '') as apiKeyName,
-          COALESCE(NULLIF(api_key_id, ''), NULLIF(api_key_name, ''), 'unknown') as apiKeyGroupKey,
-          COUNT(*) as requests,
-          COALESCE(SUM(images_count), 0) as imagesCount,
-          COALESCE(SUM(cost_usd), 0) as cost,
-          COALESCE(AVG(duration), 0) as avgLatencyMs,
-          COALESCE(MIN(timestamp), '') as firstUsed,
-          COALESCE(MAX(timestamp), '') as lastUsed
-        FROM call_logs
-        ${imageCostWhereClause}
-        GROUP BY DATE(timestamp), LOWER(provider), LOWER(CASE WHEN instr(model, '/') > 0 THEN substr(model, instr(model, '/') + 1) ELSE model END), account, apiKeyId, apiKeyName, apiKeyGroupKey
-      `
-      )
-      .all(params) as Array<Record<string, unknown>>;
+    const imageCostRows = getImageCostRows(imageCostWhereClause, params) as Array<
+      Record<string, unknown>
+    >;
 
     let imageRequestCount = 0;
     let imageLatencyWeightedTotal = 0;
@@ -1175,20 +1155,23 @@ export async function GET(request: Request) {
           );
         }
 
+        const presetImageConditions: string[] = [];
+        const presetImageParams: Record<string, string> = {};
+        if (presetSinceIso) {
+          presetImageConditions.push("timestamp >= @presetImageSince");
+          presetImageParams.presetImageSince = presetSinceIso;
+        }
+        if (apiKeyWhere) {
+          presetImageConditions.push(apiKeyWhere);
+          Object.assign(presetImageParams, apiKeyParamEntries);
+        }
+        const presetImageWhereClause =
+          presetImageConditions.length > 0 ? `WHERE ${presetImageConditions.join(" AND ")}` : "";
         const presetImageWhere = appendWhereCondition(
-          presetWhere,
+          presetImageWhereClause,
           "path IN ('/v1/images/generations', '/v1/images/edits') AND cost_usd IS NOT NULL AND cost_usd > 0"
         );
-        const presetImageCostRow = db
-          .prepare(
-            `
-            SELECT COALESCE(SUM(cost_usd), 0) as cost
-            FROM call_logs
-            ${presetImageWhere}
-          `
-          )
-          .get(presetParams) as Record<string, unknown>;
-        presetTotalCost += Number(presetImageCostRow?.cost || 0);
+        presetTotalCost += getImageCostTotal(presetImageWhere, presetImageParams);
         presetSummaries[presetRange] = {
           totalCost: roundCost(presetTotalCost),
         };

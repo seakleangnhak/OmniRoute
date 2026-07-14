@@ -7,50 +7,46 @@ const {
   getChatGptImage,
   __resetChatGptImageCacheForTesting,
   __getChatGptImageCacheBytesForTesting,
+  __hasChatGptImageMemoryEntryForTesting,
 } = mod;
 
 // ── Constants ──
 
-test("MAX_ENTRIES is 25", async () => {
-  // We verify indirectly: store 25 entries, then store a 26th and confirm
-  // the first entry was evicted. This also proves the constant is 25.
+test("the hot cache keeps 200 entries", async () => {
   __resetChatGptImageCacheForTesting();
   const ids: string[] = [];
-  for (let i = 0; i < 25; i++) {
+  for (let i = 0; i < 201; i++) {
     ids.push(storeChatGptImage(Buffer.from(`img-${i}`), "image/png", 60_000));
   }
-  // All 25 should be retrievable
-  for (const id of ids) {
-    assert.ok(getChatGptImage(id), "entry within MAX_ENTRIES should survive");
-  }
+
+  assert.equal(__hasChatGptImageMemoryEntryForTesting(ids[0]), false);
+  assert.equal(__hasChatGptImageMemoryEntryForTesting(ids[1]), true);
+  assert.equal(__hasChatGptImageMemoryEntryForTesting(ids[200]), true);
+  assert.ok(getChatGptImage(ids[0]), "an entry evicted from memory should survive in SQLite");
   __resetChatGptImageCacheForTesting();
 });
 
-test("DEFAULT_MAX_BYTES is 10 MB (10 * 1024 * 1024)", async () => {
+test("the configured byte cap evicts hot entries but keeps persistent entries", async () => {
+  const originalMaxMb = process.env.OMNIROUTE_CGPT_WEB_IMAGE_CACHE_MAX_MB;
+  process.env.OMNIROUTE_CGPT_WEB_IMAGE_CACHE_MAX_MB = "0.001";
   __resetChatGptImageCacheForTesting();
-  // Store an entry that is just under 10 MB — should succeed
-  const big = Buffer.alloc(10 * 1024 * 1024 - 1, 0x42);
-  const id = storeChatGptImage(big, "image/png", 60_000);
-  assert.ok(getChatGptImage(id), "entry under 10 MB should be cached");
-  assert.equal(__getChatGptImageCacheBytesForTesting(), big.length);
-  __resetChatGptImageCacheForTesting();
-});
 
-// ── Eviction ──
+  try {
+    const firstId = storeChatGptImage(Buffer.alloc(700, 0x41), "image/png", 60_000);
+    const secondId = storeChatGptImage(Buffer.alloc(700, 0x42), "image/png", 60_000);
 
-test("storing 26 entries evicts the oldest", async () => {
-  __resetChatGptImageCacheForTesting();
-  const ids: string[] = [];
-  for (let i = 0; i < 26; i++) {
-    ids.push(storeChatGptImage(Buffer.from(`img-${i}`), "image/png", 60_000));
+    assert.equal(__hasChatGptImageMemoryEntryForTesting(firstId), false);
+    assert.equal(__hasChatGptImageMemoryEntryForTesting(secondId), true);
+    assert.equal(__getChatGptImageCacheBytesForTesting(), 700);
+    assert.ok(getChatGptImage(firstId), "byte-cap eviction should not delete the SQLite record");
+  } finally {
+    if (originalMaxMb === undefined) {
+      delete process.env.OMNIROUTE_CGPT_WEB_IMAGE_CACHE_MAX_MB;
+    } else {
+      process.env.OMNIROUTE_CGPT_WEB_IMAGE_CACHE_MAX_MB = originalMaxMb;
+    }
+    __resetChatGptImageCacheForTesting();
   }
-  // The first entry (index 0) should have been evicted
-  assert.equal(getChatGptImage(ids[0]), null, "oldest entry should be evicted");
-  // The second entry should still be present
-  assert.ok(getChatGptImage(ids[1]), "second entry should survive");
-  // The newest entry should be present
-  assert.ok(getChatGptImage(ids[25]), "newest entry should survive");
-  __resetChatGptImageCacheForTesting();
 });
 
 // ── Store & Retrieve (hit) ──
