@@ -4,15 +4,7 @@
       "count": 1
     }
   },
-  "src/app/(dashboard)/dashboard/agent-skills/AgentSkillsPageClient.tsx": {
-    "no-restricted-syntax": {
-      "count": 3
-    }
-  },
-  "src/app/(dashboard)/dashboard/api-manager/ApiManagerPageClient.tsx": {
-    "no-restricted-syntax": {
-      "count": 2
-    },
+  "src/app/(dashboard)/dashboard/HomePageClient.tsx": {
     "react-hooks/exhaustive-deps": {
       "count": 1
     }
@@ -27,27 +19,12 @@
       "count": 1
     }
   },
-  "src/app/(dashboard)/dashboard/cli-code/components/DefaultToolCard.tsx": {
-    "react-hooks/exhaustive-deps": {
-      "count": 2
-    }
-  },
   "src/app/(dashboard)/dashboard/costs/costExplorerUtils.ts": {
     "no-restricted-syntax": {
       "count": 1
     }
   },
-  "src/app/(dashboard)/dashboard/media-providers/components/ImageExampleCard.tsx": {
-    "@next/next/no-img-element": {
-      "count": 1
-    }
-  },
   "src/app/(dashboard)/dashboard/playground/components/tabs/ApiTab.tsx": {
-    "react-hooks/exhaustive-deps": {
-      "count": 1
-    }
-  },
-  "src/app/(dashboard)/dashboard/providers/[id]/ProviderDetailPageClient.tsx": {
     "react-hooks/exhaustive-deps": {
       "count": 1
     }
@@ -67,7 +44,7 @@
       "count": 1
     }
   },
-  "src/app/(dashboard)/dashboard/settings/components/ModelLockoutCard.tsx": {
+  "src/app/(dashboard)/dashboard/settings/components/ProviderAccountRoutingCard.tsx": {
     "react-hooks/exhaustive-deps": {
       "count": 1
     }
@@ -82,11 +59,6 @@
       "count": 3
     }
   },
-  "src/app/(dashboard)/dashboard/tools/agent-bridge/components/ModelSelectorModal.tsx": {
-    "no-restricted-syntax": {
-      "count": 2
-    }
-  },
   "src/app/api/services/[name]/logs/route.ts": {
     "no-restricted-syntax": {
       "count": 1
@@ -97,17 +69,97 @@
       "count": 1
     }
   },
+  "src/domain/costRules.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
   "src/hooks/useLiveDashboard.ts": {
     "react-hooks/exhaustive-deps": {
       "count": 2
     }
   },
-  "src/shared/components/CursorAuthModal.tsx": {
-    "react-hooks/exhaustive-deps": {
+  "src/lib/a2a/skills/healthReport.ts": {
+    "no-restricted-syntax": {
       "count": 1
     }
   },
-  "src/shared/components/KiroSocialOAuthModal.tsx": {
+  "src/lib/combos/controlCenter.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/lib/db/comboForecast.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/lib/db/domainState.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/lib/db/prompts.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/lib/db/providers/lazyConnectionView.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/lib/db/tokenLimits.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/lib/monitoring/providerHealthAutopilot.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/lib/monitoring/providerHealthMatrix.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/lib/semanticCache.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/lib/usage/apiKeySelfService.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/lib/usage/apiKeyUsageLimits.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/lib/usage/costCalculator.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/lib/usage/internalUsageCommand.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/lib/usage/providerWindowCosts.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/lib/usage/routeExplain.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "src/shared/components/CursorAuthModal.tsx": {
     "react-hooks/exhaustive-deps": {
       "count": 1
     }

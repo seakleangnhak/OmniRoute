@@ -84,13 +84,26 @@ export async function movePath(sourcePath, destinationPath, fsImpl = fs) {
   }
 }
 
+/**
+ * Best-effort: physically create the isolated Windows profile dirs that
+ * resolveNextBuildEnv() may have pointed APPDATA/LOCALAPPDATA at. No-op when
+ * resolveNextBuildEnv didn't set them (non-Windows, or NEXT_DIST_DIR already set).
+ */
+export function ensureWindowsBuildProfileDirs(env, mkdirImpl = mkdirSync) {
+  if (!env?.APPDATA || !env?.LOCALAPPDATA) return;
+  mkdirImpl(env.APPDATA, { recursive: true });
+  mkdirImpl(env.LOCALAPPDATA, { recursive: true });
+}
+
 function runNextBuild() {
   return new Promise((resolve) => {
     const nextBin = path.join(projectRoot, "node_modules", "next", "dist", "bin", "next");
+    const buildEnv = resolveNextBuildEnv(process.env);
+    ensureWindowsBuildProfileDirs(buildEnv);
     const child = spawn(process.execPath, [nextBin, "build", resolveNextBuildBundlerFlag()], {
       cwd: projectRoot,
       stdio: "inherit",
-      env: resolveNextBuildEnv(process.env),
+      env: buildEnv,
     });
 
     const forward = (signal) => {
@@ -347,6 +360,17 @@ export async function main() {
           projectRoot,
           copyNatives: true,
         });
+        const { spawnSync } = await import("node:child_process");
+        const basePathWrite = spawnSync(
+          process.execPath,
+          [path.join(projectRoot, "scripts", "build", "write-build-base-path.mjs")],
+          { cwd: projectRoot, env: process.env, stdio: "inherit" }
+        );
+        if (basePathWrite.status !== 0) {
+          console.warn(
+            "[build-next-isolated] Non-fatal error writing BUILD_OMNIROUTE_BASE_PATH sentinel"
+          );
+        }
       } catch (assembleErr) {
         console.warn("[build-next-isolated] Non-fatal error assembling standalone:", assembleErr);
       }

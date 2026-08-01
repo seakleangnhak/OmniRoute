@@ -14,6 +14,7 @@ import {
 } from "@/app/api/v1/vscode/raw/[token]/reasoningMetadata";
 import { parseVscodeServiceTierVariantModelId } from "@/app/api/v1/vscode/raw/[token]/serviceTierVariants";
 import { withPathTokenApiKey } from "@/app/api/v1/vscode/raw/[token]/tokenizedRequest";
+import { isUsableChatModel } from "@/app/api/v1/vscode/[token]/usableChatModel";
 
 type OpenAiCatalogModel = {
   id?: string;

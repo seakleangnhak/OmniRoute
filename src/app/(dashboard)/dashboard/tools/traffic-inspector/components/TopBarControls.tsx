@@ -81,7 +81,7 @@ export function TopBarControls({
       {/* Profile selector */}
       <div
         role="radiogroup"
-        aria-label="Traffic profile"
+        aria-label={t("trafficProfile")}
         className="flex items-center gap-1 rounded border border-border bg-surface p-0.5"
       >
         {PROFILE_IDS.map((id) => (

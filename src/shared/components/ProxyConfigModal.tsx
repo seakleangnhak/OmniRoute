@@ -130,6 +130,10 @@ export default function ProxyConfigModal({
   const [selectedProxyId, setSelectedProxyId] = useState("");
   const [socks5Enabled, setSocks5Enabled] = useState(BUILD_TIME_SOCKS5);
   const proxyTypes = useMemo(() => buildProxyTypes(socks5Enabled), [socks5Enabled]);
+  const sortedSavedProxies = useMemo(
+    () => [...savedProxies].sort((a, b) => (a.name || "").localeCompare(b.name || "")),
+    [savedProxies]
+  );
   const [proxyType, setProxyType] = useState("http");
   const [host, setHost] = useState("");
   const [port, setPort] = useState("");
@@ -215,7 +219,11 @@ export default function ProxyConfigModal({
               setMode("saved");
             }
           } else {
-            setMode("custom");
+            if (registryItems.length === 0) {
+              setMode("custom");
+            } else {
+              setMode("saved");
+            }
             setSelectedProxyId("");
           }
         }
@@ -467,6 +475,7 @@ export default function ProxyConfigModal({
         username?: string;
         password?: string;
       } | null = null;
+      let testProxyId: string | null = null;
 
       if (mode === "saved") {
         if (!selectedProxyId) {
@@ -485,6 +494,7 @@ export default function ProxyConfigModal({
           host: found.host || "",
           port: String(found.port || 8080),
         };
+        testProxyId = selectedProxyId;
       } else {
         if (!String(host || "").trim()) {
           setTesting(false);
@@ -591,7 +601,7 @@ export default function ProxyConfigModal({
                 className="w-full px-3 py-2.5 rounded-lg bg-bg-subtle border border-border text-sm text-text-primary"
               >
                 <option value="">{t("selectSavedProxyPlaceholder")}</option>
-                {savedProxies.map((item: any) => (
+                {sortedSavedProxies.map((item: any) => (
                   <option key={item.id} value={item.id}>
                     {item.name} ({item.type}://{item.host}:{item.port})
                   </option>

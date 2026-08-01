@@ -830,7 +830,7 @@ export default function ProxyRegistryManager({
                             !allSelected && items.some((item) => selectedIds.has(item.id));
                       }}
                       onChange={() => hookToggleSelectAll(allSelected, items)}
-                      aria-label="Select all proxies"
+                      aria-label={t("selectAllProxies")}
                     />
                   </th>
                   <th className="py-2 pr-3">{t("tableName")}</th>
@@ -849,7 +849,7 @@ export default function ProxyRegistryManager({
                       <ProxyCheckboxCell
                         checked={selectedIds.has(item.id)}
                         onChange={() => toggleSelect(item.id)}
-                        label={`Select ${item.name}`}
+                        label={t("selectProxy", { name: item.name })}
                       />
                       <td className="py-2 pr-3">
                         <div className="font-medium text-text-main">{item.name}</div>

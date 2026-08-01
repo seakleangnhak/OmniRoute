@@ -110,6 +110,15 @@ function git(args, opts = {}) {
   }).trim();
 }
 
+// The sync-back is the ONE write path to the release branch with no CI gate — a red
+// merged tree pushed here turns the whole PR queue red (G1, v3.8.49 quality plan WS0.3).
+// Returns the validate-release-green invocation to run before the push, or null when
+// the operator passed --skip-green-gate (emergency hatch: tip reds verified pre-existing).
+export function greenGateArgs(argv) {
+  if (argv.includes("--skip-green-gate")) return null;
+  return ["scripts/quality/validate-release-green.mjs", "--quick"];
+}
+
 function main() {
   const NEXT = process.argv[2];
   if (!/^\d+\.\d+\.\d+$/.test(NEXT || "")) {

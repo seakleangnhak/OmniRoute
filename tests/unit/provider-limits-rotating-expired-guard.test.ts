@@ -22,7 +22,7 @@ test.after(() => {
 // flagging it expired hid freshly-added Codex accounts from the quota page even
 // though a providers-page refresh turned them green.
 test("rotating providers are NEVER flagged expired from the quota path", () => {
-  for (const provider of ["codex", "openai", "claude", "kiro", "qwen", "gitlab-duo"]) {
+  for (const provider of ["codex", "openai", "claude", "kiro", "gitlab-duo"]) {
     assert.equal(
       quotaPathShouldMarkExpired(provider, "Token expired, please re-authenticate", "active"),
       false,
@@ -53,7 +53,7 @@ test("an already-expired connection is left untouched (no redundant write)", () 
 // expired token (cascade-safe via serializeRefresh), so its live quota shows;
 // the bulk scheduler (allowRotatingRefresh falsy) must keep #3019 and never do it.
 test("bulk path never refreshes rotating providers (preserves #3019)", () => {
-  for (const provider of ["codex", "openai", "claude", "kiro", "qwen", "gitlab-duo"]) {
+  for (const provider of ["codex", "openai", "claude", "kiro", "gitlab-duo"]) {
     assert.equal(shouldAttemptRotatingRefresh(provider, undefined), false, `${provider} bulk`);
     assert.equal(
       shouldAttemptRotatingRefresh(provider, false),

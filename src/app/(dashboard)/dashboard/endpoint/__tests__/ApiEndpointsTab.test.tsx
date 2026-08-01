@@ -118,6 +118,7 @@ describe("ApiEndpointsTab", () => {
       cleanupCallbacks.pop()?.();
     }
     document.body.innerHTML = "";
+    vi.unstubAllEnvs();
     vi.unstubAllGlobals();
   });
 
@@ -178,6 +179,7 @@ describe("ApiEndpointsTab", () => {
   });
 
   it("renders curl example using window.location.origin when NEXT_PUBLIC_BASE_URL is unset", async () => {
+    vi.stubEnv("NEXT_PUBLIC_BASE_URL", "");
     fetchMock.mockImplementation(async (input) => {
       if (input === "/api/cli-tools/keys") {
         return jsonResponse({ keys: [] });
@@ -225,7 +227,7 @@ describe("ApiEndpointsTab", () => {
 
     expect(
       expectedOrigins.some((origin) =>
-        renderedText.includes(`curl -X POST ${origin}/v1/chat/completions`)
+        renderedText.includes(`curl -X POST ${origin}/api/v1/chat/completions`)
       )
     ).toBe(true);
   });

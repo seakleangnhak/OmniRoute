@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import React from "react";
+import { useTranslations } from "next-intl";
+import { matchesSearch } from "@/shared/utils/turkishText";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Types
@@ -28,6 +30,15 @@ export interface FreeBudgetData {
   poolCount: number;
   perModel: FreeBudgetPerModel[];
   headline?: string;
+  /** ISO timestamp of the last catalog update. Absent/null → freshness is not shown. */
+  catalogUpdatedAt?: string | null;
+  /**
+   * Providers callable with nothing configured, derived server-side from real
+   * routing behaviour (see shared/utils/providerCredentialRequirement). NOT the
+   * same as freeType: "keyless", which only means "not quantifiable in tokens"
+   * — several of those reject anonymous calls with 401/403.
+   */
+  noCredentialProviders?: string[];
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -191,6 +202,8 @@ export function FreeBudgetView({ data }: { data: FreeBudgetData }) {
   // Filter legend to entries with something to show (no zero-budget clutter)
   const legendModels = perModel.filter((m) => m.monthlyTokens > 0 || m.creditTokens > 0);
 
+  const freshness = catalogUpdatedAt ? relativeTimeFromNow(catalogUpdatedAt) : null;
+
   return (
     <div className="rounded-lg border border-border bg-surface">
       {/* Header */}
@@ -198,7 +211,7 @@ export function FreeBudgetView({ data }: { data: FreeBudgetData }) {
         <span className="material-symbols-outlined text-[14px] text-text-muted">token</span>
         <span className="text-[13px] font-semibold text-text-main">Monthly free-token budget</span>
         <span className="ml-auto text-[11px] text-text-muted tabular-nums">
-          {fmt(remaining)} remaining · {pct}% of {fmt(steadyRecurringTokens)}
+          {labels.remaining(fmt(remaining), pct, fmt(steadyRecurringTokens))}
         </span>
       </div>
 
@@ -283,6 +296,7 @@ export function FreeBudgetView({ data }: { data: FreeBudgetData }) {
 // ────────────────────────────────────────────────────────────────────────────
 
 export default function FreeBudgetCard() {
+  const t = useTranslations("freeBudget");
   const [data, setData] = useState<FreeBudgetData | null>(null);
 
   useEffect(() => {
@@ -295,6 +309,11 @@ export default function FreeBudgetCard() {
         /* best-effort */
       });
   }, []);
+
+  const providers = useMemo(() => {
+    if (!data) return [];
+    return Array.from(new Set(data.perModel.map((m) => m.provider))).sort();
+  }, [data]);
 
   if (!data) return null;
 

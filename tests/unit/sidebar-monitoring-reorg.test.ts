@@ -83,7 +83,7 @@ test("monitoring section activity item has correct href and icon", () => {
   assert.equal(activityItem.i18nKey, "activity");
 });
 
-test("monitoring logs group contains logs, logs-proxy, logs-console", () => {
+test("monitoring logs group contains logs, logs-proxy, logs-console, logs-timeline", () => {
   const section = findSection("monitoring");
   assert.ok(section, "monitoring section must exist");
 
@@ -94,7 +94,7 @@ test("monitoring logs group contains logs, logs-proxy, logs-console", () => {
   assert.ok(logsGroup, "logs group must exist in monitoring");
 
   const itemIds = logsGroup.items.map((i) => i.id);
-  assert.deepEqual(itemIds, ["logs", "logs-proxy", "logs-console"]);
+  assert.deepEqual(itemIds, ["logs", "logs-proxy", "logs-console", "logs-timeline"]);
 });
 
 test("monitoring system group contains health and runtime", () => {

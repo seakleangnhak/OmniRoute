@@ -55,13 +55,26 @@ function rowToItem(row: PlaygroundPresetRow): PlaygroundPresetListItem {
 
 /**
  * Returns all presets ordered by created_at descending (newest first).
+ * Accepts optional limit/offset for pagination.
  */
-export function listPlaygroundPresets(): PlaygroundPresetListItem[] {
+export function listPlaygroundPresets(options?: { limit?: number; offset?: number }): {
+  items: PlaygroundPresetListItem[];
+  total: number;
+} {
   const db = getDbInstance();
-  const rows = db
-    .prepare("SELECT * FROM playground_presets ORDER BY created_at DESC")
-    .all() as PlaygroundPresetRow[];
-  return rows.map(rowToItem);
+  const limit = options?.limit;
+  const offset = options?.offset ?? 0;
+  let sql = "SELECT * FROM playground_presets ORDER BY created_at DESC";
+  const params: unknown[] = [];
+  if (limit !== undefined) {
+    sql += " LIMIT ? OFFSET ?";
+    params.push(limit, offset);
+  }
+  const rows = db.prepare(sql).all(...params) as PlaygroundPresetRow[];
+  const totalRow = db.prepare("SELECT count(*) as cnt FROM playground_presets").get() as {
+    cnt: number;
+  };
+  return { items: rows.map(rowToItem), total: totalRow.cnt };
 }
 
 /**

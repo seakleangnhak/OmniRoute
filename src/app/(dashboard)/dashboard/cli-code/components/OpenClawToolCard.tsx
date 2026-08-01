@@ -282,7 +282,7 @@ export default function OpenClawToolCard({
         <div className="flex items-center gap-3">
           <div className="size-8 flex items-center justify-center shrink-0">
             <Image
-              src="/providers/openclaw.png"
+              src="/providers/openclaw.svg"
               alt={tool.name}
               width={32}
               height={32}

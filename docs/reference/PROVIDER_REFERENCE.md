@@ -1,16 +1,16 @@
 ---
 title: "Provider Reference"
-version: 3.8.47
-lastUpdated: 2026-07-13
+version: 3.8.49
+lastUpdated: 2026-07-28
 ---
 
 # Provider Reference
 
 > **Auto-generated** from `src/shared/constants/providers.ts` — do not edit by hand.
 > Regenerate with: `npm run gen:provider-reference`
-> **Last generated:** 2026-07-13
+> **Last generated:** 2026-07-28
 
-Total providers: **250**. See category breakdown below.
+Total providers: **290**. See category breakdown below.
 
 ## Categories
 
@@ -27,11 +27,13 @@ Total providers: **250**. See category breakdown below.
 
 Additional tags: `image`, `video`, `aggregator`, `enterprise`, `embed/rerank`, `self-hosted`.
 
+`Tool calling` (where shown): `native` — real function-calling API; `emulated` — the `tools` array is prompt-emulated via `webTools.ts` (regex-parsed `<tool>{...}</tool>` blocks); `none` — `tools` is currently silently dropped. See #7286.
+
 Use the dashboard at `/dashboard/providers` to enable, configure, and test each provider.
 
 ---
 
-## OAuth Providers (22)
+## OAuth Providers (23)
 
 | ID             | Alias        | Name                 | Tags  | Website                                                                   | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | -------------- | ------------ | -------------------- | ----- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -58,7 +60,7 @@ Use the dashboard at `/dashboard/providers` to enable, configure, and test each 
 | `zed`          | `zd`         | Zed IDE              | OAuth | [link](https://zed.dev)                                                   | Zed stores LLM provider credentials (OpenAI, Anthropic, Google, Mistral, xAI) in the OS keychain. Use the Import button below to discover and import them automatically.                                                                                                                                                                                                                                                                                                                |
 | `zed-hosted`   | —            | Zed Hosted Models    | OAuth | [link](https://zed.dev)                                                   | Sign in with your Zed account (native-app sign-in). OmniRoute generates a one-time RSA keypair and opens zed.dev to authorize it — on a remote/headless install, copy the resulting 127.0.0.1 callback URL from your browser's address bar and paste it back here. Distinct from the 'Zed IDE' credential-import entry above: this proxies chat completions through Zed's own hosted model aggregator (cloud.zed.dev), fronting Anthropic/OpenAI/Google/xAI models under your Zed plan. |
 
-## Web Cookie Providers (25)
+## Web Cookie Providers (31)
 
 | ID                 | Alias           | Name                            | Tags       | Website                                   | Notes                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ------------------ | --------------- | ------------------------------- | ---------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -88,7 +90,7 @@ Use the dashboard at `/dashboard/providers` to enable, configure, and test each 
 | `zai-web`          | `zw`            | Z.ai Web (Free)                 | Web cookie | [link](https://chat.z.ai)                 | Paste the full Cookie header from chat.z.ai (must include the token=<JWT> cookie)                                                                                                                                                                                                                                                                                                                                   |
 | `zenmux-free`      | `zmf`           | ZenMux Free (Web)               | Web cookie | [link](https://zenmux.ai)                 | Login at zenmux.ai, then export all cookies using EditThisCookie or Cookie-Editor and paste the full Cookie header string here. Refresh every ~30 days.                                                                                                                                                                                                                                                             |
 
-## API Key Providers (paid / paid-with-free-credits) (167)
+## API Key Providers (paid / paid-with-free-credits) (195)
 
 | ID                    | Alias          | Name                            | Tags                  | Website                                                                                                  | Notes                                                                                                                                                                                                                                                            |
 | --------------------- | -------------- | ------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -277,7 +279,7 @@ Use the dashboard at `/dashboard/providers` to enable, configure, and test each 
 | `vllm`                | `vllm`       | vLLM                | Local, self-hosted | [link](https://github.com/vllm-project/vllm)                    | API key optional. Configure the local vLLM OpenAI-compatible base URL (default: http://localhost:8000/v1).                                                                                                                                                           |
 | `xinference`          | `xinference` | XInference          | Local, self-hosted | [link](https://inference.readthedocs.io)                        | API key optional. Configure the local XInference OpenAI-compatible base URL (default: http://localhost:9997/v1).                                                                                                                                                     |
 
-## Search Providers (11)
+## Search Providers (12)
 
 | ID                  | Alias           | Name                       | Tags   | Website                                                         | Notes                                                                                                 |
 | ------------------- | --------------- | -------------------------- | ------ | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -293,7 +295,7 @@ Use the dashboard at `/dashboard/providers` to enable, configure, and test each 
 | `tavily-search`     | `tavily-search` | Tavily Search              | Search | [link](https://tavily.com)                                      | API key from app.tavily.com (format: tvly-...)                                                        |
 | `youcom-search`     | `youcom-search` | You.com Search             | Search | [link](https://you.com/business/api/)                           | X-API-Key from the You.com platform dashboard                                                         |
 
-## Audio-only Providers (7)
+## Audio-only Providers (11)
 
 | ID           | Alias      | Name       | Tags  | Website                               | Notes                                                                                           |
 | ------------ | ---------- | ---------- | ----- | ------------------------------------- | ----------------------------------------------------------------------------------------------- |

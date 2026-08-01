@@ -1,5 +1,11 @@
 import { BaseGuardrail, type GuardrailContext, type GuardrailResult } from "./base";
 import { extractPromptInjectionContents, sanitizeRequest } from "@/shared/utils/inputSanitizer";
+import { parseEnvBoolean } from "@/shared/utils/envBoolean";
+import {
+  resolveBlockThreshold,
+  shouldBlockDetections,
+  SEVERITY_SCORES as SHARED_SEVERITY_SCORES,
+} from "@/shared/utils/injectionSeverity";
 
 type Detection = {
   match: string;
@@ -47,11 +53,7 @@ const DEFAULT_GUARD_PATTERNS: PatternLike[] = [
   },
 ];
 
-const SEVERITY_SCORES = {
-  high: 3,
-  low: 1,
-  medium: 2,
-};
+const SEVERITY_SCORES = SHARED_SEVERITY_SCORES;
 
 const SILENT_SANITIZER_LOGGER = {
   info: () => {},
@@ -104,10 +106,7 @@ function detectWithPatterns(text: string, patterns: ReturnType<typeof normalizeP
 }
 
 function shouldBlock(detections: Detection[], threshold: "low" | "medium" | "high") {
-  const minimumSeverity = SEVERITY_SCORES[threshold] || SEVERITY_SCORES.high;
-  return detections.some(
-    (detection) => (SEVERITY_SCORES[detection.severity] || 0) >= minimumSeverity
-  );
+  return shouldBlockDetections(detections, threshold);
 }
 
 function getLogger(options: PromptInjectionGuardrailOptions, context: GuardrailContext) {
@@ -139,11 +138,11 @@ function getMode(options: PromptInjectionGuardrailOptions) {
 }
 
 function getThreshold(options: PromptInjectionGuardrailOptions) {
-  return (options.blockThreshold || "high") as "low" | "medium" | "high";
+  return resolveBlockThreshold(options.blockThreshold);
 }
 
 function isEnabled(options: PromptInjectionGuardrailOptions) {
-  return options.enabled ?? process.env.INPUT_SANITIZER_ENABLED !== "false";
+  return options.enabled ?? parseEnvBoolean(process.env.INPUT_SANITIZER_ENABLED, true);
 }
 
 export function evaluatePromptInjection(

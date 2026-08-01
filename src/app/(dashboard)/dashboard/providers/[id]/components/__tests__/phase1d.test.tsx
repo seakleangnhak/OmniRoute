@@ -119,6 +119,31 @@ describe("phase-1d extractions (#3501)", () => {
     expect(c).toBeDefined();
   });
 
+  it("ConnectionRow toggles Provider Quota visibility", () => {
+    const onToggleQuotaVisibility = vi.fn();
+    const c = renderComponent(
+      <ConnectionRow
+        connection={{ id: "conn-quota", name: "Hidden quota", quotaVisible: false }}
+        isOAuth={false}
+        isFirst={true}
+        isLast={true}
+        onMoveUp={vi.fn()}
+        onMoveDown={vi.fn()}
+        onToggleActive={vi.fn()}
+        onToggleRateLimit={vi.fn()}
+        onToggleQuotaVisibility={onToggleQuotaVisibility}
+        onRetest={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    );
+
+    const button = c.querySelector('button[aria-pressed="false"]') as HTMLButtonElement;
+    expect(button).not.toBeNull();
+    act(() => button.click());
+    expect(onToggleQuotaVisibility).toHaveBeenCalledWith(true);
+  });
+
   it("ConnectionRow renders cooldown badge when rateLimitedUntil is in the future", () => {
     const conn = {
       id: "conn-3",

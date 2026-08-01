@@ -10,7 +10,7 @@ import { HTTP_STATUS } from "@omniroute/open-sse/config/constants.ts";
 import { enforceApiKeyPolicy } from "@/shared/utils/apiKeyPolicy";
 import { v1RerankSchema } from "@/shared/validation/schemas";
 import { isValidationFailure, validateBody } from "@/shared/validation/helpers";
-import { getProviderNodes } from "@/lib/localDb";
+import { getCachedProviderNodes } from "@/lib/localDb";
 import {
   isAllRateLimitedCredentials,
   rateLimitedProviderResponse,
@@ -76,7 +76,7 @@ async function postHandler(request) {
   // Load local provider_nodes for rerank routing (localhost only)
   let localProviders: ReturnType<typeof buildDynamicRerankProvider>[] = [];
   try {
-    const nodes = await getProviderNodes();
+    const nodes = await getCachedProviderNodes();
     localProviders = (Array.isArray(nodes) ? nodes : [])
       .filter((n: any) => {
         try {
@@ -123,6 +123,7 @@ async function postHandler(request) {
       top_n: body.top_n,
       return_documents: body.return_documents,
       credentials,
+      connectionId: (credentials as { connectionId?: string } | null)?.connectionId || null,
     });
     if (response?.ok) {
       await clearRecoveredProviderState(credentials);

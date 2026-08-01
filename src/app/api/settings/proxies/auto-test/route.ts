@@ -99,7 +99,8 @@ export async function POST(request: Request) {
   const { ids: specificIds, autoRemove } = validation.data;
 
   try {
-    const allProxies = await listProxies({ includeSecrets: false });
+    const result = await listProxies({ includeSecrets: false });
+    const allProxies = result.items;
     const proxiesToTest = specificIds
       ? allProxies.filter((p) => specificIds.includes(p.id))
       : allProxies;

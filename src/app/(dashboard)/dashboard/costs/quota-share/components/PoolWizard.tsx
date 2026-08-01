@@ -860,7 +860,7 @@ export default function PoolWizard({
                         value={a.weight}
                         onChange={(e) => updateWeight(a.apiKeyId, Number(e.target.value))}
                         className="px-2 py-1 rounded border border-border bg-bg-base text-sm text-right tabular-nums"
-                        title="Weight %"
+                        title={t("weightPercent")}
                       />
                       <input
                         type="number"

@@ -2,6 +2,8 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { NextIntlClientProvider } from "next-intl";
+import messages from "../../../src/i18n/messages/en.json";
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -15,7 +17,11 @@ function mountInContainer(ui: React.ReactElement): HTMLElement {
   const root = createRoot(container);
   roots.push(root);
   act(() => {
-    root.render(ui);
+    root.render(
+      <NextIntlClientProvider locale="en" messages={{ contextCombos: messages.contextCombos }}>
+        {ui}
+      </NextIntlClientProvider>
+    );
   });
   return container;
 }
@@ -111,10 +117,13 @@ async function flush() {
 // ── Tests ─────────────────────────────────────────────────────────────────
 
 describe("CompressionHub", () => {
-  it("renders the master switch, mode selector, and the layered pipeline", async () => {
-    setupFetchMock({ enabled: true, mode: "stacked", pipeline: [{ engine: "rtk" }] });
-    const { default: CompressionHub } =
-      await import("../../../src/app/(dashboard)/dashboard/context/combos/CompressionHub");
+  // NOTE: the master Token Saver toggle, mode selector, and layered-pipeline
+  // preview this describe block used to assert on were removed by the Phase 2
+  // Hub redesign (see the "Phase 2" comment at the top of CompressionHub.tsx —
+  // the Hub is now a thin overview with just an active-profile selector + the
+  // Context Editing toggle). That redesign, including the explicit assertion
+  // that the master toggle/mode selector/reorder buttons no longer render, is
+  // covered by compressionHub-active-selector.test.tsx.
 
     let container!: HTMLElement;
     await act(async () => {

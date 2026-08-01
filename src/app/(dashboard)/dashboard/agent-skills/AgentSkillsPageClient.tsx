@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { SkillsConceptCard } from "@/shared/components/SkillsConceptCard";
+import { matchesSearch } from "@/shared/utils/turkishText";
 import { CoverageBar } from "./components/CoverageBar";
 import { McpA2aLinksBar } from "./components/McpA2aLinksBar";
 import { SkillCard } from "./components/SkillCard";
@@ -161,14 +162,27 @@ export function AgentSkillsPageClient(): JSX.Element {
   }, [t]);
 
   // ── Filtering + search ────────────────────────────────────────────────────
-  const filteredSkills = catalog.filter((s) => {
+  const localizedCatalog = useMemo(
+    () =>
+      catalog.map((skill) => {
+        const nameKey = `catalog.${skill.id}.name`;
+        const descriptionKey = `catalog.${skill.id}.description`;
+        return {
+          ...skill,
+          name: t.has(nameKey) ? t(nameKey) : skill.name,
+          description: t.has(descriptionKey) ? t(descriptionKey) : skill.description,
+        };
+      }),
+    [catalog, t]
+  );
+
+  const filteredSkills = localizedCatalog.filter((s) => {
     if (filter !== "all" && s.category !== filter) return false;
     if (searchTerm.trim()) {
-      const q = searchTerm.toLowerCase();
       return (
-        s.name.toLowerCase().includes(q) ||
-        s.description.toLowerCase().includes(q) ||
-        s.id.toLowerCase().includes(q)
+        matchesSearch(s.name, searchTerm) ||
+        matchesSearch(s.description, searchTerm) ||
+        matchesSearch(s.id, searchTerm)
       );
     }
     return true;

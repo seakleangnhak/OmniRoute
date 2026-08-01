@@ -5,6 +5,8 @@ import { Card, Button, ModelSelectModal, ManualConfigModal } from "@/shared/comp
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import CliStatusBadge from "./CliStatusBadge";
 import ClaudeClassifierCompatToggle from "./ClaudeClassifierCompatToggle";
+import ClaudeCcDiscoveryInfoButton from "./ClaudeCcDiscoveryInfoButton";
+import ClaudeGatewayOnboardingBlock from "./ClaudeGatewayOnboardingBlock";
 import { useTranslations } from "next-intl";
 import {
   getStoredClaudeAuthValue,
@@ -489,6 +491,12 @@ export default function ClaudeToolCard({
 
               {/* Opt-in (default off): Claude Code auto-permission classifier compat mode. */}
               <ClaudeClassifierCompatToggle />
+
+              {/* Info link to the discovery-alias gate (claude/<provider>/<model> mirror ids) */}
+              <ClaudeCcDiscoveryInfoButton />
+
+              {/* Copy-paste settings.json for gateway model discovery */}
+              <ClaudeGatewayOnboardingBlock baseUrl={getEffectiveBaseUrl()} />
 
               {message && (
                 <div

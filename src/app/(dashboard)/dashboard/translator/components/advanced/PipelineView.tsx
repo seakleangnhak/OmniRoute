@@ -134,10 +134,12 @@ export default function PipelineView({
 
   // Sync forceOpen changes from parent after mount.
   useEffect(() => {
-    if (forceOpen && !open) {
+    if (!forceOpen || open) return;
+    const openFromDeepLink = setTimeout(() => {
       setOpen(true);
       setHasOpened(true);
-    }
+    }, 0);
+    return () => clearTimeout(openFromDeepLink);
   }, [forceOpen, open]);
 
   const handleOpenChange = useCallback(
@@ -198,7 +200,11 @@ export default function PipelineView({
             )}
 
             {/* Step list */}
-            <div className="space-y-1" role="list" aria-label="Pipeline steps">
+            <div
+              className="space-y-1"
+              role="list"
+              aria-label={tr("pipelineStepsAria", "Pipeline steps")}
+            >
               {steps.map((step, i) => {
                 const meta = (step.format && FORMAT_META[step.format]) ?? {
                   label: step.format ?? "unknown",

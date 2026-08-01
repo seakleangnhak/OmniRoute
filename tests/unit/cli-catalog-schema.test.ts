@@ -61,7 +61,7 @@ test("CliCatalogEntrySchema throws ZodError for invalid baseUrlSupport value", (
 });
 
 test("CliCatalogEntrySchema throws ZodError when required string fields are empty", () => {
-  const base = { ...CLI_TOOLS["qwen"] };
+  const base = { ...CLI_TOOLS["opencode"] };
   const invalid = { ...base, vendor: "" };
   assert.throws(
     () => CliCatalogEntrySchema.parse(invalid),

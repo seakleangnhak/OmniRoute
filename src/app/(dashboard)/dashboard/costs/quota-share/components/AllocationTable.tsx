@@ -41,11 +41,11 @@ export default function AllocationTable({ allocations, usage, keyLabels }: Alloc
       <table className="w-full text-[11px]">
         <thead>
           <tr className="text-[10px] uppercase tracking-wide text-text-muted border-b border-border/40">
-            <th className="text-left py-1 pr-2 font-semibold">API Key</th>
-            <th className="text-right py-1 pr-2 font-semibold">Weight</th>
+            <th className="text-left py-1 pr-2 font-semibold">{t("apiKeyColumn")}</th>
+            <th className="text-right py-1 pr-2 font-semibold">{t("weightColumn")}</th>
             <th className="text-right py-1 pr-2 font-semibold">{t("realConsumedColumn")}</th>
             <th className="text-right py-1 pr-2 font-semibold">{t("deficitColumn")}</th>
-            <th className="text-right py-1 font-semibold">Policy</th>
+            <th className="text-right py-1 font-semibold">{t("policy")}</th>
           </tr>
         </thead>
         <tbody>
@@ -103,7 +103,7 @@ export default function AllocationTable({ allocations, usage, keyLabels }: Alloc
                   )}
                   {fairShare !== null && (
                     <span className="text-[9px] text-text-muted ml-1">
-                      (fair: {fairShare.toLocaleString()})
+                      ({t("fairShareShort")}: {fairShare.toLocaleString()})
                     </span>
                   )}
                 </td>
@@ -117,7 +117,7 @@ export default function AllocationTable({ allocations, usage, keyLabels }: Alloc
                           : "bg-emerald-500/10 text-emerald-400"
                     }`}
                   >
-                    {alloc.policy}
+                    {t(`policy${alloc.policy[0].toUpperCase()}${alloc.policy.slice(1)}`)}
                   </span>
                 </td>
               </tr>

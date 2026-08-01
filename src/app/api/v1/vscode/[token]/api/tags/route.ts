@@ -19,6 +19,7 @@ import {
 } from "@/app/api/v1/vscode/[token]/serviceTierVariants";
 import { getFamilyFirstPublishedModelId } from "@/app/api/v1/vscode/[token]/familyFirstModelIds";
 import { withPathTokenApiKey } from "@/app/api/v1/vscode/[token]/tokenizedRequest";
+import { isUsableChatModel } from "@/app/api/v1/vscode/[token]/usableChatModel";
 
 type OpenAiCatalogModel = {
   id?: string;

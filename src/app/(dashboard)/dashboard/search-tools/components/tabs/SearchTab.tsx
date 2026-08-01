@@ -49,6 +49,7 @@ interface SearchTabProps {
 }
 
 import { useState, useRef } from "react";
+import { useTranslations } from "next-intl";
 
 export default function SearchTab({
   configState,
@@ -112,9 +113,9 @@ export default function SearchTab({
     } catch (err: unknown) {
       setDuration(Date.now() - start);
       if (err instanceof Error && err.name === "AbortError") {
-        setError("Request timed out after 15s");
+        setError(t("requestTimedOut", { seconds: 15 }));
       } else {
-        setError(err instanceof Error ? err.message : "Network error");
+        setError(err instanceof Error ? err.message : t("networkError"));
       }
     } finally {
       setLoading(false);
@@ -174,7 +175,7 @@ export default function SearchTab({
               <span className="text-primary text-sm" aria-hidden="true">
                 &#8645;
               </span>
-              <span className="text-xs text-text-muted">Rerank</span>
+              <span className="text-xs text-text-muted">{t("rerank")}</span>
             </button>
           </div>
         )}

@@ -76,15 +76,6 @@ omniroute backup disable
 
 ### `backup status`
 
-**Flags:**
-
-- `--name <name>`
-- `--cloud`
-- `--encrypt`
-- `--key-file <path>`
-- `--exclude <pattern>`
-- `--retention <n>`
-
 **Example:**
 
 ```bash

@@ -5,7 +5,10 @@
 //  - arquivo congelado: só pode ENCOLHER (nunca crescer);
 //  - arquivo NOVO (fora do baseline): não pode passar do CAP.
 // Assim o próximo arquivo de 12.760 linhas é impossível, e os 91 atuais só melhoram.
-// --update ratcheta o baseline para baixo (encolhimentos + remove quem caiu < cap).
+// --update ratcheta o baseline para baixo: encolhimentos + remove toda entrada que
+// já cabe no cap, inclusive quem NÃO encolheu nesta rodada (loc === frozen[file]).
+// Antes a remoção só acontecia dentro do ramo de encolhimento, então uma entrada
+// igual ao próprio teto ficava presa no baseline para sempre — ver #8584.
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -25,21 +28,30 @@ const SKIP_DIRS = new Set(["node_modules", "dist-electron", ".next", ".build", "
 
 /**
  * Avalia LOC atuais contra o baseline congelado.
- * @returns {{violations: string[], improvements: [string, number][]}}
+ *
+ * `redundant` (#8584): entrada que NAO precisa mais existir — o arquivo esta
+ * exatamente no valor congelado E ja cabe no cap de arquivo novo. Antes, a
+ * remocao do baseline so acontecia dentro do ramo de `improvements`
+ * (loc < frozen), entao uma entrada igual ao proprio teto nunca saia da lista,
+ * por mais abaixo do cap que estivesse (3 casos reais no v3.8.49).
+ *
+ * @returns {{violations: string[], improvements: [string, number][], redundant: string[]}}
  */
 export function evaluateFileSizes(currentLocByFile, frozen, cap) {
   const violations = [];
   const improvements = [];
+  const redundant = [];
   for (const [file, loc] of Object.entries(currentLocByFile)) {
     if (file in frozen) {
       if (loc > frozen[file])
         violations.push(`${file}: ${loc} > congelado ${frozen[file]} (não pode crescer)`);
       else if (loc < frozen[file]) improvements.push([file, loc]);
+      else if (loc <= cap) redundant.push(file);
     } else if (loc > cap) {
       violations.push(`${file}: ${loc} > cap ${cap} (arquivo novo acima do limite)`);
     }
   }
-  return { violations, improvements };
+  return { violations, improvements, redundant };
 }
 
 function countLines(file) {
@@ -80,7 +92,7 @@ function main() {
   const cap = baseline.cap;
   const frozen = baseline.frozen || {};
   const current = collectLoc();
-  const { violations, improvements } = evaluateFileSizes(current, frozen, cap);
+  const { violations, improvements, redundant } = evaluateFileSizes(current, frozen, cap);
 
   if (UPDATE && violations.length === 0 && improvements.length) {
     for (const [file, loc] of improvements) {

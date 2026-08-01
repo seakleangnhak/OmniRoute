@@ -49,6 +49,8 @@ services:
     build:
       context: .
       target: runner-cli
+      args:
+        OMNIROUTE_BASE_PATH: ${OMNIROUTE_BASE_PATH:-}
     image: omniroute:prod
     restart: unless-stopped
     stop_grace_period: 40s

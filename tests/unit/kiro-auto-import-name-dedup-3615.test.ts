@@ -35,7 +35,14 @@ test.after(() => {
 import {
   deriveKiroConnectionName,
   findKiroConnectionByProfileArn,
+  resolveKiroCliAuthMethod,
 } from "../../src/app/api/oauth/kiro/auto-import/route.ts";
+
+test("kiro-cli source keeps Builder ID and IdC as distinct auth methods", () => {
+  assert.equal(resolveKiroCliAuthMethod(undefined), "builder-id");
+  assert.equal(resolveKiroCliAuthMethod(null), "builder-id");
+  assert.equal(resolveKiroCliAuthMethod("arn:aws:codewhisperer:eu-central-1:1:profile/IDC"), "idc");
+});
 
 // ── (a) Display name derivation ───────────────────────────────────────────────
 

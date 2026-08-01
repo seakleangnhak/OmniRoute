@@ -3,6 +3,7 @@ import { ExecuteInput, type ProviderCredentials } from "./base.ts";
 import { applyProviderRequestDefaults } from "../services/providerRequestDefaults.ts";
 import { NON_ANTHROPIC_THINKING_PLACEHOLDER } from "../translator/helpers/claudeHelper.ts";
 type JsonRecord = Record<string, unknown>;
+type KimiProtocol = "openai" | "claude";
 
 function hasActiveKimiThinking(body: JsonRecord): boolean {
   const thinking = body.thinking;
@@ -96,29 +97,23 @@ function asRecord(value: unknown): JsonRecord | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : null;
 }
 
-function applyKimiRequestDefaults(body: unknown, defaults?: JsonRecord | null): unknown {
-  const withDefaults = applyProviderRequestDefaults(body, defaults);
-  const record = asRecord(withDefaults);
-  if (!record || !Array.isArray(record.messages)) {
-    return withDefaults;
+function resolveKimiProtocol(
+  credentials: ProviderCredentials | null | undefined,
+  body?: unknown
+): KimiProtocol {
+  const targetFormat = credentials?.providerSpecificData?._omnirouteKimiTargetFormat;
+  if (targetFormat === FORMATS.OPENAI) return "openai";
+  if (targetFormat === FORMATS.CLAUDE) return "claude";
+
+  const record = asRecord(body);
+  if (
+    record?.system !== undefined ||
+    record?.output_config !== undefined ||
+    record?.context_management !== undefined
+  ) {
+    return "claude";
   }
-
-  const kimiBody = disableKimiPreservedThinking(record);
-
-  if (!hasActiveKimiThinking(kimiBody)) return kimiBody;
-
-  let modified = false;
-  const sourceMessages = Array.isArray(kimiBody.messages) ? kimiBody.messages : record.messages;
-  const messages = sourceMessages.map((message: unknown) => {
-    const msg = asRecord(message);
-    if (!msg || msg.role !== "assistant" || !hasAssistantToolCalls(msg)) return message;
-
-    const nextMessage = ensureKimiThinkingContent(msg);
-    if (nextMessage !== msg) modified = true;
-    return nextMessage;
-  });
-
-  return modified ? { ...kimiBody, messages } : kimiBody;
+  return "openai";
 }
 
 export class KimiExecutor extends DefaultExecutor {
@@ -126,14 +121,61 @@ export class KimiExecutor extends DefaultExecutor {
     super(provider);
   }
 
+  buildUrl(
+    model: string,
+    stream: boolean,
+    urlIndex = 0,
+    credentials: ProviderCredentials | null = null
+  ): string {
+    void model;
+    void stream;
+    void urlIndex;
+    return resolveKimiProtocol(credentials) === "claude"
+      ? KIMI_CODING_ANTHROPIC_URL
+      : KIMI_CODING_OPENAI_URL;
+  }
+
+  buildHeaders(
+    credentials: ProviderCredentials,
+    stream = true,
+    clientHeaders?: Record<string, string> | null
+  ): Record<string, string> {
+    const headers = super.buildHeaders(credentials, stream, clientHeaders);
+    const protocol = resolveKimiProtocol(credentials);
+    const token = headers["x-api-key"] || credentials.apiKey || credentials.accessToken || "";
+
+    if (protocol === "claude") {
+      deleteHeaders(headers, ["authorization"]);
+      headers["x-api-key"] = token;
+      headers["Anthropic-Version"] = "2023-06-01";
+    } else {
+      deleteHeaders(headers, ["x-api-key", "anthropic-version", "anthropic-beta"]);
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    if (credentials.accessToken && !credentials.apiKey) {
+      Object.assign(headers, buildKimiCodeIdentityHeaders(credentials.providerSpecificData || {}), {
+        "User-Agent": getKimiCodeCliUserAgent(),
+      });
+    }
+    return headers;
+  }
+
   transformRequest(
     model: string,
     body: unknown,
     stream: boolean,
     credentials: ProviderCredentials
-  ) {
+  ): unknown {
     const cleanedBody = super.transformRequest(model, body, stream, credentials);
-    return applyKimiRequestDefaults(cleanedBody);
+    const record = asRecord(cleanedBody);
+    if (!record) return cleanedBody;
+    const policy = getThinkingPolicy(credentials);
+    const normalized =
+      resolveKimiProtocol(credentials, record) === "claude"
+        ? normalizeAnthropicRequest(record, policy)
+        : normalizeOpenAIRequest(record, stream, policy);
+    return stream ? { ...normalized, stream: true } : normalized;
   }
 }
 

@@ -1,10 +1,24 @@
 # Podman Deployment
 
-Run OmniRoute with Podman via **Quadlet** (systemd integration) or **podman compose**.
+Run OmniRoute with **podman compose** on Linux, macOS, or Windows, or with
+**Quadlet** on a Linux host that runs systemd.
 
 ---
 
-## Option A: Quadlet (recommended)
+## Choose the deployment path
+
+- **Linux with a local Podman engine and user systemd:** Compose or Quadlet.
+- **macOS or Windows:** Compose. Podman runs containers in a remote Linux VM
+  managed by Podman Machine; host-side `systemctl` and `podman unshare` do not
+  operate on that engine.
+- **Any other remote Podman connection (including an optional Linux Podman
+  Machine):** treat it like Podman Machine, not like a local rootless engine.
+
+## Option A: Quadlet (Linux + systemd only)
+
+Use this option only when the Podman engine and user systemd instance run on the
+same Linux host. The `systemctl --user` commands below do not configure a Podman
+Machine from a macOS or Windows host.
 
 ### 1. Build the image
 
@@ -61,34 +75,19 @@ To follow logs:
 journalctl --user -u omniroute -f
 ```
 
-### 6. Enable on boot
-
-```bash
-systemctl --user enable omniroute-redis
-systemctl --user enable omniroute
-```
+The checked-in Quadlet files already contain `[Install]` sections with
+`WantedBy=default.target`. The Quadlet generator applies those sections during
+`systemctl --user daemon-reload`. Generated Quadlet services are transient
+systemd units and must not be enabled with `systemctl enable`.
 
 ---
 
-## Option B: podman compose
+## Option B: podman compose (all supported host platforms)
 
 The project's `docker-compose.yml` now works with both Docker and Podman.
 Just set `CONTAINER_HOST=podman` in `.env` before starting.
 
-### 1. Prepare the data directory
-
-Rootless Podman maps container UIDs into a subordinate range. The
-`node` user (UID 1000) inside the container maps to a different UID
-on the host, so it cannot write to `./data` owned by your host user.
-
-Fix the ownership **before** starting:
-
-```bash
-mkdir -p data
-podman unshare chown 1000:1000 ./data
-```
-
-### 2. Set the runtime in `.env`
+### 1. Set the runtime in `.env`
 
 Make sure `.env` contains:
 
@@ -96,10 +95,31 @@ Make sure `.env` contains:
 CONTAINER_HOST=podman
 ```
 
-### 3. Start
+### 2. Prepare the data directory
+
+The Compose profiles bind-mount `./data` at `/app/data`. Create the directory,
+then use the permission guidance for your engine topology below.
 
 ```bash
-podman compose --profile base up -d
+mkdir -p data
+```
+
+### 3. Build and start
+
+The application profiles use local image names such as `omniroute:base`; those
+are build outputs, not published Docker Hub tags. On the first run, have Compose
+build the selected profile:
+
+```bash
+podman compose --profile base up -d --build
+```
+
+Alternatively, build the matching target explicitly and tell Compose to reuse
+that local image:
+
+```bash
+podman build --target runner-base -t omniroute:base .
+podman compose --profile base up -d --no-build
 ```
 
 ### Profiles
@@ -126,4 +146,6 @@ The entrypoint script (`check-permissions.sh`) reads `CONTAINER_HOST`
 from `.env` to give the correct fix instructions:
 
 - **docker**: `sudo chown -R ... ./data`
-- **podman**: `podman unshare chown 1000:1000 ./data`
+- **podman**: a topology-neutral warning that points back to this guide, because
+  the container cannot tell whether its engine is local or reached through
+  Podman Machine.

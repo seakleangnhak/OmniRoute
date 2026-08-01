@@ -1,13 +1,19 @@
 import {
+  handleAdobeFireflyImageGeneration,
+  handleCodexImageEdit,
   handleImageEdit,
   handleOpenAIImageEdit,
 } from "@omniroute/open-sse/handlers/imageGeneration.ts";
-import { withInjectionGuard } from "@/middleware/promptInjectionGuard";
+import { createInjectionGuard } from "@/middleware/promptInjectionGuard";
 import {
   getProviderCredentialsWithQuotaPreflight,
   clearRecoveredProviderState,
 } from "@/sse/services/auth";
-import { parseImageModel, getImageProvider } from "@omniroute/open-sse/config/imageRegistry.ts";
+import {
+  parseImageModel,
+  getImageProvider,
+  getImageModelEntry,
+} from "@omniroute/open-sse/config/imageRegistry.ts";
 import { errorResponse, unavailableResponse } from "@omniroute/open-sse/utils/error.ts";
 import { HTTP_STATUS } from "@omniroute/open-sse/config/constants.ts";
 import * as log from "@/sse/utils/logger";
@@ -17,7 +23,17 @@ import { enforceClientApiAuth } from "../../_helpers/clientApiAuth";
 import {
   resolveImageRouteModel,
   extractImageEditInputFromJson,
+  validateCodexImageEditReferences,
 } from "@/lib/images/imageRouteModel";
+import { resolveProxyForConnection } from "@/lib/localDb";
+import { runWithProxyContext } from "@omniroute/open-sse/utils/proxyFetch.ts";
+import { isCodexFreePlan } from "@omniroute/open-sse/executors/codex/tools.ts";
+import {
+  getBodySizeLimit,
+  readRequestBodyWithLimit,
+  RequestBodyTooLargeError,
+} from "@/shared/middleware/bodySizeGuard";
+import { getCachedSettings } from "@/lib/db/readCache";
 import { z } from "zod";
 
 // JSON edit body (Open WebUI / OpenAI-style). All fields optional — the prompt
@@ -109,6 +125,8 @@ function pickCacheId(body: Record<string, unknown>): string | null {
   );
 }
 
+const MAX_NON_CODEX_IMAGE_EDIT_REFERENCES = 1;
+
 async function readMultipartImage(formData: FormData): Promise<EditInput> {
   const promptRaw = formData.get("prompt");
   const prompt = typeof promptRaw === "string" ? promptRaw.trim() : "";
@@ -138,9 +156,20 @@ async function readMultipartImage(formData: FormData): Promise<EditInput> {
 /** Read the edit input from either multipart/form-data or a JSON/data-URL body. */
 async function readEditInput(request: Request): Promise<EditInput | null> {
   const contentType = request.headers.get("content-type") || "";
+  let bodySizeSettings: Record<string, unknown> | undefined;
+  try {
+    bodySizeSettings = await getCachedSettings();
+  } catch {
+    bodySizeSettings = undefined;
+  }
+  const bodySizeLimit = getBodySizeLimit("/api/v1/images/edits", bodySizeSettings);
+  const rawBody = await readRequestBodyWithLimit(request, bodySizeLimit);
   if (contentType.includes("multipart/form-data")) {
     try {
-      return await readMultipartImage(await request.formData());
+      const formData = await new Response(rawBody, {
+        headers: { "content-type": contentType },
+      }).formData();
+      return await readMultipartImage(formData);
     } catch (err) {
       log.warn("IMAGE", `Invalid multipart body: ${err instanceof Error ? err.message : err}`);
       return null;
@@ -148,7 +177,9 @@ async function readEditInput(request: Request): Promise<EditInput | null> {
   }
   if (contentType.includes("application/json")) {
     try {
-      const parsed = ImageEditJsonSchema.safeParse(await request.json());
+      const parsed = ImageEditJsonSchema.safeParse(
+        JSON.parse(new TextDecoder().decode(rawBody)) as unknown
+      );
       if (!parsed.success) {
         log.warn("IMAGE", `Invalid JSON edit body shape: ${parsed.error.message}`);
         return null;
@@ -210,7 +241,24 @@ async function postHandler(request: Request) {
   const resolvedModel = await resolveImageRouteModel(fullModel);
   const parsed = parseImageModel(resolvedModel);
   const providerConfig = parsed.provider ? getImageProvider(parsed.provider) : null;
-
+  // Firefly nano/gpt-image accept multiple reference blobs; other non-Codex stay at 1.
+  const maxRefsForProvider =
+    providerConfig?.format === "adobe-firefly-image"
+      ? 4
+      : providerConfig?.format === "codex-responses"
+        ? Number.POSITIVE_INFINITY
+        : MAX_NON_CODEX_IMAGE_EDIT_REFERENCES;
+  if (
+    providerConfig?.format !== "codex-responses" &&
+    imageInputCount > maxRefsForProvider
+  ) {
+    return errorResponse(
+      HTTP_STATUS.BAD_REQUEST,
+      providerConfig?.format === "adobe-firefly-image"
+        ? "Adobe Firefly image edit supports at most 4 reference images"
+        : "This image edit provider currently supports only one reference image"
+    );
+  }
   // chatgpt-web keeps its conversation-continuation edit flow unchanged.
   if (providerConfig?.format === "chatgpt-web") {
     const credentials = await getProviderCredentialsWithQuotaPreflight(
@@ -264,12 +312,118 @@ async function postHandler(request: Request) {
     );
   }
 
-  // Built-in non-chatgpt-web providers do not expose an OpenAI-compatible edit endpoint.
+  // Built-in Codex uses its native Responses hosted tool for stateless reference-image edits.
+  if (providerConfig?.format === "codex-responses") {
+    const modelEntry = getImageModelEntry(resolvedModel);
+    if (!modelEntry || modelEntry.provider !== "codex" || modelEntry.model !== parsed.model) {
+      return errorResponse(
+        HTTP_STATUS.BAD_REQUEST,
+        `Unsupported Codex image edit model: ${resolvedModel}`
+      );
+    }
+    const imageValidationError = validateCodexImageEditReferences(images);
+    if (imageValidationError) {
+      return errorResponse(HTTP_STATUS.BAD_REQUEST, imageValidationError);
+    }
+
+    const credentials = await getProviderCredentialsWithQuotaPreflight(
+      parsed.provider,
+      null,
+      allowedConnections,
+      resolvedModel
+    );
+    if (!credentials) {
+      return errorResponse(
+        HTTP_STATUS.UNAUTHORIZED,
+        `No credentials for provider: ${parsed.provider}`
+      );
+    }
+    if (credentials.allRateLimited) {
+      return unavailableResponse(
+        HTTP_STATUS.RATE_LIMITED,
+        `[${parsed.provider}] All accounts rate limited`,
+        credentials.retryAfter,
+        credentials.retryAfterHuman
+      );
+    }
+    const credentialDetails = credentials as {
+      connectionId?: unknown;
+      providerSpecificData?: unknown;
+    };
+    if (isCodexFreePlan(credentialDetails.providerSpecificData)) {
+      return errorResponse(
+        HTTP_STATUS.BAD_REQUEST,
+        "Codex image editing requires a paid ChatGPT/Codex plan"
+      );
+    }
+
+    const connectionId =
+      typeof credentialDetails.connectionId === "string" ? credentialDetails.connectionId : null;
+    let proxyInfo = null;
+    if (connectionId) {
+      try {
+        proxyInfo = await resolveProxyForConnection(connectionId);
+      } catch {
+        log.debug("PROXY", `Failed to resolve proxy for image provider: ${parsed.provider}`);
+      }
+    }
+
+    const editImage = () =>
+      handleCodexImageEdit({
+        provider: parsed.provider,
+        model: parsed.model,
+        providerConfig,
+        body: {
+          prompt,
+          size: size ?? undefined,
+          response_format: responseFormat ?? undefined,
+        },
+        referenceImages: images,
+        credentials,
+        log,
+        signal: request.signal,
+      });
+
+    const result = await (connectionId
+      ? runWithProxyContext(proxyInfo?.proxy || null, editImage).catch(() => ({
+          success: false as const,
+          status: HTTP_STATUS.SERVICE_UNAVAILABLE,
+          error: "Image edit proxy error",
+        }))
+      : editImage());
+
+    if (result.success === true) {
+      await clearRecoveredProviderState(credentials);
+      return jsonResponse(result.data);
+    }
+    return jsonResponse(
+      toJsonErrorPayload(result.error, "Image edit provider error"),
+      result.status
+    );
+  }
+
+  // Adobe Firefly: edit = storage upload + generate-async referenceBlobs (same as i2i generate).
+  if (providerConfig?.format === "adobe-firefly-image") {
+    return handleAdobeFireflyEditRequest({
+      parsed,
+      providerConfig,
+      allowedConnections,
+      resolvedModel,
+      prompt,
+      size,
+      responseFormat,
+      images,
+      imageBytes,
+      imageMime,
+    });
+  }
+
+  // Other built-in providers do not expose an OpenAI-compatible edit endpoint.
   if (providerConfig) {
     return errorResponse(
       HTTP_STATUS.BAD_REQUEST,
       `Image edit is not supported for built-in provider "${parsed.provider}". ` +
-        `Use chatgpt-web or a custom OpenAI-compatible image provider.`
+        `Use adobe-firefly, chatgpt-web, codex, or a custom OpenAI-compatible image provider.`
     );
   }
 
@@ -337,4 +491,4 @@ async function postHandler(request: Request) {
   );
 }
 
-export const POST = withInjectionGuard(postHandler);
+export const POST = postHandler;

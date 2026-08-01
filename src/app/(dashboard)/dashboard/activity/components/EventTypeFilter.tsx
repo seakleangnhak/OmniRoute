@@ -3,14 +3,7 @@
 import { useTranslations } from "next-intl";
 
 export type EventCategory =
-  | "all"
-  | "providers"
-  | "combos"
-  | "apikeys"
-  | "settings"
-  | "quota"
-  | "auth"
-  | "system";
+  "all" | "providers" | "combos" | "apikeys" | "settings" | "quota" | "auth" | "system";
 
 interface EventTypeFilterProps {
   value: EventCategory;

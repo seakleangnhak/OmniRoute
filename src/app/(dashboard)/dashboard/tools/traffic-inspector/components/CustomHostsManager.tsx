@@ -49,7 +49,7 @@ export function CustomHostsManager({ onClose }: CustomHostsManagerProps) {
     setError(null);
     const parsed = HostInputSchema.safeParse(input.trim());
     if (!parsed.success) {
-      setError(parsed.error.errors[0]?.message ?? "Invalid host");
+      setError(parsed.error.errors[0]?.message ?? t("invalidHost"));
       return;
     }
     const host = parsed.data;
@@ -61,13 +61,13 @@ export function CustomHostsManager({ onClose }: CustomHostsManagerProps) {
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
-        setError(body?.error?.message ?? "Failed to add host");
+        setError(body?.error?.message ?? t("addHostFailed"));
         return;
       }
       setInput("");
       await fetchHosts();
     } catch {
-      setError("Network error");
+      setError(t("networkError"));
     }
   };
 
@@ -91,7 +91,7 @@ export function CustomHostsManager({ onClose }: CustomHostsManagerProps) {
             type="button"
             onClick={onClose}
             className="text-text-muted hover:text-text-main focus-ring rounded"
-            aria-label="Close"
+            aria-label={t("close")}
           >
             <span className="material-symbols-outlined" aria-hidden="true">
               close
@@ -133,7 +133,7 @@ export function CustomHostsManager({ onClose }: CustomHostsManagerProps) {
                 type="button"
                 onClick={() => deleteHost(h.host)}
                 className="text-text-muted hover:text-red-400 focus-ring rounded"
-                aria-label={`Remove ${h.host}`}
+                aria-label={t("removeHost", { host: h.host })}
               >
                 <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
                   delete

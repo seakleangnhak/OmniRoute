@@ -137,6 +137,45 @@ describe("TheOldLlmExecutor", () => {
     }
   });
 
+  it("does not retry a Vercel egress denial as a stale request token", async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls++;
+        return new Response(
+          JSON.stringify({ error: { code: "403", message: "Forbidden", id: "fra1::test" } }),
+          {
+            status: 403,
+            headers: {
+              "content-type": "application/json",
+              "x-vercel-mitigated": "deny",
+            },
+          }
+        );
+      };
+
+      const result = await executor.execute({
+        model: "gpt-5.4",
+        body: { messages: [{ role: "user", content: "ping" }] },
+        stream: true,
+        signal: null,
+        credentials: {},
+        log: { debug() {}, info() {}, warn() {}, error() {} },
+      });
+
+      assert.strictEqual(calls, 1);
+      assert.strictEqual(result.response.status, 403);
+      const json = (await result.response.json()) as {
+        error?: { code?: string; message?: string };
+      };
+      assert.strictEqual(json.error?.code, "THEOLDLLM_VERCEL_MITIGATED");
+      assert.match(json.error?.message || "", /residential.*proxy/i);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("lets cancellation abort before upstream work", async () => {
     const controller = new AbortController();
     controller.abort(new Error("cancelled"));

@@ -16,6 +16,7 @@ import {
   calculateScore,
   calculateFactors,
   DEFAULT_WEIGHTS,
+  normalizeScoringWeights,
 } from "../../open-sse/services/autoCombo/scoring.ts";
 import type {
   ScoringFactors,
@@ -90,6 +91,33 @@ test("calculateFactors — out-of-range contextAffinity is clamped", () => {
     f.contextAffinity >= 0 && f.contextAffinity <= 1,
     `contextAffinity must be in [0,1], got ${f.contextAffinity}`
   );
+});
+
+test("calculateFactors — cache affinity is clamped and can be weighted", () => {
+  const factors = calculateFactors(candidate({ cacheAffinity: 4 }), [], "default", () => 0.5);
+  assert.equal(factors.cacheAffinity, 1);
+  const weights = Object.fromEntries(
+    Object.keys(DEFAULT_WEIGHTS).map((key) => [key, key === "cacheAffinity" ? 1 : 0])
+  ) as typeof DEFAULT_WEIGHTS;
+  assert.equal(calculateScore(factors, weights), 1);
+});
+
+test("normalizeScoringWeights keeps independent UI values proportional", () => {
+  const normalized = normalizeScoringWeights({
+    ...DEFAULT_WEIGHTS,
+    cacheAffinity: 0.5,
+  });
+  const total = Object.values(normalized).reduce((sum, value) => sum + Number(value), 0);
+  assert.ok(Math.abs(total - 1) < 1e-9);
+  assert.ok((normalized.cacheAffinity ?? 0) > normalized.health);
+});
+
+test("normalizeScoringWeights does not inject hidden weights into saved configs", () => {
+  const normalized = normalizeScoringWeights({ health: 0.2, cacheAffinity: 0.5 });
+  assert.equal(normalized.connectionDensity, 0);
+  assert.equal(normalized.quota, 0);
+  assert.ok(Math.abs(normalized.health - 2 / 7) < 1e-9);
+  assert.ok(Math.abs((normalized.cacheAffinity ?? 0) - 5 / 7) < 1e-9);
 });
 
 test("calculateFactors — connectionDensity is clamped to [0,1] and NaN-safe", () => {

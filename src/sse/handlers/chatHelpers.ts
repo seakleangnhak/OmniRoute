@@ -395,6 +395,7 @@ export async function executeChatWithBreaker({
   trafficType = "production",
   correlationId = null,
   modelPinned = false,
+  routingComboId = null,
 }: ExecuteChatWithBreakerOptions): Promise<{ result: any; tlsFingerprintUsed: boolean }> {
   let tlsFingerprintUsed = false;
   const normalizedTrafficType: TrafficType =
@@ -432,6 +433,7 @@ export async function executeChatWithBreaker({
             trafficType: normalizedTrafficType,
             correlationId,
             modelPinned,
+            routingComboId,
             onCredentialsRefreshed: async (newCreds: any) => {
               await updateProviderCredentials(credentials.connectionId, {
                 accessToken: newCreds.accessToken,
@@ -457,7 +459,8 @@ export async function executeChatWithBreaker({
               if (
                 Number(failure?.status) === 499 ||
                 failure?.code === "client_disconnected" ||
-                failure?.type === "client_disconnected"
+                failure?.type === "client_disconnected" ||
+                isLocalStreamLifecycleError(failure?.message ?? failure) // client abort, #4602
               ) {
                 return;
               }
@@ -681,11 +684,6 @@ export function shouldRetryStreamEarlyEof(
   return errorCode === "STREAM_EARLY_EOF" && attempt < STREAM_EARLY_EOF_MAX_RETRIES;
 }
 
-/**
- * Proxy-resolution failure policy. Default: fail-closed (rethrow) so a request
- * with an assigned-but-unresolvable proxy never silently egresses on the real IP.
- * Opt back into the legacy DIRECT fallback with PROXY_FAIL_OPEN=true.
- */
 export function decideProxyResolutionFailure(
   err: unknown,
   env: { PROXY_FAIL_OPEN?: string } = process.env
@@ -702,9 +700,13 @@ export function decideProxyResolutionFailure(
   throw err instanceof Error ? err : new Error(String(err));
 }
 
-export async function safeResolveProxy(connectionId: string, apiKeyId?: string) {
+export async function safeResolveProxy(
+  connectionId: string,
+  apiKeyId?: string,
+  providerId?: string
+) {
   try {
-    const resolved = await resolveProxyForConnection(connectionId, apiKeyId);
+    const resolved = await resolveProxyForConnection(connectionId, apiKeyId, providerId);
     // #6246: a connection that resolves to DIRECT only because its assigned proxy
     // is dead/inactive must fail closed — egressing on the real IP leaks it. Reuse
     // the existing proxy-resolution-failure policy (blocks by default; PROXY_FAIL_OPEN

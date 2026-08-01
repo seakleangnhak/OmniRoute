@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef } from "react";
+import { useTranslations } from "next-intl";
 import type { InterceptedRequest } from "@/mitm/inspector/types";
 import { useVirtualList } from "../hooks/useVirtualList";
 import { RequestRow } from "./RequestRow";
@@ -24,6 +25,7 @@ export function RequestStreamingList({
   sameContextKey,
   onClearContextFilter,
 }: RequestStreamingListProps) {
+  const t = useTranslations("trafficInspector");
   const { virtualItems, totalHeight, containerRef, rowRef } = useVirtualList(
     requests,
     containerHeight
@@ -34,13 +36,13 @@ export function RequestStreamingList({
       <div className="h-full flex flex-col">
         {sameContextKey && (
           <div className="shrink-0 flex items-center gap-2 px-2 py-1 bg-blue-900/30 border-b border-blue-500/40 text-xs text-blue-300 font-mono">
-            <span>Filtering: context {sameContextKey.slice(0, 6)}</span>
+            <span>{t("filteringContext", { context: sameContextKey.slice(0, 6) })}</span>
             <button
               type="button"
               onClick={onClearContextFilter}
               className="ml-1 underline hover:text-blue-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-400"
             >
-              [clear]
+              [{t("clear")}]
             </button>
           </div>
         )}
@@ -69,13 +71,13 @@ export function RequestStreamingList({
     <div className="h-full flex flex-col">
       {sameContextKey && (
         <div className="shrink-0 flex items-center gap-2 px-2 py-1 bg-blue-900/30 border-b border-blue-500/40 text-xs text-blue-300 font-mono">
-          <span>Filtering: context {sameContextKey.slice(0, 6)}</span>
+          <span>{t("filteringContext", { context: sameContextKey.slice(0, 6) })}</span>
           <button
             type="button"
             onClick={onClearContextFilter}
             className="ml-1 underline hover:text-blue-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-blue-400"
           >
-            [clear]
+            [{t("clear")}]
           </button>
         </div>
       )}

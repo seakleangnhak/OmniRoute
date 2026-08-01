@@ -111,20 +111,67 @@ export function eslintCounts(parsed) {
   return { errors, warnings };
 }
 
-/** Parse the eslint JSON array out of mixed stdout (tolerates a leading banner). */
+/**
+ * Parse the eslint JSON array out of mixed stdout (tolerates a leading banner AND trailing
+ * non-JSON text, e.g. ESLint 9.x's `--suppressions-location` "unpruned suppressions" stderr
+ * sentence glued onto the report when stdout+stderr are concatenated — #7837).
+ */
 export function parseEslintJson(out) {
-  const start = String(out || "").indexOf("[");
+  const str = String(out || "");
+  const start = str.indexOf("[");
   if (start < 0) return null;
+  // Fast path: the whole remainder is valid JSON (no trailing text).
   try {
-    return JSON.parse(String(out).slice(start));
+    return JSON.parse(str.slice(start));
   } catch {
-    return null;
+    // fall through to bracket-depth scan below
   }
+  // Slow path: find the matching closing "]" for the array that starts at `start`, tolerating
+  // any non-JSON text appended after it. Depth-tracks brackets while skipping over string
+  // literals (so a "]" or "[" inside a message string doesn't miscount).
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < str.length; i++) {
+    const ch = str[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "[") {
+      depth++;
+    } else if (ch === "]") {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(str.slice(start, i + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
 }
 
 /** Pull the cognitive-complexity violation count from the gate's output. */
 export function parseCognitiveCount(out) {
-  const m = String(out || "").match(/(\d+)\s+(?:function\(s\) exceed|violações|violations)/i);
+  const s = String(out || "");
+  // `check:complexity-ratchets` runs ONE shared ESLint walk and prints BOTH ratchets, with the
+  // cyclomatic "N violações" summary emitted FIRST — so a bare `\d+ violações` regex would grab
+  // the cyclomatic count. Prefer the unambiguous machine-readable `cognitiveComplexity=N` line
+  // (mirrors the cyclomatic `complexity=N` parse used for cycCurrent below).
+  const machine = s.match(/(?:^|\n)cognitiveComplexity=(\d+)/);
+  if (machine) return Number(machine[1]);
+  const m = s.match(/(\d+)\s+(?:function\(s\) exceed|violações|violations)/i);
   return m ? Number(m[1]) : null;
 }
 
@@ -359,6 +406,11 @@ async function main() {
         "json",
         "--suppressions-location",
         "config/quality/eslint-suppressions.json",
+        // An "unpruned" suppression means a previously-frozen violation was legitimately
+        // fixed — release-time housekeeping (same bucket as ratchet drift), never a
+        // contributor-blocking defect. Without this flag ESLint 9.x exits 2 for that
+        // reason alone, which used to mask the real `--format json` report (#7837).
+        "--pass-on-unpruned-suppressions",
       ],
       { timeout: 30 * 60 * 1000 }
     );
@@ -540,6 +592,14 @@ async function main() {
         label: "Package artifact (npm pack policy)",
         args: ["run", "check:pack-artifact"],
         timeout: 20 * 60 * 1000,
+      });
+      // WS1.2 (#7065 class): boot the REAL packed tarball from a clean install —
+      // the runtime gate structure checks cannot provide. Reuses the same dist/ build.
+      slow.push({
+        id: "pack-boot",
+        label: "Tarball boot-smoke (installed CLI serves /health)",
+        args: ["run", "check:pack-boot"],
+        timeout: 15 * 60 * 1000,
       });
     }
     slow.forEach((g) => announce(`${g.label} [parallel]`));

@@ -34,7 +34,7 @@ export async function validateAnthropicLikeProvider({
       typeof providerSpecificData?.modelsUrl === "string" &&
       providerSpecificData.modelsUrl.trim() !== ""
         ? providerSpecificData.modelsUrl.trim()
-        : `${baseUrl}/models`;
+        : addModelsSuffix(baseUrl);
 
     // Best-effort /models probe. It must not fail validation: canonical Claude
     // base URLs can already include a path/query (…/messages?beta=true).

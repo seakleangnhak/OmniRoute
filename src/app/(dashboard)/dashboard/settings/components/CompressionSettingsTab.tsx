@@ -7,7 +7,8 @@ import CompressionTokenSaverCard, {
   type CompressionTokenSaverConfig,
 } from "./CompressionTokenSaverCard";
 
-type CompressionMode = "off" | "lite" | "standard" | "aggressive" | "ultra" | "rtk" | "stacked";
+type CompressionMode =
+  "off" | "lite" | "standard" | "aggressive" | "ultra" | "rtk" | "codex-responses" | "stacked";
 type CavemanIntensity = "lite" | "full" | "ultra";
 type RtkIntensity = "minimal" | "standard" | "aggressive";
 
@@ -29,6 +30,17 @@ interface CavemanOutputModeConfig {
 interface RtkConfig {
   enabled: boolean;
   intensity: RtkIntensity;
+}
+
+interface CodexResponsesConfig {
+  enabled: boolean;
+  minBytes: number;
+  maxOutputBytes: number;
+  maxCandidateBytes: number;
+  maxLines: number;
+  minSearchMatches: number;
+  minLogLines: number;
+  preserveToolNames: string[];
 }
 
 interface AggressiveConfig {
@@ -71,6 +83,7 @@ interface CompressionConfig extends CompressionTokenSaverConfig {
   cavemanConfig?: CavemanConfig;
   cavemanOutputMode?: CavemanOutputModeConfig;
   rtkConfig?: RtkConfig;
+  codexResponsesConfig?: CodexResponsesConfig;
   aggressive?: AggressiveConfig;
   ultra?: UltraConfig;
 }
@@ -122,6 +135,12 @@ const MODES: { value: CompressionMode; labelKey: string; descKey: string; icon: 
     icon: "filter_list",
   },
   {
+    value: "codex-responses",
+    labelKey: "compressionModeCodexResponses",
+    descKey: "compressionModeCodexResponsesDesc",
+    icon: "data_object",
+  },
+  {
     value: "stacked",
     labelKey: "compressionModeStacked",
     descKey: "compressionModeStackedDesc",
@@ -160,6 +179,16 @@ export default function CompressionSettingsTab() {
     rtkConfig: {
       enabled: true,
       intensity: "standard",
+    },
+    codexResponsesConfig: {
+      enabled: false,
+      minBytes: 512,
+      maxOutputBytes: 2 * 1024 * 1024,
+      maxCandidateBytes: 512 * 1024,
+      maxLines: 160,
+      minSearchMatches: 8,
+      minLogLines: 24,
+      preserveToolNames: ["Read", "Glob", "Grep", "Write", "Edit", "WebSearch", "WebFetch"],
     },
     aggressive: {
       thresholds: { fullSummary: 5, moderate: 3, light: 2, verbatim: 2 },

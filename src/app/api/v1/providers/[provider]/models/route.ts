@@ -1,6 +1,9 @@
 import { getUnifiedModelsResponse } from "@/app/api/v1/models/catalog";
 import { getServiceModels } from "@/lib/db/serviceModels";
+import { isServiceBackendPluginId } from "@/lib/services/serviceBackends";
 import { getRegistryEntry } from "@omniroute/open-sse/config/providerRegistry.ts";
+import { getProviderById, getProviderByAlias } from "@/shared/constants/providers";
+import { isCompatibleProviderConnectionId } from "@/shared/utils/compatibleProviderId";
 
 /**
  * Handle CORS preflight
@@ -20,7 +23,7 @@ export async function OPTIONS() {
  */
 export async function GET(request: Request, { params }: { params: Promise<{ provider: string }> }) {
   const { provider: rawProvider } = await params;
-  if (rawProvider === "cliproxyapi" || rawProvider === "9router") {
+  if (isServiceBackendPluginId(rawProvider)) {
     const models = getServiceModels(rawProvider).filter((model) => model.available !== false);
     return Response.json({
       object: "list",
@@ -54,9 +57,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ prov
             type: "invalid_request_error",
             code: "invalid_provider",
           },
-        },
-        { status: 400 }
-      );
+          { status: 400 }
+        );
+      }
     }
   }
 

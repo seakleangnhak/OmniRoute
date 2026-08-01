@@ -190,9 +190,11 @@ test("bifrost route: records relay usage after SSE stream completion", async () 
   delete process.env.BIFROST_STREAMING_ENABLED;
 
   const relayToken = seedRelayToken(`relay_bifrost_sse_${Date.now()}`);
+  let forwardedRequestId: string | null = null;
 
-  globalThis.fetch = async () =>
-    new Response(
+  globalThis.fetch = async (_input, init) => {
+    forwardedRequestId = new Headers(init?.headers).get("x-request-id");
+    return new Response(
       new ReadableStream<Uint8Array>({
         start(controller) {
           controller.enqueue(new TextEncoder().encode('data: {"delta":"hi"}\n\n'));
@@ -204,6 +206,7 @@ test("bifrost route: records relay usage after SSE stream completion", async () 
         headers: { "content-type": "text/event-stream" },
       }
     );
+  };
 
   const { POST } = await import(
     `../../../../src/app/api/v1/relay/chat/completions/bifrost/route.ts?case=${Date.now()}-${Math.random()}`
@@ -226,6 +229,7 @@ test("bifrost route: records relay usage after SSE stream completion", async () 
   const res = await POST(req);
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("X-Routed-By"), "bifrost");
+  assert.equal(forwardedRequestId, "bifrost-sse-lifecycle-test");
   assert.equal(getRelayLogs(relayToken.id, 10).length, 0);
 
   assert.match(await res.text(), /delta/);

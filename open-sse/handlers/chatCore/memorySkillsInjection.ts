@@ -39,7 +39,7 @@ export async function injectMemoryAndSkills({
   sourceFormat: string;
   targetFormat: string;
   backgroundReason: string | null;
-  log: unknown;
+  log: MemorySkillsLogger;
 }) {
   const memorySettings = memoryOwnerId
     ? await getMemorySettings().catch(() => DEFAULT_MEMORY_SETTINGS)

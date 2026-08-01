@@ -46,11 +46,13 @@ export default function RawJsonPanel({
 
   // Sync forceOpen changes from parent (deep-link after mount).
   useEffect(() => {
-    if (forceOpen && !open) {
+    if (!forceOpen || open) return;
+    const openFromDeepLink = setTimeout(() => {
       setOpen(true);
       setHasOpened(true);
       onOpenChange?.(true);
-    }
+    }, 0);
+    return () => clearTimeout(openFromDeepLink);
   }, [forceOpen, open, onOpenChange]);
 
   const handleOpenChange = useCallback(
@@ -497,7 +499,7 @@ export default function RawJsonPanel({
                         onClick={() => handleCopy(intermediateContent)}
                         className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/5 text-text-muted hover:text-text-main transition-colors"
                         title={tc("copy" as Parameters<typeof tc>[0])}
-                        aria-label="Copy intermediate JSON"
+                        aria-label={tr("copyIntermediateJson", "Copy intermediate JSON")}
                       >
                         <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
                           content_copy
@@ -550,7 +552,7 @@ export default function RawJsonPanel({
                       onClick={() => handleCopy(outputContent)}
                       className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/5 text-text-muted hover:text-text-main transition-colors"
                       title={tc("copy" as Parameters<typeof tc>[0])}
-                      aria-label="Copy output JSON"
+                      aria-label={tr("copyOutputJson", "Copy output JSON")}
                     >
                       <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
                         content_copy

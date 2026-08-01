@@ -234,6 +234,58 @@ test("parseCliRegistry() extracts flags from .option() calls", () => {
   }
 });
 
+test("parseCliRegistry() does not mis-attribute child options to parent command when subcommand variable is created inline", () => {
+  const fixture = `
+export function registerBackup(program) {
+  const backup = program.command("backup").description("Manage backups");
+
+  backup
+    .command("create")
+    .description("Create a backup")
+    .option("--name <name>", "Name")
+    .option("--cloud", "Cloud backup");
+
+  const auto = backup.command("auto").description("Auto backup");
+
+  auto
+    .command("enable")
+    .description("Enable auto backup")
+    .option("--cron <expr>", "Cron schedule");
+
+  backup
+    .command("status")
+    .description("Show status");
+}
+`;
+  const { cleanup } = withFixtureCli({
+    "backup.mjs": fixture,
+  });
+  try {
+    const { commands } = parseCliRegistry();
+    const backupCmd = commands.get("backup");
+    assert.ok(backupCmd, "backup command should exist");
+    assert.deepEqual(
+      backupCmd.flags,
+      [],
+      "parent backup command should not collect flags from nested subcommands"
+    );
+
+    const statusCmd = commands.get("backup status");
+    assert.ok(statusCmd, "backup status command should exist");
+    assert.deepEqual(
+      statusCmd.flags,
+      [],
+      "backup status should not collect flags from other subcommands"
+    );
+
+    const createCmd = commands.get("backup create");
+    assert.ok(createCmd, "backup create command should exist");
+    assert.deepEqual(createCmd.flags, ["--name <name>", "--cloud"]);
+  } finally {
+    cleanup();
+  }
+});
+
 test("parseCliRegistry() skips unrecognised .mjs files", () => {
   const { cleanup } = withFixtureCli({
     "unknown-custom.mjs": `export function register(p) {}`,

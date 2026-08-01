@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import type { OmniSkill } from "./OmniSkillCard";
 
 interface SkillDetail extends OmniSkill {
@@ -36,6 +36,7 @@ export function SkillInspectorPane({
   onSetMode,
   onUninstall,
 }: SkillInspectorPaneProps): JSX.Element {
+  const locale = useLocale();
   const t = useTranslations("skills");
   const [activeTab, setActiveTab] = useState<InspectorTab>("schema");
   const [detail, setDetail] = useState<SkillDetail | null>(null);
@@ -102,8 +103,8 @@ export function SkillInspectorPane({
   const effectiveMode = skill.mode || (skill.enabled ? "on" : "off");
 
   const tabs: { id: InspectorTab; label: string }[] = [
-    { id: "schema", label: "Schema" },
-    { id: "handler", label: "Handler" },
+    { id: "schema", label: t("schemaTab") },
+    { id: "handler", label: t("handlerTab") },
     { id: "executions", label: t("executionsTab") },
     { id: "sandbox", label: t("sandboxTab") },
   ];
@@ -160,7 +161,7 @@ export function SkillInspectorPane({
           <div className="space-y-3">
             <div>
               <p className="text-xs font-medium text-text-muted uppercase tracking-wide mb-1.5">
-                Input Schema
+                {t("inputSchema")}
               </p>
               <pre className="text-xs bg-surface/40 rounded-lg p-3 overflow-auto max-h-[200px] text-text-main font-mono whitespace-pre-wrap">
                 {JSON.stringify(detail?.schema?.input ?? {}, null, 2) || "{}"}
@@ -168,7 +169,7 @@ export function SkillInspectorPane({
             </div>
             <div>
               <p className="text-xs font-medium text-text-muted uppercase tracking-wide mb-1.5">
-                Output Schema
+                {t("outputSchema")}
               </p>
               <pre className="text-xs bg-surface/40 rounded-lg p-3 overflow-auto max-h-[200px] text-text-main font-mono whitespace-pre-wrap">
                 {JSON.stringify(detail?.schema?.output ?? {}, null, 2) || "{}"}
@@ -180,10 +181,10 @@ export function SkillInspectorPane({
         {activeTab === "handler" && (
           <div>
             <p className="text-xs font-medium text-text-muted uppercase tracking-wide mb-1.5">
-              Handler Code
+              {t("handlerCode")}
             </p>
             <pre className="text-xs bg-surface/40 rounded-lg p-3 overflow-auto max-h-[400px] text-text-main font-mono whitespace-pre-wrap">
-              {detail?.handler ?? "// Handler not available"}
+              {detail?.handler ?? `// ${t("handlerUnavailable")}`}
             </pre>
           </div>
         )}
@@ -221,7 +222,7 @@ export function SkillInspectorPane({
                       </td>
                       <td className="py-2 text-text-muted">{exec.duration}ms</td>
                       <td className="py-2 text-text-muted">
-                        {new Date(exec.createdAt).toLocaleString()}
+                        {new Date(exec.createdAt).toLocaleString(locale)}
                       </td>
                     </tr>
                   ))}
@@ -254,7 +255,7 @@ export function SkillInspectorPane({
               </div>
             ))}
             <button className="w-full mt-3 px-3 py-2 text-xs font-medium rounded-lg border border-border text-text-muted hover:text-text-main hover:border-violet-500/50 transition-colors">
-              Run test (placeholder)
+              {t("runTestPlaceholder")}
             </button>
           </div>
         )}
@@ -266,7 +267,7 @@ export function SkillInspectorPane({
           <button
             key={mode}
             onClick={() => onSetMode(skill.id, mode)}
-            aria-label={`Set mode ${mode}`}
+            aria-label={t("setModeAria", { mode })}
             className={`flex-1 text-xs px-2 py-1.5 rounded border transition-colors ${
               effectiveMode === mode
                 ? mode === "on"
@@ -282,7 +283,7 @@ export function SkillInspectorPane({
         ))}
         <button
           onClick={() => onUninstall(skill.id)}
-          aria-label="Uninstall skill"
+          aria-label={t("uninstallSkill")}
           className="flex-1 text-xs px-2 py-1.5 rounded border border-border text-red-400 hover:bg-red-500/10 transition-colors"
         >
           {t("delete")}

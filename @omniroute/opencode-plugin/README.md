@@ -10,7 +10,8 @@ This plugin solves that by:
 
 - Fetching `/v1/models` and `/api/combos` **at OpenCode startup, in Node.js** — no CORS, no WebView restrictions
 - Emitting the provider block **dynamically** in the plugin's `config`/`provider` hook — so `opencode.json` only needs the plugin entry, not a static `provider.omniroute`
-- Re-fetching on a configurable TTL (default 5 min), so new models / combo changes in the OmniRoute UI appear without restarting OpenCode
+- Re-fetching on a configurable TTL (default 5 min) **and** background auto-discovery while OpenCode is running (`autoSyncIntervalMs`, default 5 min), so new models / combo changes appear without restarting OpenCode
+- Exposing a force-refresh path (`omniroute_sync_models` tool + `/omni-sync` command template) equivalent to Pi `/omni sync`
 - Computing `limit.context` for combos as `min(member.context_length)` from the live catalog (no more `null` values that cause 4K-token truncation)
 - **Auto-pickup of `interleaved` capability** for thinking models (merged via PR #3138)
 
@@ -73,6 +74,9 @@ Peer dep: `@opencode-ai/plugin` (managed by your OpenCode install).
       {
         "providerId": "omniroute",
         "baseURL": "https://or.example.com",
+        // Background re-discovery while OpenCode is running (Pi parity).
+        // Default 300000 (5 min). Minimum 60000. Set 0 to disable.
+        "autoSyncIntervalMs": 300000,
       },
     ],
   ],
@@ -87,6 +91,27 @@ opencode auth login --provider omniroute
 > ⚠ Use the `--provider` flag explicitly. `opencode auth login omniroute` is parsed as a positional `url` argument by current OC releases (≤1.15.5) and fails with `fetch() URL is invalid`. Tracked upstream.
 
 Restart OpenCode. `/models` lists the full live catalog. Variants (`-low`, `-medium`, `-high`, `-thinking`) and combos appear as first-class IDs — OmniRoute is the source of truth, no client-side synthesis.
+
+### Live catalog refresh (auto + force)
+
+While OpenCode is running, the plugin keeps the model catalog fresh in two ways:
+
+| Mechanism | Default | What it does |
+| --- | --- | --- |
+| `modelCacheTtl` | `300000` (5 min) | On-demand TTL: next provider/models hook after expiry re-fetches `/v1/models` |
+| `autoSyncIntervalMs` | `300000` (5 min) | Background timer: proactively invalidates + re-fetches while the harness is running. Min `60000`. Set `0` to disable background polling (TTL still applies) |
+
+**Force sync now** (Pi `/omni sync` equivalent) — OpenCode has no Pi-style slash-command registration API, so the plugin wires both a tool and command templates:
+
+1. **Tool:** `omniroute_sync_models` — invalidates in-memory + disk caches, re-fetches `GET /v1/models` (and combos/enrichment when enabled), returns `{ ok, count, ... }`.
+2. **Command templates** (type these in OpenCode):
+   - `/omni-sync` — asks the agent to call `omniroute_sync_models` and report the result
+   - `/omni-autosync` — asks the agent to report current `autoSyncIntervalMs` / `modelCacheTtl` status
+
+```text
+/omni-sync
+/omni-autosync
+```
 
 ## Multi-instance (prod + preprod side-by-side)
 
@@ -165,7 +190,7 @@ npm install --prefix ~/.config/opencode/plugins/omniroute-opencode-plugin-prepro
 | Dynamic `/v1/models`                        | Pulls live catalog (455+ entries on prod) on each refresh, TTL-cached                                                                                                                                                                                                                                                                                                                                       | `provider.models`            |
 | Variants pass-through                       | `-low`/`-medium`/`-high`/`-thinking` ship as first-class IDs from OmniRoute (no client synthesis)                                                                                                                                                                                                                                                                                                           | `provider.models`            |
 | Combo LCD aggregation                       | Combos appear with intersected capabilities + min context/output across members                                                                                                                                                                                                                                                                                                                             | `provider.models` + `config` |
-| `combo/<slug>` namespace + `Combo: ` prefix | Combos surface under `combo/claude-primary` (not the upstream UUID) and the picker shows `Combo: claude-primary` so they stand apart from raw provider/model pairs                                                                                                                                                                                                                                          | both hooks                   |
+| `combo/<slug>` namespace + `Combo:` prefix | Combos surface under `combo/claude-primary` (not the upstream UUID) and the picker shows `Combo: claude-primary` so they stand apart from raw provider/model pairs                                                                                                                                                                                                                                          | both hooks                   |
 | Nice names + cost                           | `/api/pricing/models` display names AND `/api/pricing` per-million-token cost overlaid onto the live catalog                                                                                                                                                                                                                                                                                                | both hooks                   |
 | Canonical-twin dedup + alias-fallback       | `/v1/models` exposes the same upstream model under both short alias (`cc/claude-opus-4-7`) and canonical name (`claude/claude-opus-4-7`); the plugin drops the canonical twin when an alias twin exists (no duplicate rows in the picker) and reverse-maps canonical → alias to pick up enrichment for short aliases (`dg/nova-3 → Deepgram - Nova 3`) that `/api/pricing/models` only indexes by canonical | both hooks                   |
 | Compression pipeline tags                   | Combo names get tagged with their compression pipeline (e.g. `Combo: claude-primary [rtk🟡 → caveman🟠]`) when `features.compressionMetadata: true`. Intensity tokens render as a traffic-light emoji: 🟢 lite/minimal · 🟡 standard · 🟠 aggressive/full · 🔴 ultra                                                                                                                                        | both hooks                   |
@@ -179,13 +204,16 @@ npm install --prefix ~/.config/opencode/plugins/omniroute-opencode-plugin-prepro
 
 ## Plugin options
 
-| Option          | Type     | Default                                    | Description                                                |
-| --------------- | -------- | ------------------------------------------ | ---------------------------------------------------------- |
-| `providerId`    | `string` | `"omniroute"`                              | OpenCode provider id; must be unique across plugin entries |
-| `displayName`   | `string` | `"OmniRoute"` or `OmniRoute (<id>)`        | Label in the OC UI                                         |
-| `modelCacheTtl` | `number` | `300000` (5 min)                           | `/v1/models` TTL in ms                                     |
-| `baseURL`       | `string` | resolved from `auth.json` after `/connect` | Override OmniRoute base URL                                |
-| `features`      | `object` | see below                                  | Feature toggles (all opt-in/out, defaults preserve v0.1.0) |
+| Option                | Type     | Default                                    | Description                                                                                           |
+| --------------------- | -------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `providerId`          | `string` | `"omniroute"`                              | OpenCode provider id; must be unique across plugin entries                                            |
+| `displayName`         | `string` | `"OmniRoute"` or `OmniRoute (<id>)`        | Label in the OC UI                                                                                    |
+| `modelCacheTtl`       | `number` | `300000` (5 min)                           | `/v1/models` TTL in ms                                                                                |
+| `baseURL`             | `string` | resolved from `auth.json` after `/connect` | Override OmniRoute base URL                                                                           |
+| `managementReadToken` | `string` | falls back to `apiKey`                     | Optional read-only token for management catalog GETs; `/v1` inference stays on the connected `apiKey` |
+| `features`            | `object` | see below                                  | Feature toggles (all opt-in/out, defaults preserve v0.1.0)                                            |
+
+For least-privilege deployments, set top-level `managementReadToken` to a read-only management token. It is sent only to catalog reads (`/api/combos`, `/api/combos/auto`, `/api/pricing/models`, `/api/pricing`, `/api/context/combos`, and `/api/providers`). Inference requests under `/v1`, including chat, continue to use the `apiKey` stored by OpenCode. `features.mcpToken` remains independent. If `managementReadToken` is omitted, catalog reads retain the previous `apiKey` behavior.
 
 ### `features` block
 
@@ -214,6 +242,7 @@ Every field is optional. Defaults mirror v0.1.0 behaviour so existing `opencode.
       {
         "providerId": "omniroute",
         "baseURL": "https://or.example.com",
+        "managementReadToken": "<read-only-management-token>",
         "features": {
           "combos": true,
           "enrichment": true,

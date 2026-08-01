@@ -90,6 +90,7 @@ export interface AccountProxyConfig {
     port: number;
     username?: string;
     password?: string;
+    relayAuth?: string;
   } | null;
 }
 
@@ -175,7 +176,11 @@ async function bootstrapJwt(
 
   const url = `${baseUrl}${BOOTSTRAP_PATH}`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), BOOTSTRAP_TIMEOUT_MS);
+  const timer = setTimeout(() => {
+    const err = new Error(`mimocode bootstrap timeout after ${BOOTSTRAP_TIMEOUT_MS}ms`);
+    err.name = "TimeoutError";
+    controller.abort(err);
+  }, BOOTSTRAP_TIMEOUT_MS);
   const onSignal = signal ? () => controller.abort(signal.reason) : null;
   if (signal && onSignal) signal.addEventListener("abort", onSignal, { once: true });
 

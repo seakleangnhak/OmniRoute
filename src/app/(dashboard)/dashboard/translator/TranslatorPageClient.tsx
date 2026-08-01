@@ -19,10 +19,15 @@ import type { AdvancedSlug, TranslatorTab } from "./types";
 
 export default function TranslatorPageClient() {
   return (
-    <Suspense fallback={<div className="p-8 text-text-muted">Loading…</div>}>
+    <Suspense fallback={<TranslatorLoading />}>
       <TranslatorPageClientInner />
     </Suspense>
   );
+}
+
+function TranslatorLoading() {
+  const t = useTranslations("translator");
+  return <div className="p-8 text-text-muted">{t("loading")}</div>;
 }
 
 function TranslatorPageClientInner() {

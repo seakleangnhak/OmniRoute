@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from "uuid";
 import { getDbInstance, rowToCamel } from "./core";
 import { backupDbFile } from "./backup";
 import { registerDbStateResetter } from "./stateReset";
+import { invalidateReasoningRoutingRuleCache } from "./reasoningRoutingRules";
 import { getKeyGroupsForApiKey, checkKeyModelAccess } from "./apiKeyGroups";
 import { API_KEY_COLUMN_FALLBACKS } from "./apiKeyColumnFallbacks";
 import {
@@ -16,6 +17,7 @@ import {
 } from "./apiKeyUsageLimitFields";
 import { setNoLog } from "../compliance/noLog";
 import { resolveModelAlias } from "@omniroute/open-sse/services/modelDeprecation.ts";
+import { getProviderAlias, resolveProviderId } from "@/shared/constants/providers";
 import { getSyncedAvailableModelsByConnection, getCustomModels, getModelIsHidden } from "./models";
 import {
   CLAUDE_CODE_PROVIDER_PREFIXES,
@@ -23,6 +25,7 @@ import {
   stripExtendedContextSuffix,
   isPotentialUnprefixedClaudeCodeModel,
   addModelCandidate,
+  addProviderAliasScopedCandidates,
   modelPatternMatches,
   hasClaudeCodeWildcardPermission,
   matchesWildcardPattern,
@@ -303,6 +306,15 @@ async function getModelPermissionCandidates(modelId: string): Promise<string[]> 
       addModelCandidate(candidates, `cc/${providerScopedModel}`);
       addModelCandidate(candidates, `claude/${providerScopedModel}`);
     }
+    if (providerScopedModel) {
+      addProviderAliasScopedCandidates(
+        candidates,
+        providerOrAlias,
+        providerScopedModel,
+        resolveProviderId,
+        getProviderAlias
+      );
+    }
     return Array.from(candidates);
   }
 
@@ -424,10 +436,16 @@ function getPreparedStatements(db: ApiKeysDbLike): ApiKeysStatements {
   };
 }
 
-export async function getApiKeys() {
+export async function getApiKeys(limit?: number, offset?: number) {
   const db = getDbInstance() as ApiKeysDbLike;
-  const stmt = getPreparedStatements(db);
-  const rows = stmt.getAllKeys.all();
+  let rows: ApiKeyRow[];
+  if (limit !== undefined) {
+    const sql = "SELECT * FROM api_keys ORDER BY created_at LIMIT ? OFFSET ?";
+    rows = db.prepare(sql).all(limit, offset ?? 0) as ApiKeyRow[];
+  } else {
+    const stmt = getPreparedStatements(db);
+    rows = stmt.getAllKeys.all();
+  }
   return rows.map((row) => {
     const camelRow = toRecord(rowToCamel(row)) as ApiKeyView;
     camelRow.allowedModels = parseAllowedModels(camelRow.allowedModels);
@@ -455,6 +473,12 @@ export async function getApiKeys() {
     }
     return camelRow;
   });
+}
+
+export function getApiKeysCount(): number {
+  const db = getDbInstance() as ApiKeysDbLike;
+  const row = db.prepare("SELECT count(*) as cnt FROM api_keys").get() as { cnt: number };
+  return row.cnt;
 }
 
 /**
@@ -1049,6 +1073,7 @@ export async function deleteApiKey(id: string) {
 
   // Invalidate caches since a key was removed
   invalidateCaches();
+  invalidateReasoningRoutingRuleCache();
   await deleteRedisAuthCacheEntry(row?.key_hash);
 
   backupDbFile("pre-write");

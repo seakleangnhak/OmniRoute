@@ -53,17 +53,39 @@ test("POST /v1/embeddings authentication", async (t) => {
   const originalRequireApiKey = process.env.REQUIRE_API_KEY;
   const originalOmniKey = process.env.OMNIROUTE_API_KEY;
 
-  await t.test("should return 401 when an invalid API key is provided", async () => {
-    process.env.OMNIROUTE_API_KEY = "valid-key";
-    const req = new Request("http://localhost/v1/embeddings", {
-      method: "POST",
-      headers: { Authorization: "Bearer invalid-key" },
-      body: JSON.stringify({ model: "mistral/mistral-embed", input: "test" }),
-    });
-    const res = await POST(req);
-    assert.strictEqual(res.status, 401);
-    delete process.env.OMNIROUTE_API_KEY;
-  });
+  await t.test(
+    "should return 401 when an invalid API key is provided and REQUIRE_API_KEY is true",
+    async () => {
+      process.env.REQUIRE_API_KEY = "true";
+      process.env.OMNIROUTE_API_KEY = "valid-key";
+      const req = new Request("http://localhost/v1/embeddings", {
+        method: "POST",
+        headers: { Authorization: "Bearer invalid-key" },
+        body: JSON.stringify({ model: "mistral/mistral-embed", input: "test" }),
+      });
+      const res = await POST(req);
+      assert.strictEqual(res.status, 401);
+      delete process.env.OMNIROUTE_API_KEY;
+      delete process.env.REQUIRE_API_KEY;
+    }
+  );
+
+  await t.test(
+    "should return 401 when REQUIRE_API_KEY is set false because API key auth is locked on",
+    async () => {
+      process.env.REQUIRE_API_KEY = "false";
+      process.env.OMNIROUTE_API_KEY = "valid-key";
+      const req = new Request("http://localhost/v1/embeddings", {
+        method: "POST",
+        headers: { Authorization: "Bearer invalid-key" },
+        body: JSON.stringify({ model: "mistral/mistral-embed", input: "test" }),
+      });
+      const res = await POST(req);
+      assert.strictEqual(res.status, 401);
+      delete process.env.OMNIROUTE_API_KEY;
+      delete process.env.REQUIRE_API_KEY;
+    }
+  );
 
   await t.test(
     "should return 401 when no API key is provided and REQUIRE_API_KEY is true",

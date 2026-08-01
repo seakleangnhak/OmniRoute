@@ -108,49 +108,49 @@ export const RENAMED_MIGRATION_COMPATIBILITY = [
   {
     fromVersion: "097",
     fromName: "model_intelligence",
-    toVersion: "123",
+    toVersion: "134",
     toName: "model_intelligence",
   },
   {
     fromVersion: "098",
     fromName: "clear_semantic_cache_for_key_isolation",
-    toVersion: "124",
+    toVersion: "135",
     toName: "clear_semantic_cache_for_key_isolation",
   },
   {
     fromVersion: "099",
     fromName: "model_intelligence",
-    toVersion: "123",
+    toVersion: "134",
     toName: "model_intelligence",
   },
   {
     fromVersion: "100",
     fromName: "model_intelligence",
-    toVersion: "123",
+    toVersion: "134",
     toName: "model_intelligence",
   },
   {
     fromVersion: "100",
     fromName: "clear_semantic_cache_for_key_isolation",
-    toVersion: "124",
+    toVersion: "135",
     toName: "clear_semantic_cache_for_key_isolation",
   },
   {
     fromVersion: "101",
     fromName: "clear_semantic_cache_for_key_isolation",
-    toVersion: "124",
+    toVersion: "135",
     toName: "clear_semantic_cache_for_key_isolation",
   },
   {
     fromVersion: "103",
     fromName: "model_intelligence",
-    toVersion: "123",
+    toVersion: "134",
     toName: "model_intelligence",
   },
   {
     fromVersion: "104",
     fromName: "clear_semantic_cache_for_key_isolation",
-    toVersion: "124",
+    toVersion: "135",
     toName: "clear_semantic_cache_for_key_isolation",
   },
 ] as const;
@@ -172,6 +172,8 @@ export const LEGACY_VERSION_SLOT_MIGRATIONS = [
   { version: "053", name: "proxy_observability" },
   { version: "060", name: "call_log_images_count" },
   { version: "062", name: "call_log_images_count" },
+  { version: "123", name: "model_intelligence" },
+  { version: "124", name: "clear_semantic_cache_for_key_isolation" },
 ] as const;
 
 export const SUPERSEDED_DUPLICATE_MIGRATIONS = [

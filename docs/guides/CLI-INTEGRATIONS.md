@@ -11,8 +11,8 @@ CLI (Codex, Claude Code, OpenCode, Cline, …) to use OmniRoute as its backend �
 the tool talks to **one** endpoint and OmniRoute routes to the right provider with
 auto-fallback. Each command reads the **live** model catalog from a running
 OmniRoute (local or remote) and writes the tool's own config file on **your**
-machine. The API key is referenced by env var wherever the tool supports it, so the
-secret is never written to disk (the exceptions are noted below).
+machine. The API key is referenced by an environment variable wherever the tool
+supports it. Commands that persist a tool-local environment file are noted below.
 
 There are also two launchers — `omniroute launch` (Claude Code) and
 `omniroute launch-codex` (Codex) — that spawn the CLI with the right env injected,
@@ -101,7 +101,7 @@ opencode -m omniroute/glm/glm-5.2 "..."
 
 # Tools without auto-discovery need an explicit model:
 omniroute setup-aider --model glm/glm-5.2
-omniroute setup-qwen  --model kmc/kimi-k2.7
+omniroute setup-qwen --model qwen/qwen3.8-max-preview
 
 # Preview without writing anything:
 omniroute setup-continue --dry-run

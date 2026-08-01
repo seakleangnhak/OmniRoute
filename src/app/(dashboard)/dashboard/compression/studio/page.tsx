@@ -1,8 +1,10 @@
 "use client";
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { PlayView } from "./PlayView";
 import { CompareView } from "./CompareView";
 export default function CompressionStudioPage() {
+  const t = useTranslations("compressionStudio");
   const [tab, setTab] = useState<"play" | "compare">("play");
   const [text, setText] = useState("");
   return (

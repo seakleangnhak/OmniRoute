@@ -31,3 +31,9 @@ test("qualifyPlaygroundModel returns the model unchanged without a providerId", 
   assert.equal(qualifyPlaygroundModel("moonshotai/kimi-k2.6", ""), "moonshotai/kimi-k2.6");
   assert.equal(qualifyPlaygroundModel("", "nim"), "");
 });
+
+test("OpenCode Free playground uses its routing alias instead of the reserved provider id", async () => {
+  const { getProviderAlias } = await import("../../src/shared/constants/providers.ts");
+  assert.equal(getProviderAlias("opencode"), "oc");
+  assert.equal(qualifyPlaygroundModel("big-pickle", getProviderAlias("opencode")), "oc/big-pickle");
+});

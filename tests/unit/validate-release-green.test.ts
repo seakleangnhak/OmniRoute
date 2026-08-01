@@ -32,6 +32,21 @@ test("parseEslintJson tolerates a leading non-JSON banner", () => {
   assert.equal(parseEslintJson("no json here"), null);
 });
 
+test("parseEslintJson tolerates ESLint's trailing unpruned-suppressions stderr sentence (#7837)", () => {
+  // ESLint 9.x's `--suppressions-location` feature prints the valid `--format json` report to
+  // stdout first, then — if the suppressions file has stale/"unpruned" entries — appends this
+  // exact sentence to stderr and exits 2. The gate concatenates stdout+stderr, so
+  // parseEslintJson() must recover the JSON report even with this trailing text glued on.
+  const eslintJsonReport = JSON.stringify([
+    { filePath: "open-sse/executors/example.ts", errorCount: 0, warningCount: 0, messages: [] },
+  ]);
+  const stderrTail =
+    "There are suppressions left that do not occur anymore. Consider re-running the command with `--prune-suppressions`.\n";
+  assert.deepEqual(parseEslintJson(eslintJsonReport + stderrTail), [
+    { filePath: "open-sse/executors/example.ts", errorCount: 0, warningCount: 0, messages: [] },
+  ]);
+});
+
 test("parseCognitiveCount reads the gate's count (en + pt)", () => {
   assert.equal(
     parseCognitiveCount("[cognitive-complexity] 797 function(s) exceed the threshold (15)."),
@@ -42,6 +57,20 @@ test("parseCognitiveCount reads the gate's count (en + pt)", () => {
     801
   );
   assert.equal(parseCognitiveCount("no number"), null);
+});
+
+test("parseCognitiveCount ignores the cyclomatic count in the combined ratchets output (#7009)", () => {
+  // `check:complexity-ratchets` runs ONE shared ESLint walk and prints BOTH ratchets.
+  // The cyclomatic "N violações" summary is emitted FIRST, so a bare `\\d+ violações`
+  // regex captured 2056 (cyclomatic) instead of 890 (cognitive) — a phantom drift in
+  // every pre-flight report. Prefer the unambiguous machine-readable `cognitiveComplexity=N`.
+  const combined = [
+    "complexity=2056",
+    "cognitiveComplexity=890",
+    "[complexity] OK — 2056 violações (baseline 2056)",
+    "[cognitive-complexity] OK — 890 violações (baseline 890)",
+  ].join("\n");
+  assert.equal(parseCognitiveCount(combined), 890);
 });
 
 test("isDrift flags only growth past the committed baseline (down-direction ratchets)", () => {

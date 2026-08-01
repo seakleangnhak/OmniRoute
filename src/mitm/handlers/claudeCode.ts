@@ -26,6 +26,23 @@ export class ClaudeCodeHandler extends MitmHandlerBase {
       const payload = JSON.parse(body.toString());
       payload.model = mappedModel;
 
+      // Strip trailing assistant prefill to prevent "This model does not support assistant
+      // message prefill" upstream error. Loop over ALL consecutive trailing assistant turns
+      // (not just one) — mirrors the pop-loop already used for Copilot
+      // (open-sse/executors/github.ts::dropTrailingAssistantPrefill) and Antigravity/Vertex
+      // Claude (open-sse/executors/antigravity.ts::stripTrailingAntigravityAssistantTurn).
+      // Guard: never strip messages down to empty — an empty array is itself an invalid
+      // request, so at least one entry (even a lone trailing assistant turn) is always
+      // preserved.
+      if (Array.isArray(payload.messages) && payload.messages.length > 0) {
+        while (
+          payload.messages.length > 1 &&
+          payload.messages[payload.messages.length - 1]?.role === "assistant"
+        ) {
+          payload.messages.pop();
+        }
+      }
+
       const upstreamStart = this.now();
       const upstream = await this.fetchRouter(payload, "/v1/messages", req.headers);
 

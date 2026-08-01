@@ -9,7 +9,8 @@ export type AgentId =
   | "zed"
   | "claude-code"
   | "open-code"
-  | "trae";
+  | "trae"
+  | "ghe-copilot";
 
 /**
  * Minimal abstract interface for MitmHandlerBase.

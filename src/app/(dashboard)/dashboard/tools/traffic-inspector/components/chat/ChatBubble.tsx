@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import type { NormalizedTurn } from "@/mitm/inspector/types";
 import { cn } from "@/shared/utils/cn";
 import { MessageContent } from "./MessageContent";
@@ -16,14 +17,15 @@ const ROLE_STYLES: Record<NormalizedTurn["role"], string> = {
   tool: "bg-gray-800 border border-gray-600/30 text-gray-200",
 };
 
-const ROLE_LABEL: Record<NormalizedTurn["role"], string> = {
-  system: "System",
-  user: "User",
-  assistant: "Assistant",
-  tool: "Tool",
+const ROLE_LABEL_KEY: Record<NormalizedTurn["role"], string> = {
+  system: "roleSystem",
+  user: "roleUser",
+  assistant: "roleAssistant",
+  tool: "roleTool",
 };
 
 export function ChatBubble({ turn }: ChatBubbleProps) {
+  const t = useTranslations("trafficInspector");
   const [collapsed, setCollapsed] = useState(turn.role === "system");
 
   const isSystem = turn.role === "system";
@@ -38,20 +40,20 @@ export function ChatBubble({ turn }: ChatBubbleProps) {
       )}
     >
       <div className="flex items-center justify-between gap-2 mb-1">
-        <span className="text-xs font-medium opacity-70">{ROLE_LABEL[turn.role]}</span>
+        <span className="text-xs font-medium opacity-70">{t(ROLE_LABEL_KEY[turn.role])}</span>
         {isSystem && (
           <button
             type="button"
             onClick={() => setCollapsed((c) => !c)}
             className="text-xs opacity-70 hover:opacity-100 focus-ring rounded"
           >
-            {collapsed ? "Expand" : "Collapse"}
+            {collapsed ? t("expand") : t("collapse")}
           </button>
         )}
       </div>
       {!collapsed && <MessageContent blocks={turn.blocks} />}
       {collapsed && isSystem && (
-        <p className="text-xs opacity-60 italic">System prompt hidden — click to expand</p>
+        <p className="text-xs opacity-60 italic">{t("systemPromptHidden")}</p>
       )}
     </div>
   );

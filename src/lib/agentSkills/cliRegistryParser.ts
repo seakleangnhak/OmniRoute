@@ -139,16 +139,21 @@ function extractCommandsFromContent(content: string, topLevelName: string): RawC
     // Slice between this command call and the next to scope description/options
     const slice = content.slice(cmdIndex, nextIndex);
 
+    // If the slice itself contains a nested subcommand definition (e.g., `const auto = backup.command("auto")`),
+    // restrict slice to end before the child `.command()` call so child options aren't attributed to parent.
+    const subCmdMatch = /[\s\S]+?(?=\b[a-zA-Z0-9_$]+\.command\()/g.exec(slice);
+    const effectiveSlice = subCmdMatch ? subCmdMatch[0] : slice;
+
     // Extract description (first match in slice)
     DESCRIPTION_RE.lastIndex = 0;
-    const descMatch = DESCRIPTION_RE.exec(slice);
+    const descMatch = DESCRIPTION_RE.exec(effectiveSlice);
     const description = descMatch ? descMatch[1] : "";
 
     // Extract flags in slice
     const flags: string[] = [];
     OPTION_RE.lastIndex = 0;
     let optMatch: RegExpExecArray | null;
-    while ((optMatch = OPTION_RE.exec(slice)) !== null) {
+    while ((optMatch = OPTION_RE.exec(effectiveSlice)) !== null) {
       flags.push(optMatch[1]);
     }
 

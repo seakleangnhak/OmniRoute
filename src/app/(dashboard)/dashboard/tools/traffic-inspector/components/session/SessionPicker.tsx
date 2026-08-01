@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import type { SessionInfo } from "../../hooks/useSessionRecorder";
 
 interface SessionPickerProps {
@@ -11,6 +12,7 @@ interface SessionPickerProps {
 }
 
 export function SessionPicker({ sessions, selectedId, onSelect, onDelete }: SessionPickerProps) {
+  const t = useTranslations("trafficInspector");
   const [open, setOpen] = useState(false);
 
   const selected = sessions.find((s) => s.id === selectedId);
@@ -41,10 +43,10 @@ export function SessionPicker({ sessions, selectedId, onSelect, onDelete }: Sess
             }}
             className="w-full text-left px-3 py-1.5 text-xs text-text-muted hover:bg-bg-subtle focus-ring"
           >
-            All traffic (no session)
+            {t("allTraffic")}
           </button>
           {sessions.length === 0 && (
-            <p className="px-3 py-2 text-xs text-text-muted italic">No sessions yet</p>
+            <p className="px-3 py-2 text-xs text-text-muted italic">{t("noSessionsYet")}</p>
           )}
           {sessions.map((s) => (
             <div key={s.id} className="flex items-center group">
@@ -58,8 +60,10 @@ export function SessionPicker({ sessions, selectedId, onSelect, onDelete }: Sess
                   selectedId === s.id ? "text-blue-400 font-medium" : "text-text-main"
                 }`}
               >
-                {s.name ?? `Session ${s.id.slice(0, 6)}`}
-                <span className="text-text-muted ml-1">({s.requestCount} reqs)</span>
+                {s.name ?? t("sessionName", { id: s.id.slice(0, 6) })}
+                <span className="text-text-muted ml-1">
+                  ({t("requestCountShort", { count: s.requestCount })})
+                </span>
               </button>
               <button
                 type="button"
@@ -68,7 +72,7 @@ export function SessionPicker({ sessions, selectedId, onSelect, onDelete }: Sess
                   if (selectedId === s.id) onSelect(undefined);
                 }}
                 className="px-2 text-text-muted hover:text-red-400 opacity-0 group-hover:opacity-100 focus-ring rounded"
-                aria-label="Delete session"
+                aria-label={t("deleteSession")}
               >
                 <span className="material-symbols-outlined text-[14px]" aria-hidden="true">
                   delete

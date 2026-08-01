@@ -84,7 +84,7 @@ export function SkillPreviewPane({
               onClick={onRefresh}
               disabled={loading}
               className="flex items-center gap-1 rounded px-2 py-1 text-xs text-text-muted hover:text-text-main hover:bg-bg-subtle transition-colors disabled:opacity-50"
-              aria-label="Refresh"
+              aria-label={t("refresh")}
             >
               <span
                 className={`material-symbols-outlined text-[14px] ${loading ? "animate-spin" : ""}`}

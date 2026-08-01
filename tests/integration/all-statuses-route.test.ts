@@ -31,6 +31,7 @@ const allStatusesRoute = await import("../../src/app/api/cli-tools/all-statuses/
 
 // Import CLI_TOOLS to know how many tools exist
 const { CLI_TOOLS } = await import("../../src/shared/constants/cliTools.ts");
+const { getCliPrimaryConfigPath } = await import("../../src/shared/services/cliRuntime.ts");
 
 const TOOL_COUNT = Object.keys(CLI_TOOLS).length;
 
@@ -233,4 +234,23 @@ test("cache miss: different mtime forces re-execution (cache not used)", async (
   const body = (await response.json()) as Record<string, Record<string, unknown>>;
   // The entry should exist — fresh execution was performed (no crash)
   assert.ok(toolId in body, `expected ${toolId} after cache miss re-execution`);
+});
+
+test("refresh=true bypasses a matching cached CLI result", async () => {
+  const toolId = "codex";
+  const cachedVersion = "stale-codex-version-from-cache";
+  const configPath = getCliPrimaryConfigPath(toolId);
+  const mtimeMs = configPath && fs.existsSync(configPath) ? fs.statSync(configPath).mtimeMs : 0;
+  setCached(toolId, mtimeMs, {
+    detection: { installed: true, runnable: true, version: cachedVersion },
+    config: { status: "configured" },
+  });
+
+  const response = await allStatusesRoute.GET(
+    new Request("http://localhost/api/cli-tools/all-statuses?refresh=true")
+  );
+
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as Record<string, { detection?: { version?: string } }>;
+  assert.notEqual(body[toolId]?.detection?.version, cachedVersion);
 });

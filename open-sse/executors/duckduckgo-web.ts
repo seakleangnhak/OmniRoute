@@ -8,6 +8,60 @@ import type { Session } from "../services/sessionPool/session.ts";
 import { tryBackedChat } from "../services/browserBackedChat.ts";
 import { sanitizeErrorMessage } from "../utils/error.ts";
 
+// Issue #6999: Lightweight circuit breaker for the DuckDuckGo executor.
+// After CB_THRESHOLD consecutive failures (429, 5xx, or network errors),
+// the breaker "opens" for CB_COOLDOWN_MS — during that window every request
+// fast-fails with 503 instead of hammering the upstream. A single success
+// resets the failure counter. Half-open probing happens naturally: once the
+// cooldown expires the breaker closes and the next request is a real probe.
+export const CB_THRESHOLD = 5;
+export const CB_COOLDOWN_MS = 30_000;
+
+interface CircuitBreakerState {
+  failures: number;
+  openedAt: number;
+}
+
+const circuitBreaker: CircuitBreakerState = { failures: 0, openedAt: 0 };
+
+export function cbIsOpen(): boolean {
+  if (circuitBreaker.openedAt === 0) return false;
+  if (Date.now() - circuitBreaker.openedAt >= CB_COOLDOWN_MS) {
+    // Cooldown elapsed — half-open: allow the next request through.
+    circuitBreaker.openedAt = 0;
+    return false;
+  }
+  return true;
+}
+
+export function cbRecordFailure(): void {
+  circuitBreaker.failures++;
+  if (circuitBreaker.failures >= CB_THRESHOLD && circuitBreaker.openedAt === 0) {
+    circuitBreaker.openedAt = Date.now();
+    console.warn(
+      `[DDG-CB] Circuit breaker opened after ${circuitBreaker.failures} consecutive failures — fast-failing for ${CB_COOLDOWN_MS}ms`
+    );
+  }
+}
+
+export function cbRecordSuccess(): void {
+  if (circuitBreaker.failures > 0) {
+    circuitBreaker.failures = 0;
+  }
+}
+
+// Test-only: direct read/write access to the module-level breaker singleton
+// so tests can exercise open/half-open/closed transitions without waiting
+// CB_COOLDOWN_MS in real time. Not used by production code.
+export function __setDdgCircuitBreakerStateForTests(failures: number, openedAt: number): void {
+  circuitBreaker.failures = failures;
+  circuitBreaker.openedAt = openedAt;
+}
+
+export function __getDdgCircuitBreakerStateForTests(): CircuitBreakerState {
+  return { ...circuitBreaker };
+}
+
 export const DUCKDUCKGO_BASE = "https://duckduckgo.com";
 // #4037: the live DuckDuckGo AI Chat backend is served from duckduckgo.com. The
 // status/chat fetches, Origin, and Referer must all use this host so the request's
@@ -64,11 +118,18 @@ function shouldUseBrowserBacked(): boolean {
 interface DuckDuckGoVqdHeaders {
   vqd4: string | null;
   vqdHash1: string | null;
+  // #6996: the real upstream HTTP status of the VQD-acquisition attempt (null when
+  // no request was made / a network error was thrown). Lets execute() distinguish a
+  // retryable 429 rate-limit from a genuine 5xx instead of collapsing both to 503.
+  status: number | null;
+  retryAfter: string | null;
 }
 
 interface DuckDuckGoAuthHeaders {
   vqd4: string | null;
   vqdHash1: string | null;
+  status: number | null;
+  retryAfter: string | null;
 }
 
 interface DuckDuckGoModelCapabilities {
@@ -165,18 +226,37 @@ function mergeHeadersCaseInsensitive(
   return merged;
 }
 
-function normalizeDuckDuckGoModel(model: string | undefined): string {
-  if (!model) return "gpt-4o-mini";
+/**
+ * #8000: DuckDuckGo's free Duck.ai lineup churns and the catalog fell behind. Map every
+ * retired id OmniRoute historically advertised to the current wire id served by
+ * `duckchat/v1/models` (captured 2026-07-22) — a retired/unknown `model` yields a 400
+ * `ERR_BAD_REQUEST` from `duckchat/v1/chat`. Current free wire ids: gpt-5.4-mini,
+ * gpt-5.4-nano, claude-haiku-4-5, mistral-small-2603, tinfoil/gpt-oss-120b, tinfoil/gemma4-31b.
+ */
+export const DUCKDUCKGO_DEFAULT_MODEL = "gpt-5.4-mini";
+export const DUCKDUCKGO_MODEL_ALIASES: Readonly<Record<string, string>> = {
+  // retired OpenAI ids → current GPT-5.4 free tier
+  "gpt-4o-mini": "gpt-5.4-mini",
+  "gpt-5-mini": "gpt-5.4-mini",
+  "o3-mini": "gpt-5.4-nano",
+  // retired Llama (dropped from Duck.ai free) → nearest general free model
+  "llama-4-scout": "gpt-5.4-mini",
+  // renamed/versioned ids
+  "claude-3-5-haiku-20241022": "claude-haiku-4-5",
+  "mistral-small-2501": "mistral-small-2603",
+  "gpt-oss-120b": "tinfoil/gpt-oss-120b",
+  "gemma4-31b": "tinfoil/gemma4-31b",
+};
+
+export function normalizeDuckDuckGoModel(model: string | undefined): string {
+  if (!model) return DUCKDUCKGO_DEFAULT_MODEL;
   const clean = model.startsWith("duckduckgo-web/") ? model.slice("duckduckgo-web/".length) : model;
-  if (clean === "claude-3-5-haiku-20241022") return "claude-haiku-4-5";
-  if (clean === "llama-4-scout") return "meta-llama/Llama-4-Scout-17B-16E-Instruct";
-  if (clean === "mistral-small-2501") return "mistral-small-2603";
-  if (clean === "gpt-oss-120b") return "tinfoil/gpt-oss-120b";
-  return clean;
+  return DUCKDUCKGO_MODEL_ALIASES[clean] ?? clean;
 }
 
 function getDuckDuckGoModelCapabilities(model: string): DuckDuckGoModelCapabilities {
-  if (model === "gpt-5-mini") return { reasoningEffort: "minimal" };
+  // Per duckchat/v1/models (2026-07-22): claude-haiku-4-5 and gpt-oss-120b take a "low"
+  // reasoningEffort on the free tier; the others omit it (duck.ai applies its own default).
   if (model === "claude-haiku-4-5") return { reasoningEffort: "low" };
   if (model === "tinfoil/gpt-oss-120b") return { reasoningEffort: "low" };
   return { reasoningEffort: null };
@@ -321,7 +401,12 @@ export class DuckDuckGoWebExecutor extends BaseExecutor {
   ): Promise<boolean> {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+      const ddgTestMs = FETCH_TIMEOUT_MS;
+      const timeout = setTimeout(() => {
+        const err = new Error(`duckduckgo-web testConnection timeout after ${ddgTestMs}ms`);
+        err.name = "TimeoutError";
+        controller.abort(err);
+      }, ddgTestMs);
 
       const mergedSignal = signal
         ? AbortSignal.any([signal, controller.signal])
@@ -349,12 +434,13 @@ export class DuckDuckGoWebExecutor extends BaseExecutor {
     }
   }
 
-  async execute(input: ExecuteInput): Promise<{
-    response: Response;
-    url: string;
-    headers: Record<string, string>;
-    transformedBody: unknown;
-  }> {
+  // No explicit return type, matching BaseExecutor and the other ~38 executors: this
+  // method legitimately returns either a bare `Response` (error paths, processResponse)
+  // or the richer `{ response, url, headers, transformedBody }` capture object.
+  // `normalizeExecutorResult()` accepts exactly that union and wraps the bare form, so
+  // pinning the signature to only the object shape was wrong — it reported 14 valid
+  // `return` statements as errors.
+  async execute(input: ExecuteInput) {
     const { model, body, stream, signal, upstreamExtraHeaders } = input;
     const upstreamModel = normalizeDuckDuckGoModel(model);
     const bodyObj = (body || {}) as Record<string, unknown>;
@@ -369,14 +455,24 @@ export class DuckDuckGoWebExecutor extends BaseExecutor {
     const isStreaming = stream !== false;
     const upstreamHeaders = upstreamExtraHeaders || {};
 
-    const errorResponse = (status: number, message: string): Response =>
+    const errorResponse = (status: number, message: string, retryAfter?: string | null): Response =>
       new Response(JSON.stringify({ error: { message } }), {
         status,
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(retryAfter ? { "Retry-After": retryAfter } : {}),
+        },
       });
 
     if (messages.length === 0) {
       return errorResponse(400, "No messages provided");
+    }
+
+    // Issue #6999: Circuit breaker fast-fail. If DDG has been consistently
+    // failing, short-circuit with 503 so the combo engine can immediately
+    // fail over to the next provider instead of waiting for timeouts.
+    if (cbIsOpen()) {
+      return errorResponse(503, "DuckDuckGo circuit breaker open — upstream unavailable");
     }
 
     // Browser-backed path: opt-in via OMNIROUTE_BROWSER_POOL=on or
@@ -427,7 +523,12 @@ export class DuckDuckGoWebExecutor extends BaseExecutor {
 
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+      const ddgExecMs = FETCH_TIMEOUT_MS;
+      const timeout = setTimeout(() => {
+        const err = new Error(`duckduckgo-web execute timeout after ${ddgExecMs}ms`);
+        err.name = "TimeoutError";
+        controller.abort(err);
+      }, ddgExecMs);
       const mergedSignal = signal
         ? AbortSignal.any([signal, controller.signal])
         : controller.signal;
@@ -468,6 +569,19 @@ export class DuckDuckGoWebExecutor extends BaseExecutor {
       const vqdHeaders = await this.acquireAuthHeaders(mergedSignal);
       if (!vqdHeaders.vqd4 && !vqdHeaders.vqdHash1) {
         clearTimeout(timeout);
+        // #6996: surface the real upstream status instead of a hardcoded 503 so a
+        // 429 rate-limit gets a connection-cooldown, not a whole-provider circuit
+        // breaker trip (see CLAUDE.md "Provider Circuit Breaker" — only
+        // 408/500/502/503/504 should trip it, not 429). Any other non-2xx status
+        // (403 anti-bot challenge, genuine 5xx, or a thrown network error where
+        // status is null) keeps the existing 503 fallback.
+        if (vqdHeaders.status === 429) {
+          return errorResponse(
+            429,
+            "Failed to acquire VQD token: upstream rate limited",
+            vqdHeaders.retryAfter
+          );
+        }
         return errorResponse(503, "Failed to acquire VQD token");
       }
 
@@ -485,6 +599,7 @@ export class DuckDuckGoWebExecutor extends BaseExecutor {
 
       if (chatResponse.status === 429) {
         if (pool && session) pool.reportCooldown(session);
+        cbRecordFailure();
         return await this.processResponse(chatResponse, isStreaming, hasTools, requestedTools);
       }
 
@@ -500,6 +615,7 @@ export class DuckDuckGoWebExecutor extends BaseExecutor {
 
       if (chatResponse.status >= 500) {
         if (pool && session) pool.reportDead(session);
+        cbRecordFailure();
         return errorResponse(502, "Upstream error");
       }
 
@@ -521,11 +637,13 @@ export class DuckDuckGoWebExecutor extends BaseExecutor {
         }
       }
 
+      cbRecordSuccess();
       return result;
     } catch (error) {
       if (pool && session) {
         pool.reportCooldown(session);
       }
+      cbRecordFailure();
 
       if (error instanceof DOMException && error.name === "AbortError") {
         return errorResponse(499, "Request cancelled");
@@ -555,16 +673,25 @@ export class DuckDuckGoWebExecutor extends BaseExecutor {
       });
       this.rememberResponseCookies(resp);
 
-      if (!resp.ok) return { vqd4: null, vqdHash1: null };
+      if (!resp.ok) {
+        return {
+          vqd4: null,
+          vqdHash1: null,
+          status: resp.status,
+          retryAfter: resp.headers.get("Retry-After"),
+        };
+      }
       return {
         vqd4: resp.headers.get("x-vqd-4"),
         vqdHash1: resp.headers.get("x-vqd-hash-1"),
+        status: resp.status,
+        retryAfter: null,
       };
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         throw error;
       }
-      return { vqd4: null, vqdHash1: null };
+      return { vqd4: null, vqdHash1: null, status: null, retryAfter: null };
     }
   }
 
@@ -576,6 +703,8 @@ export class DuckDuckGoWebExecutor extends BaseExecutor {
         return {
           vqd4: null,
           vqdHash1: await solveDuckDuckGoChallenge(challenge, FAKE_HEADERS["User-Agent"]),
+          status: null,
+          retryAfter: null,
         };
       } catch (error) {
         void error;
@@ -588,6 +717,8 @@ export class DuckDuckGoWebExecutor extends BaseExecutor {
         return {
           vqd4: headers.vqd4,
           vqdHash1: await solveDuckDuckGoChallenge(headers.vqdHash1, FAKE_HEADERS["User-Agent"]),
+          status: headers.status,
+          retryAfter: headers.retryAfter,
         };
       } catch (error) {
         void error;

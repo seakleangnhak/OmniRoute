@@ -1,31 +1,11 @@
 "use client";
 
-import { useState } from "react";
 import dynamic from "next/dynamic";
-import { useTranslations } from "next-intl";
 import type { PoolUsageSnapshot } from "@/lib/quota/types";
 
-// Lazy-load recharts — do NOT import at module level (B28)
-const RechartsLineChart = dynamic(
-  () => import("recharts").then((m) => ({ default: m.LineChart })),
-  { ssr: false }
-);
-const RechartsLine = dynamic(() => import("recharts").then((m) => ({ default: m.Line })), {
+const BurnRateChartInner = dynamic(() => import("./BurnRateChartInner"), {
   ssr: false,
 });
-const RechartsXAxis = dynamic(() => import("recharts").then((m) => ({ default: m.XAxis })), {
-  ssr: false,
-});
-const RechartsYAxis = dynamic(() => import("recharts").then((m) => ({ default: m.YAxis })), {
-  ssr: false,
-});
-const RechartsTooltip = dynamic(() => import("recharts").then((m) => ({ default: m.Tooltip })), {
-  ssr: false,
-});
-const RechartsResponsiveContainer = dynamic(
-  () => import("recharts").then((m) => ({ default: m.ResponsiveContainer })),
-  { ssr: false }
-);
 
 export interface BurnRateChartProps {
   usage: PoolUsageSnapshot | null;

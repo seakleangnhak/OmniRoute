@@ -92,7 +92,7 @@ function renderCompareTab(config = BASE_CONFIG): HTMLDivElement {
   return el;
 }
 
-function setInputValue(el: HTMLInputElement, value: string) {
+function setInputValue(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
   const nativeSetter = Object.getOwnPropertyDescriptor(
     window.HTMLInputElement.prototype,
     "value"
@@ -211,6 +211,10 @@ describe("CompareTab", () => {
       addBtn.click();
     });
 
+    // Run all is disabled until a prompt is entered
+    const promptTextarea = el.querySelector("[aria-label='User prompt']") as HTMLTextAreaElement;
+    act(() => setInputValue(promptTextarea, "Compare this"));
+
     const runBtn = el.querySelector("[aria-label='Run all columns']") as HTMLButtonElement;
     await act(async () => {
       runBtn.click();
@@ -225,6 +229,11 @@ describe("CompareTab", () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})) as typeof fetch);
 
     const el = renderCompareTab();
+
+    // Run all is disabled until a prompt is entered
+    const promptTextarea = el.querySelector("[aria-label='User prompt']") as HTMLTextAreaElement;
+    act(() => setInputValue(promptTextarea, "Compare this"));
+
     const runBtn = el.querySelector("[aria-label='Run all columns']") as HTMLButtonElement;
 
     act(() => {

@@ -91,6 +91,7 @@ function toProxyConfig(proxyData: NonNullable<Awaited<ReturnType<typeof getProxy
     port: proxyData.port,
     username: proxyData.username,
     password: proxyData.password,
+    name: proxyData.name,
   };
 }
 

@@ -33,7 +33,7 @@ export default function ActivityFeedClient() {
       referenceNowMs.current = Date.now();
       setAllEntries(Array.isArray(data) ? data : []);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to fetch activity";
+      const msg = err instanceof Error ? err.message : t("fetchFailed");
       setError(msg);
     } finally {
       setLoading(false);
@@ -65,7 +65,7 @@ export default function ActivityFeedClient() {
           onClick={() => fetchEntries()}
           disabled={loading}
           className="px-4 py-2 rounded-lg text-sm font-medium bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-main)] hover:bg-[var(--color-bg-alt)] transition-colors disabled:opacity-50"
-          aria-label="Refresh activity feed"
+          aria-label={t("refreshAria")}
         >
           {loading ? (
             <span className="flex items-center gap-2">
@@ -75,14 +75,14 @@ export default function ActivityFeedClient() {
               >
                 progress_activity
               </span>
-              Loading
+              {t("loading")}
             </span>
           ) : (
             <span className="flex items-center gap-2">
               <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
                 refresh
               </span>
-              Refresh
+              {t("refresh")}
             </span>
           )}
         </button>
@@ -111,7 +111,7 @@ export default function ActivityFeedClient() {
             >
               progress_activity
             </span>
-            <span className="text-sm">Loading activity…</span>
+            <span className="text-sm">{t("loadingActivity")}</span>
           </div>
         ) : (
           <ActivityFeed entries={filtered} referenceNowMs={referenceNowMs.current} />

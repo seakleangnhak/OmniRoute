@@ -65,18 +65,21 @@ export async function readMediaGenerationBody(
     rawBody = await request.json();
   } catch {
     log.warn(logScope, "Invalid JSON body");
-    return { ok: false, response: errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body") };
+    return {
+      state: "invalid",
+      response: errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body"),
+    };
   }
 
   const validation = validateBody(v1ImageGenerationSchema, rawBody);
   if (isValidationFailure(validation)) {
     return {
-      ok: false,
+      state: "invalid",
       response: errorResponse(HTTP_STATUS.BAD_REQUEST, validation.error.message),
     };
   }
 
-  return { ok: true, body: validation.data as MediaGenerationBody };
+  return { state: "ok", body: validation.data as MediaGenerationBody };
 }
 
 export function promptRequiredResponse(body: { prompt?: unknown }) {

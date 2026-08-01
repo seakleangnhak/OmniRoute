@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { Select } from "@/shared/components";
 import type { SearchProviderCatalogItem } from "@/shared/schemas/searchTools";
 import type { ActiveTab } from "./SearchToolsTopBar";
@@ -28,6 +29,7 @@ export default function SearchToolsConfigPane({
   activeTab,
   rerankModels = [],
 }: SearchToolsConfigPaneProps) {
+  const t = useTranslations("search");
   const [historyExpanded, setHistoryExpanded] = useState(false);
 
   const searchProviders = providers.filter((p) => p.kind === "search" && p.status !== "missing");
@@ -40,7 +42,7 @@ export default function SearchToolsConfigPane({
     <aside
       className="w-[220px] shrink-0 border-l border-border bg-bg-alt overflow-y-auto flex flex-col"
       data-testid="search-tools-config-pane"
-      aria-label="Configuration pane"
+      aria-label={t("configurationPane")}
     >
       <div className="p-3 border-b border-border">
         <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">
@@ -51,7 +53,7 @@ export default function SearchToolsConfigPane({
       {/* Provider selector */}
       <div className="p-3 border-b border-border space-y-2">
         <label className="block text-[10px] text-text-muted uppercase tracking-wider mb-1">
-          Provider
+          {t("provider")}
         </label>
         <Select
           value={config.provider}
@@ -59,7 +61,7 @@ export default function SearchToolsConfigPane({
             onConfigChange({ provider: e.target.value })
           }
           options={[
-            { value: "auto", label: "Auto (cheapest)" },
+            { value: "auto", label: t("autoProvider") },
             ...relevantProviders.map((p) => ({ value: p.id, label: p.name })),
           ]}
           className="w-full"
@@ -76,7 +78,7 @@ export default function SearchToolsConfigPane({
             </div>
             {selectedProvider.freeMonthlyQuota > 0 && (
               <div>
-                Free quota:{" "}
+                {`${t("freeQuota")}: `}
                 <span className="text-text-main font-medium">
                   {selectedProvider.freeMonthlyQuota >= 1000
                     ? `${(selectedProvider.freeMonthlyQuota / 1000).toFixed(0)}k`
@@ -86,7 +88,7 @@ export default function SearchToolsConfigPane({
               </div>
             )}
             <div className="flex items-center gap-1">
-              Status:{" "}
+              {`${t("status")}: `}
               <span
                 className={
                   selectedProvider.status === "configured"
@@ -119,8 +121,8 @@ export default function SearchToolsConfigPane({
               onConfigChange({ searchType: e.target.value as "web" | "news" })
             }
             options={[
-              { value: "web", label: "Web" },
-              { value: "news", label: "News" },
+              { value: "web", label: t("searchTypeWeb") },
+              { value: "news", label: t("searchTypeNews") },
             ]}
             className="w-full"
           />
@@ -139,7 +141,7 @@ export default function SearchToolsConfigPane({
               onConfigChange({ fetchFormat: e.target.value as ConfigState["fetchFormat"] })
             }
             options={[
-              { value: "markdown", label: "Markdown" },
+              { value: "markdown", label: t("formatMarkdown") },
               { value: "html", label: "HTML" },
               { value: "text", label: "Texto" },
             ]}
@@ -152,7 +154,7 @@ export default function SearchToolsConfigPane({
               onChange={(e) => onConfigChange({ fullPage: e.target.checked })}
               className="rounded"
             />
-            <span className="text-xs text-text-main">Full page</span>
+            <span className="text-xs text-text-main">{t("scrapeFullPage")}</span>
           </label>
         </div>
       )}
@@ -170,7 +172,7 @@ export default function SearchToolsConfigPane({
       {activeTab === "search" && rerankModels.length > 0 && (
         <div className="p-3 border-b border-border space-y-1">
           <label className="block text-[10px] text-text-muted uppercase tracking-wider mb-1">
-            Rerank model
+            {t("rerankModelLabel")}
           </label>
           <Select
             value={config.rerankModel}

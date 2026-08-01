@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { getApiKeys, createApiKey, isCloudEnabled, updateApiKeyPermissions } from "@/lib/localDb";
+import {
+  getApiKeys,
+  getApiKeysCount,
+  createApiKey,
+  isCloudEnabled,
+  updateApiKeyPermissions,
+} from "@/lib/localDb";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { syncToCloud } from "@/lib/cloudSync";
 import { createKeySchema } from "@/shared/validation/schemas";
@@ -37,8 +43,8 @@ export async function GET(request: Request) {
       limit === null ? maskedKeys.slice(offset) : maskedKeys.slice(offset, offset + limit);
 
     return NextResponse.json({
-      keys: pagedKeys,
-      total: maskedKeys.length,
+      keys: maskedKeys,
+      total,
       allowKeyReveal: isApiKeyRevealEnabled(),
     });
   } catch (error) {
