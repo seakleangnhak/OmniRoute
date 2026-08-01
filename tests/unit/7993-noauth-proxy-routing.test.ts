@@ -35,6 +35,7 @@ const FINGERPRINT = "cccccccccccccccccccccccccccccccc";
 
 let proxyServer: net.Server;
 let proxyPort = 0;
+let opencodeConnectionId = "";
 
 function listen(server: net.Server): Promise<number> {
   return new Promise((resolve) => {
@@ -51,7 +52,7 @@ test.before(async () => {
   // Mirror exactly what the NoAuthAccountCard UI writes: a `provider_connections`
   // row filed under the no-auth id "opencode" (NOT "opencode-zen"), carrying the
   // configured account proxy.
-  await createProviderConnection({
+  const connection = await createProviderConnection({
     provider: "opencode",
     authType: "no-auth",
     name: "opencode-noauth-account",
@@ -66,6 +67,7 @@ test.before(async () => {
       ],
     },
   });
+  opencodeConnectionId = (connection as { id: string }).id;
 });
 
 test.after(() => {
@@ -74,14 +76,14 @@ test.after(() => {
   fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
 });
 
-test("#7993 getProviderCredentials('opencode-zen') hydrates the proxy saved under the sibling 'opencode' connection", async () => {
+test("#7993 getProviderCredentials('opencode-zen') uses the managed sibling 'opencode' connection", async () => {
   const creds = (await getProviderCredentials("opencode-zen")) as {
     connectionId?: string;
     providerSpecificData?: { fingerprints?: unknown; accountProxies?: unknown };
   } | null;
 
-  assert.ok(creds, "opencode-zen must resolve to synthetic no-auth credentials");
-  assert.equal(creds!.connectionId, "noauth");
+  assert.ok(creds, "opencode-zen must resolve to the managed sibling connection");
+  assert.equal(creds!.connectionId, opencodeConnectionId);
   const psd = creds!.providerSpecificData || {};
   assert.ok(
     Array.isArray(psd.fingerprints) && psd.fingerprints.length === 1,
@@ -100,7 +102,8 @@ test("#7993 a canonical 'opencode/<model>' resolved combo/catalog target egresse
   let observedSource: string | null = null;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (input: unknown) => {
-    const url = typeof input === "string" ? input : (input as { url?: string })?.url || String(input);
+    const url =
+      typeof input === "string" ? input : (input as { url?: string })?.url || String(input);
     observedSource = resolveProxyForRequest(url).source;
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
