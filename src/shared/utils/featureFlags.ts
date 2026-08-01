@@ -6,16 +6,18 @@ import {
 
 /**
  * Resolve the effective value of a feature flag.
- * Priority: DB override > process.env > definition.defaultValue
+ * Priority: locked value > DB override > process.env > definition.defaultValue
  */
 export function resolveFeatureFlag(key: string): string {
+  const definition = FEATURE_FLAG_DEFINITIONS.find((d) => d.key === key);
+  if (definition?.lockedValue !== undefined) return definition.lockedValue;
+
   const dbOverride = getFeatureFlagOverride(key);
   if (dbOverride !== undefined) return dbOverride;
 
   const envValue = process.env[key];
   if (envValue !== undefined && envValue !== "") return envValue;
 
-  const definition = FEATURE_FLAG_DEFINITIONS.find((d) => d.key === key);
   return definition?.defaultValue ?? "false";
 }
 
@@ -34,10 +36,18 @@ export function isFeatureFlagEnabled(key: string): boolean {
 export function resolveAllFeatureFlags(): Array<{
   key: string;
   effectiveValue: string;
-  source: "db" | "env" | "default";
+  source: "locked" | "db" | "env" | "default";
   definition: FeatureFlagDefinition;
 }> {
   return FEATURE_FLAG_DEFINITIONS.map((definition) => {
+    if (definition.lockedValue !== undefined) {
+      return {
+        key: definition.key,
+        effectiveValue: definition.lockedValue,
+        source: "locked",
+        definition,
+      };
+    }
     const dbOverride = getFeatureFlagOverride(definition.key);
     if (dbOverride !== undefined) {
       return { key: definition.key, effectiveValue: dbOverride, source: "db", definition };

@@ -187,8 +187,6 @@ interface ApiKeyView extends JsonRecord {
   chaosModeEnabled?: boolean;
 }
 
-// LRU cache for API key validation (valid keys only)
-const _keyValidationCache = new Map<string, { valid: boolean; timestamp: number }>();
 const _keyMetadataCache = new Map<string, CacheEntry<ApiKeyMetadata>>();
 const _lastUsedUpdateCache = new Map<string, number>();
 const CACHE_TTL = 60 * 1000; // 1 minute TTL
@@ -213,7 +211,6 @@ let _stmtDeleteKey: ApiKeysStatements["deleteKey"] | null = null;
  * Clear all caches (called on key create/update/delete)
  */
 function invalidateCaches() {
-  _keyValidationCache.clear();
   _keyMetadataCache.clear();
   _modelPermissionCache.clear();
   _lastUsedUpdateCache.clear();
@@ -1060,8 +1057,7 @@ export async function deleteApiKey(id: string) {
 
 /**
  * Revoke an API key by id. Logical, not destructive: the row stays so it can
- * be audited, but validateApiKey() rejects it immediately after caches expire
- * (or sooner because invalidateCaches() runs here).
+ * be audited, but validateApiKey() rejects it immediately.
  */
 export async function revokeApiKey(id: string): Promise<boolean> {
   const db = getDbInstance() as ApiKeysDbLike;
@@ -1101,7 +1097,7 @@ export async function setApiKeyExpiry(id: string, expiresAt: string | null): Pro
 }
 
 /**
- * Validate API key with lifecycle gates and caching.
+ * Validate an API key against its authoritative SQLite row.
  *
  * A key is valid only when ALL of the following are true:
  *   - the row exists,
@@ -1109,10 +1105,9 @@ export async function setApiKeyExpiry(id: string, expiresAt: string | null): Pro
  *   - revoked_at IS NULL,
  *   - expires_at IS NULL OR expires_at > now.
  *
- * Cache TTL is short (CACHE_TTL) and the metadata cache is also invalidated
- * by revokeApiKey/updateApiKeyPermissions/deleteApiKey, so a revoke takes
- * effect within at most CACHE_TTL even without an explicit clear in the
- * caller.
+ * Positive validation results are deliberately not cached. Every persisted
+ * key must be rechecked so deletion, regeneration, revocation, expiry, and
+ * deactivation take effect immediately across application processes.
  */
 export async function validateApiKey(key: string | null | undefined) {
   if (!key || typeof key !== "string") return false;
@@ -1121,41 +1116,6 @@ export async function validateApiKey(key: string | null | undefined) {
 
   const now = Date.now();
   const hashedKey = await hashKey(key);
-  const cacheKey = hashedKey;
-
-  const cached = _keyValidationCache.get(cacheKey);
-  if (cached && now - cached.timestamp < CACHE_TTL) {
-    return cached.valid;
-  }
-
-  if (isRedisAuthCacheEnabled()) {
-    // Try Redis cache for multi-instance consistency
-    try {
-      const { getRedisClient, isRedisConfigured } = await import("@/shared/utils/rateLimiter");
-      if (isRedisConfigured()) {
-        const redis = await getRedisClient();
-        const redisKey = `auth:api_key:${hashedKey}`;
-        const redisData = await redis.get(redisKey);
-        if (redisData) {
-          const data = JSON.parse(redisData);
-          const isBanned = !!data.isBanned;
-          const isActive = !!data.isActive;
-          const revokedAt = data.revokedAt;
-          const expiresAt = data.expiresAt;
-
-          if (isBanned || !isActive) return false;
-          if (typeof revokedAt === "string" && revokedAt.trim() !== "") return false;
-          if (typeof expiresAt === "string" && expiresAt.trim() !== "") {
-            const expiresMs = Date.parse(expiresAt);
-            if (Number.isFinite(expiresMs) && expiresMs <= now) return false;
-          }
-          return true;
-        }
-      }
-    } catch {
-      // Redis lookup failures fall through to SQLite.
-    }
-  }
 
   const db = getDbInstance() as ApiKeysDbLike;
   const stmt = getPreparedStatements(db);
@@ -1176,34 +1136,6 @@ export async function validateApiKey(key: string | null | undefined) {
   if (typeof expiresAt === "string" && expiresAt.trim() !== "") {
     const expiresMs = Date.parse(expiresAt);
     if (Number.isFinite(expiresMs) && expiresMs <= now) return false;
-  }
-
-  evictIfNeeded(_keyValidationCache);
-  _keyValidationCache.set(cacheKey, { valid: true, timestamp: now });
-
-  if (isRedisAuthCacheEnabled()) {
-    // Update Redis cache for fast validation
-    try {
-      const { getRedisClient, isRedisConfigured } = await import("@/shared/utils/rateLimiter");
-      if (isRedisConfigured()) {
-        const redis = await getRedisClient();
-        const redisKey = `auth:api_key:${hashedKey}`;
-        await redis.set(
-          redisKey,
-          JSON.stringify({
-            id: row.id,
-            isBanned: parseIsBanned(row.is_banned),
-            isActive: parseIsActive(row.is_active),
-            expiresAt: row.expires_at,
-            revokedAt: row.revoked_at,
-          }),
-          "EX",
-          3600 // 1 hour cache
-        );
-      }
-    } catch {
-      // Redis cache update failures do not block successful SQLite validation.
-    }
   }
 
   markApiKeyUsed(db, row.id, now);

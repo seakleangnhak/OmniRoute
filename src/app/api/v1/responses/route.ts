@@ -5,6 +5,7 @@ import { resolveResponsesApiModel } from "@/app/api/internal/codex-responses-ws/
 import { getModelInfo } from "@/sse/services/model";
 import { getComboByName } from "@/lib/db/combos";
 import { resolveKeepaliveThreshold } from "@omniroute/open-sse/utils/keepaliveThreshold";
+import { enforceClientApiAuth } from "@/app/api/v1/_helpers/clientApiAuth";
 
 // NOTE: We do NOT call initTranslators() here — the translator registry is
 // bootstrapped at module level inside open-sse/translator/index.ts when it
@@ -80,6 +81,9 @@ export async function withCodexPreferredModel(
  * parsed at most once per request instead of 3-4x on the hot codex path.
  */
 async function postHandler(request: any, context: any, preParsedBody: any = null) {
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
+
   // Codex CLI (wire_api="responses") consumes this endpoint over SSE and its reqwest
   // client drops the connection if no bytes arrive within ~5s. Keep the connection
   // warm with early keepalives while the upstream produces its first token (#2544).

@@ -5,6 +5,7 @@ export interface FeatureFlagDefinition {
   descriptionI18nKey: string;
   category: "security" | "network" | "policies" | "runtime" | "cli" | "health";
   defaultValue: string;
+  lockedValue?: string;
   type: "boolean" | "enum";
   enumValues?: string[];
   requiresRestart: boolean;
@@ -19,7 +20,8 @@ export const FEATURE_FLAG_DEFINITIONS: FeatureFlagDefinition[] = [
     description: "Require an API key for all incoming requests",
     descriptionI18nKey: "featureFlagRequireApiKeyDescription",
     category: "security",
-    defaultValue: "false",
+    defaultValue: "true",
+    lockedValue: "true",
     type: "boolean",
     requiresRestart: false,
     warningLevel: "caution",

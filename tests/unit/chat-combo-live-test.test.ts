@@ -6,8 +6,10 @@ import path from "node:path";
 
 const TEST_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "omniroute-chat-combo-live-"));
 process.env.DATA_DIR = TEST_DATA_DIR;
+process.env.API_KEY_SECRET = "chat-combo-live-test-secret";
 
 const core = await import("../../src/lib/db/core.ts");
+const apiKeysDb = await import("../../src/lib/db/apiKeys.ts");
 const providersDb = await import("../../src/lib/db/providers.ts");
 const settingsDb = await import("../../src/lib/db/settings.ts");
 const chatRoute = await import("../../src/app/api/v1/chat/completions/route.ts");
@@ -17,6 +19,8 @@ const { getCircuitBreaker, resetAllCircuitBreakers, STATE } =
   await import("../../src/shared/utils/circuitBreaker.ts");
 
 const originalFetch = globalThis.fetch;
+let clientApiKey = "";
+let clientApiKeyId = "";
 
 async function flushBackgroundWork() {
   await new Promise((resolve) => setTimeout(resolve, 50));
@@ -58,6 +62,7 @@ function makeRequest(extraHeaders = {}) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      Authorization: `Bearer ${clientApiKey}`,
       ...extraHeaders,
     },
     body: JSON.stringify({
@@ -76,6 +81,7 @@ function makeStreamingRequest(extraHeaders = {}) {
     headers: {
       "Content-Type": "application/json",
       Accept: "text/event-stream",
+      Authorization: `Bearer ${clientApiKey}`,
       ...extraHeaders,
     },
     body: JSON.stringify({
@@ -93,6 +99,7 @@ function makeRequestWithoutStreamFlag(extraHeaders = {}) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      Authorization: `Bearer ${clientApiKey}`,
       ...extraHeaders,
     },
     body: JSON.stringify({
@@ -119,6 +126,9 @@ async function readAll(response: Response): Promise<string> {
 test.beforeEach(async () => {
   globalThis.fetch = originalFetch;
   await resetStorage();
+  const created = await apiKeysDb.createApiKey("Chat Combo Test", "chat-combo-machine");
+  clientApiKey = created.key;
+  clientApiKeyId = created.id;
 });
 
 test.afterEach(async () => {
@@ -189,7 +199,8 @@ test("combo live test bypasses semantic cache and forces a fresh upstream reques
     "gpt-4.1",
     [{ role: "user", content: "Reply with OK only." }],
     0,
-    1
+    1,
+    clientApiKeyId
   );
 
   setCachedResponse(signature, "gpt-4.1", {

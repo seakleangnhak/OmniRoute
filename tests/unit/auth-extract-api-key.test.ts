@@ -77,9 +77,9 @@ test("extractApiKey falls back to x-api-key when Authorization is a non-Bearer s
   assert.equal(extractApiKey(req), "stub-fallback-after-basic");
 });
 
-test("extractApiKey ignores x-api-key when anthropic-version is missing — protects local-mode non-Anthropic clients", () => {
-  const req = makeRequest({ "x-api-key": "placeholder-key" });
-  assert.equal(extractApiKey(req), null);
+test("extractApiKey accepts x-api-key when anthropic-version is missing", () => {
+  const req = makeRequest({ "x-api-key": "sk-client-api-key" });
+  assert.equal(extractApiKey(req), "sk-client-api-key");
 });
 
 test("extractApiKey accepts Anthropic-Version (TitleCase) header", () => {

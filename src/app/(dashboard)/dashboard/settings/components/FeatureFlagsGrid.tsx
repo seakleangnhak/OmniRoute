@@ -13,8 +13,9 @@ interface FlagData {
   type: "boolean" | "enum";
   enumValues: string[] | null;
   defaultValue: string;
+  lockedValue: string | null;
   effectiveValue: string;
-  source: "db" | "env" | "default";
+  source: "locked" | "db" | "env" | "default";
   requiresRestart: boolean;
   warningLevel?: "info" | "caution" | "danger";
 }

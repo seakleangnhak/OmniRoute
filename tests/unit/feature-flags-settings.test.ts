@@ -9,6 +9,7 @@ const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "omniroute-test-flags-"));
 process.env.DATA_DIR = tmpDir;
 
 const core = await import("../../src/lib/db/core.ts");
+const featureFlagsRoute = await import("../../src/app/api/settings/feature-flags/route.ts");
 
 const { FEATURE_FLAG_DEFINITIONS } =
   await import("../../src/shared/constants/featureFlagDefinitions.ts");
@@ -98,6 +99,13 @@ describe("featureFlagDefinitions", () => {
     assert.strictEqual(def.type, "boolean");
     assert.strictEqual(def.defaultValue, "true");
     assert.strictEqual(def.requiresRestart, false);
+  });
+
+  it("locks REQUIRE_API_KEY on", () => {
+    const def = FEATURE_FLAG_DEFINITIONS.find((d) => d.key === "REQUIRE_API_KEY");
+    assert.ok(def, "REQUIRE_API_KEY should exist");
+    assert.strictEqual(def.defaultValue, "true");
+    assert.strictEqual(def.lockedValue, "true");
   });
 
   it("defines models catalog prefix mode as a runtime enum flag defaulting to dual", () => {
@@ -249,40 +257,48 @@ describe("resolveFeatureFlag", () => {
   beforeEach(() => {
     resetDb();
     delete process.env["REQUIRE_API_KEY"];
+    delete process.env["ENABLE_CC_COMPATIBLE_PROVIDER"];
   });
 
   after(() => {
     core.resetDbInstance();
     fs.rmSync(tmpDir, { recursive: true, force: true });
     delete process.env["REQUIRE_API_KEY"];
+    delete process.env["ENABLE_CC_COMPATIBLE_PROVIDER"];
   });
 
   it("returns DB override when set", () => {
-    setFeatureFlagOverride("REQUIRE_API_KEY", "true");
-    assert.strictEqual(resolveFeatureFlag("REQUIRE_API_KEY"), "true");
+    setFeatureFlagOverride("ENABLE_CC_COMPATIBLE_PROVIDER", "true");
+    assert.strictEqual(resolveFeatureFlag("ENABLE_CC_COMPATIBLE_PROVIDER"), "true");
   });
 
   it("falls back to ENV when no DB override", () => {
-    process.env["REQUIRE_API_KEY"] = "true";
-    assert.strictEqual(resolveFeatureFlag("REQUIRE_API_KEY"), "true");
-    delete process.env["REQUIRE_API_KEY"];
+    process.env["ENABLE_CC_COMPATIBLE_PROVIDER"] = "true";
+    assert.strictEqual(resolveFeatureFlag("ENABLE_CC_COMPATIBLE_PROVIDER"), "true");
+    delete process.env["ENABLE_CC_COMPATIBLE_PROVIDER"];
   });
 
   it("falls back to default when neither DB nor ENV", () => {
-    assert.strictEqual(resolveFeatureFlag("REQUIRE_API_KEY"), "false");
+    assert.strictEqual(resolveFeatureFlag("ENABLE_CC_COMPATIBLE_PROVIDER"), "false");
   });
 
   it("DB takes priority over ENV", () => {
-    process.env["REQUIRE_API_KEY"] = "env-value";
-    setFeatureFlagOverride("REQUIRE_API_KEY", "db-value");
-    assert.strictEqual(resolveFeatureFlag("REQUIRE_API_KEY"), "db-value");
-    delete process.env["REQUIRE_API_KEY"];
+    process.env["ENABLE_CC_COMPATIBLE_PROVIDER"] = "env-value";
+    setFeatureFlagOverride("ENABLE_CC_COMPATIBLE_PROVIDER", "db-value");
+    assert.strictEqual(resolveFeatureFlag("ENABLE_CC_COMPATIBLE_PROVIDER"), "db-value");
+    delete process.env["ENABLE_CC_COMPATIBLE_PROVIDER"];
+  });
+
+  it("ignores DB and ENV attempts to disable REQUIRE_API_KEY", () => {
+    process.env["REQUIRE_API_KEY"] = "false";
+    setFeatureFlagOverride("REQUIRE_API_KEY", "false");
+    assert.strictEqual(resolveFeatureFlag("REQUIRE_API_KEY"), "true");
   });
 
   describe("isFeatureFlagEnabled", () => {
     it("returns true for 'true'", () => {
-      setFeatureFlagOverride("REQUIRE_API_KEY", "true");
-      assert.ok(isFeatureFlagEnabled("REQUIRE_API_KEY"));
+      setFeatureFlagOverride("ENABLE_CC_COMPATIBLE_PROVIDER", "true");
+      assert.ok(isFeatureFlagEnabled("ENABLE_CC_COMPATIBLE_PROVIDER"));
     });
 
     it("returns true for '1'", () => {
@@ -291,23 +307,23 @@ describe("resolveFeatureFlag", () => {
     });
 
     it("returns true for 'yes'", () => {
-      setFeatureFlagOverride("REQUIRE_API_KEY", "yes");
-      assert.ok(isFeatureFlagEnabled("REQUIRE_API_KEY"));
+      setFeatureFlagOverride("ENABLE_CC_COMPATIBLE_PROVIDER", "yes");
+      assert.ok(isFeatureFlagEnabled("ENABLE_CC_COMPATIBLE_PROVIDER"));
     });
 
     it("returns false for 'false'", () => {
-      assert.ok(!isFeatureFlagEnabled("REQUIRE_API_KEY"));
+      assert.ok(!isFeatureFlagEnabled("ENABLE_CC_COMPATIBLE_PROVIDER"));
     });
 
     it("returns false for '0'", () => {
-      setFeatureFlagOverride("REQUIRE_API_KEY", "0");
-      assert.ok(!isFeatureFlagEnabled("REQUIRE_API_KEY"));
+      setFeatureFlagOverride("ENABLE_CC_COMPATIBLE_PROVIDER", "0");
+      assert.ok(!isFeatureFlagEnabled("ENABLE_CC_COMPATIBLE_PROVIDER"));
     });
 
     it("returns false for empty string via ENV (falls to default)", () => {
-      process.env["REQUIRE_API_KEY"] = "";
-      assert.ok(!isFeatureFlagEnabled("REQUIRE_API_KEY"));
-      delete process.env["REQUIRE_API_KEY"];
+      process.env["ENABLE_CC_COMPATIBLE_PROVIDER"] = "";
+      assert.ok(!isFeatureFlagEnabled("ENABLE_CC_COMPATIBLE_PROVIDER"));
+      delete process.env["ENABLE_CC_COMPATIBLE_PROVIDER"];
     });
   });
 
@@ -318,30 +334,40 @@ describe("resolveFeatureFlag", () => {
     });
 
     it("marks DB-overridden flags with source 'db'", () => {
-      setFeatureFlagOverride("REQUIRE_API_KEY", "true");
+      setFeatureFlagOverride("ENABLE_CC_COMPATIBLE_PROVIDER", "true");
       const all = resolveAllFeatureFlags();
-      const flag = all.find((f) => f.key === "REQUIRE_API_KEY");
+      const flag = all.find((f) => f.key === "ENABLE_CC_COMPATIBLE_PROVIDER");
       assert.strictEqual(flag?.source, "db");
     });
 
     it("marks ENV-set flags with source 'env'", () => {
-      process.env["REQUIRE_API_KEY"] = "true";
+      process.env["ENABLE_CC_COMPATIBLE_PROVIDER"] = "true";
       const all = resolveAllFeatureFlags();
-      const flag = all.find((f) => f.key === "REQUIRE_API_KEY");
+      const flag = all.find((f) => f.key === "ENABLE_CC_COMPATIBLE_PROVIDER");
       assert.strictEqual(flag?.source, "env");
-      delete process.env["REQUIRE_API_KEY"];
+      delete process.env["ENABLE_CC_COMPATIBLE_PROVIDER"];
     });
 
     it("marks default flags with source 'default'", () => {
       const all = resolveAllFeatureFlags();
-      const flag = all.find((f) => f.key === "REQUIRE_API_KEY");
+      const flag = all.find((f) => f.key === "ENABLE_CC_COMPATIBLE_PROVIDER");
       assert.strictEqual(flag?.source, "default");
+    });
+
+    it("marks REQUIRE_API_KEY with source 'locked'", () => {
+      process.env["REQUIRE_API_KEY"] = "false";
+      setFeatureFlagOverride("REQUIRE_API_KEY", "false");
+      const all = resolveAllFeatureFlags();
+      const flag = all.find((f) => f.key === "REQUIRE_API_KEY");
+      assert.strictEqual(flag?.effectiveValue, "true");
+      assert.strictEqual(flag?.source, "locked");
     });
   });
 
   describe("backward compatibility", () => {
-    it("isRequireApiKeyEnabled uses the resolved REQUIRE_API_KEY flag", () => {
-      setFeatureFlagOverride("REQUIRE_API_KEY", "true");
+    it("isRequireApiKeyEnabled remains true despite DB and ENV overrides", () => {
+      process.env["REQUIRE_API_KEY"] = "false";
+      setFeatureFlagOverride("REQUIRE_API_KEY", "false");
       assert.strictEqual(isRequireApiKeyEnabled(), true);
     });
 
@@ -401,7 +427,64 @@ describe("resolveFeatureFlag", () => {
 });
 
 // ──────────────────────────────────────────────────────
-// Test group 4 — Schema / validation logic (pure)
+// Test group 4 — Settings API
+// ──────────────────────────────────────────────────────
+describe("feature flag settings API", () => {
+  function resetDb() {
+    core.resetDbInstance();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.mkdirSync(tmpDir, { recursive: true });
+  }
+
+  beforeEach(() => {
+    resetDb();
+  });
+
+  after(() => {
+    core.resetDbInstance();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns REQUIRE_API_KEY as locked and enabled", async () => {
+    const request = new Request("http://localhost/api/settings/feature-flags");
+    const response = await featureFlagsRoute.GET(request as never);
+    const body = (await response.json()) as {
+      flags: Array<{
+        key: string;
+        effectiveValue: string;
+        lockedValue: string | null;
+        source: string;
+      }>;
+    };
+    const flag = body.flags.find((entry) => entry.key === "REQUIRE_API_KEY");
+
+    assert.equal(response.status, 200);
+    assert.ok(flag, "REQUIRE_API_KEY should be returned");
+    assert.equal(flag.effectiveValue, "true");
+    assert.equal(flag.lockedValue, "true");
+    assert.equal(flag.source, "locked");
+  });
+
+  for (const body of [{ key: "REQUIRE_API_KEY", value: "false" }, { key: "REQUIRE_API_KEY" }]) {
+    it(`rejects a REQUIRE_API_KEY mutation with body ${JSON.stringify(body)}`, async () => {
+      const request = new Request("http://localhost/api/settings/feature-flags", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const response = await featureFlagsRoute.PUT(request as never);
+
+      assert.equal(response.status, 409);
+      assert.deepEqual(await response.json(), {
+        error: "REQUIRE_API_KEY is locked to true by application policy",
+      });
+      assert.equal(getFeatureFlagOverride("REQUIRE_API_KEY"), undefined);
+    });
+  }
+});
+
+// ──────────────────────────────────────────────────────
+// Test group 5 — Schema / validation logic (pure)
 // ──────────────────────────────────────────────────────
 describe("featureFlagUpdateSchema validation", () => {
   it("rejects unknown flag keys", () => {

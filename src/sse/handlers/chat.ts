@@ -381,9 +381,8 @@ export async function handleChat(
   // Log only that an API key was provided — never the key itself, not even a
   // masked prefix/last4. These debug lines get copied verbatim into bug reports
   // and support tickets, so any key fragment is sensitive.
-  const authHeader = request.headers.get("Authorization");
   const apiKey = extractApiKey(request);
-  if (authHeader && apiKey) {
+  if (apiKey) {
     log.debug("AUTH", "API key provided");
   } else {
     log.debug("AUTH", "No API key provided (local mode)");

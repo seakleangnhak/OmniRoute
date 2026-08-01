@@ -2390,18 +2390,10 @@ function readNonEmptyUrlToken(request: AuthRequestLike): string | null {
  * Honors explicit auth headers and (for client-facing routes only) a
  * path-scoped URL token:
  * - `Authorization: Bearer <key>` (OpenAI / OmniRoute / Codex CLI / Bearer clients)
- * - `x-api-key: <key>` (Anthropic Messages API contract — Claude Code,
- *   `@anthropic-ai/sdk`, any SDK that sets `anthropic-version`)
+ * - `x-api-key: <key>` (Anthropic Messages API contract and other API-key clients)
  * - `/vscode/<key>/...` (path-scoped tokenized aliases — only when `allowUrl`)
  *
  * When multiple inputs are present, explicit auth headers win.
- *
- * The `x-api-key` fallback only triggers when the request also carries an
- * `anthropic-version` header — the documented signal that the caller is
- * speaking the Anthropic Messages API contract. Without this scoping,
- * non-Anthropic SDKs that happen to set `x-api-key` (or local-mode tools
- * with placeholder keys) would be treated as authenticated attempts and
- * rejected by per-route gates that compare against OmniRoute keys.
  *
  * `opts.allowUrl` (default `true`) gates the path-scoped URL token. Management
  * auth MUST pass `allowUrl: false` — a credential in the URL must never
@@ -2419,21 +2411,12 @@ export function extractApiKey(request: AuthRequestLike, opts?: { allowUrl?: bool
     }
   }
 
-  // Issue #2225: Anthropic Messages API clients authenticate via x-api-key.
-  // Gate the fallback on the anthropic-version header so we don't trip up
-  // local-mode requests from non-Anthropic clients that send placeholder
-  // x-api-key values (which would otherwise be rejected as Invalid API key).
-  const anthropicVersion =
-    readHeaderValue(request?.headers, "anthropic-version") ||
-    readHeaderValue(request?.headers, "Anthropic-Version");
-  if (anthropicVersion) {
-    const xApiKey =
-      readHeaderValue(request?.headers, "x-api-key") ||
-      readHeaderValue(request?.headers, "X-Api-Key");
-    if (typeof xApiKey === "string") {
-      const trimmed = xApiKey.trim();
-      if (trimmed.length > 0) return trimmed;
-    }
+  const xApiKey =
+    readHeaderValue(request?.headers, "x-api-key") ||
+    readHeaderValue(request?.headers, "X-Api-Key");
+  if (typeof xApiKey === "string") {
+    const trimmed = xApiKey.trim();
+    if (trimmed.length > 0) return trimmed;
   }
 
   if (opts?.allowUrl === false) return null;

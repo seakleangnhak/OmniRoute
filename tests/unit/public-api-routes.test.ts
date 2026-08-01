@@ -5,7 +5,7 @@ import { isPublicApiRoute } from "../../src/shared/constants/publicApiRoutes.ts"
 
 test("isPublicApiRoute allows public management prefixes", () => {
   assert.equal(isPublicApiRoute("/api/auth/login"), true);
-  assert.equal(isPublicApiRoute("/api/v1/chat/completions"), true);
+  assert.equal(isPublicApiRoute("/api/v1/chat/completions"), false);
   assert.equal(isPublicApiRoute("/api/oauth/cursor/callback"), true);
 });
 

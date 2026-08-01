@@ -38,6 +38,7 @@ export async function GET(request: NextRequest) {
       type: definition.type,
       enumValues: definition.enumValues ?? null,
       defaultValue: definition.defaultValue,
+      lockedValue: definition.lockedValue ?? null,
       effectiveValue,
       source,
       requiresRestart: definition.requiresRestart,
@@ -93,6 +94,13 @@ export async function PUT(request: NextRequest) {
   const definition = FEATURE_FLAG_DEFINITIONS.find((d) => d.key === key);
   if (!definition) {
     return NextResponse.json({ error: `Unknown feature flag key: ${key}` }, { status: 400 });
+  }
+
+  if (definition.lockedValue !== undefined) {
+    return NextResponse.json(
+      { error: `${key} is locked to ${definition.lockedValue} by application policy` },
+      { status: 409 }
+    );
   }
 
   // Validate enum values

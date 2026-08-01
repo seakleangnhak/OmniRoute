@@ -61,6 +61,7 @@ test("Batch processor produces output file for successful items", async () => {
       apiKey: "sk-mock-embeddings-key",
       isActive: true,
     });
+    const apiKey = await createApiKey("Batch Results Key", "batch-results-machine");
 
     const fileContent = [
       JSON.stringify({
@@ -76,14 +77,14 @@ test("Batch processor produces output file for successful items", async () => {
       filename: "embeddings_batch.jsonl",
       purpose: "batch",
       content: Buffer.from(fileContent),
-      apiKeyId: null,
+      apiKeyId: apiKey.id,
     });
 
     const batch = createBatch({
       endpoint: "/v1/embeddings",
       completionWindow: "24h",
       inputFileId: file.id,
-      apiKeyId: null,
+      apiKeyId: apiKey.id,
     });
 
     initBatchProcessor();

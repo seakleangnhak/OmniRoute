@@ -8,8 +8,9 @@ interface FeatureFlagCardProps {
     category: "security" | "network" | "policies" | "runtime" | "cli" | "health";
     type: "boolean" | "enum";
     enumValues?: string[] | null;
+    lockedValue: string | null;
     effectiveValue: string;
-    source: "db" | "env" | "default";
+    source: "locked" | "db" | "env" | "default";
     requiresRestart: boolean;
     warningLevel?: "info" | "caution" | "danger";
   };
@@ -64,6 +65,12 @@ const SOURCE_STYLES: Record<
   FeatureFlagCardProps["flag"]["source"],
   { bg: string; border: string; text: string; label: string }
 > = {
+  locked: {
+    bg: "bg-emerald-50 dark:bg-emerald-500/20",
+    border: "border-emerald-200 dark:border-emerald-500/30",
+    text: "text-emerald-700 dark:text-emerald-300",
+    label: "LOCKED",
+  },
   db: {
     bg: "bg-sky-50 dark:bg-blue-500/20",
     border: "border-sky-200 dark:border-blue-500/30",
@@ -106,6 +113,7 @@ export default function FeatureFlagCard({
   const enabled = flag.type === "boolean" ? isEnabled(flag.effectiveValue) : false;
   const category = CATEGORY_STYLES[flag.category];
   const source = SOURCE_STYLES[flag.source];
+  const locked = flag.lockedValue !== null;
 
   const cardBorder =
     flag.type === "boolean" && enabled
@@ -135,7 +143,8 @@ export default function FeatureFlagCard({
               role="switch"
               aria-checked={enabled}
               aria-label={flag.label}
-              disabled={saving}
+              disabled={saving || locked}
+              title={locked ? "Locked by application policy" : undefined}
               onClick={() => onToggle(flag.key, enabled ? "false" : "true")}
               className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-50 ${
                 enabled ? "bg-emerald-500" : "bg-slate-300 dark:bg-white/20"
@@ -151,7 +160,8 @@ export default function FeatureFlagCard({
           ) : (
             <select
               aria-label={flag.label}
-              disabled={saving}
+              disabled={saving || locked}
+              title={locked ? "Locked by application policy" : undefined}
               value={flag.effectiveValue}
               onChange={(e) => onToggle(flag.key, e.target.value)}
               className="rounded-md border border-border bg-bg-subtle px-2 py-0.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
@@ -201,6 +211,7 @@ export default function FeatureFlagCard({
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-text-muted">Source:</span>
           <span
+            aria-label={`Source: ${source.label}`}
             className={`inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-xs font-medium ${source.bg} ${source.border} ${source.text}`}
           >
             {source.label}

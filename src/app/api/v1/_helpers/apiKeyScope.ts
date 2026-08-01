@@ -1,6 +1,7 @@
-import { getApiKeyMetadata } from "@/lib/db/apiKeys";
+import { getApiKeyMetadata, validateApiKey } from "@/lib/db/apiKeys";
 import { extractApiKey } from "@/sse/services/auth";
 import { isDashboardSessionAuthenticated } from "@/shared/utils/apiAuth";
+import { isRequireApiKeyEnabled } from "@/shared/utils/featureFlags";
 import { errorResponse } from "@omniroute/open-sse/utils/error.ts";
 import { HTTP_STATUS } from "@omniroute/open-sse/config/constants.ts";
 
@@ -17,7 +18,7 @@ export async function getApiKeyRequestScope(request: Request): Promise<ApiKeyReq
   const apiKey = extractApiKey(request);
   if (!apiKey) {
     const rejection =
-      process.env.REQUIRE_API_KEY === "true" && !isSessionAuth
+      isRequireApiKeyEnabled() && !isSessionAuth
         ? errorResponse(HTTP_STATUS.UNAUTHORIZED, "Authentication required")
         : null;
     return { apiKey: null, apiKeyId: null, apiKeyMetadata: null, rejection, isSessionAuth };
@@ -93,6 +94,29 @@ export async function getApiKeyRequestScope(request: Request): Promise<ApiKeyReq
         isSessionAuth,
       };
     }
+  }
+
+  try {
+    if (!(await validateApiKey(apiKey))) {
+      return {
+        apiKey,
+        apiKeyId: null,
+        apiKeyMetadata: null,
+        rejection: errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key"),
+        isSessionAuth,
+      };
+    }
+  } catch {
+    return {
+      apiKey,
+      apiKeyId: null,
+      apiKeyMetadata: null,
+      rejection: errorResponse(
+        HTTP_STATUS.SERVICE_UNAVAILABLE,
+        "API key authentication unavailable"
+      ),
+      isSessionAuth,
+    };
   }
 
   return {

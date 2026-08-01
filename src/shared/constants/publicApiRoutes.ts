@@ -3,7 +3,6 @@ const PUBLIC_API_ROUTE_PREFIXES = [
   "/api/auth/logout",
   "/api/auth/status",
   "/api/init",
-  "/api/v1/",
   "/api/sync/bundle",
   "/api/oauth/",
   // Public, ticket-gated Codex device-flow completion (validate + persist).

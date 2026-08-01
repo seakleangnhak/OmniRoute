@@ -135,16 +135,16 @@ test("clientApiPolicy: REQUIRE_API_KEY DB feature flag override rejects anonymou
   }
 });
 
-test("clientApiPolicy: REQUIRE_API_KEY DB feature flag override can disable env requirement", async () => {
+test("clientApiPolicy: REQUIRE_API_KEY cannot be disabled by a DB override", async () => {
   process.env.REQUIRE_API_KEY = "true";
   featureFlagsDb.setFeatureFlagOverride("REQUIRE_API_KEY", "false");
 
   const policy = await loadPolicy();
   const out = await policy.evaluate(ctx(new Headers()));
-  assert.equal(out.allow, true);
-  if (out.allow) {
-    assert.equal(out.subject.kind, "anonymous");
-    assert.equal(out.subject.id, "local");
+  assert.equal(out.allow, false);
+  if (!out.allow) {
+    assert.equal(out.status, 401);
+    assert.equal(out.code, "AUTH_002");
   }
 });
 
@@ -206,6 +206,37 @@ test("clientApiPolicy: revoked bearer is rejected", async () => {
   const policy = await loadPolicy();
   const headers = new Headers({ authorization: `Bearer ${created.key}` });
   const out = await policy.evaluate(ctx(headers));
+  assert.equal(out.allow, false);
+});
+
+test("clientApiPolicy: regenerated bearer rejects the old key and accepts the current key", async () => {
+  process.env.REQUIRE_API_KEY = "false";
+  featureFlagsDb.setFeatureFlagOverride("REQUIRE_API_KEY", "false");
+  const created = await apiKeysDb.createApiKey("policy-regenerated-key", "machine-regenerated");
+  const regenerated = await apiKeysDb.regenerateApiKey(created.id);
+  assert.ok(regenerated?.key, "regenerateApiKey must return the current key");
+
+  const policy = await loadPolicy();
+  const oldKeyOutcome = await policy.evaluate(
+    ctx(new Headers({ authorization: `Bearer ${created.key}` }))
+  );
+  const currentKeyOutcome = await policy.evaluate(
+    ctx(new Headers({ authorization: `Bearer ${regenerated.key}` }))
+  );
+
+  assert.equal(oldKeyOutcome.allow, false);
+  assert.equal(currentKeyOutcome.allow, true);
+});
+
+test("clientApiPolicy: deleted bearer remains rejected when false overrides are present", async () => {
+  process.env.REQUIRE_API_KEY = "false";
+  featureFlagsDb.setFeatureFlagOverride("REQUIRE_API_KEY", "false");
+  const created = await apiKeysDb.createApiKey("policy-deleted-key", "machine-deleted");
+  assert.equal(await apiKeysDb.deleteApiKey(created.id), true);
+
+  const policy = await loadPolicy();
+  const out = await policy.evaluate(ctx(new Headers({ authorization: `Bearer ${created.key}` })));
+
   assert.equal(out.allow, false);
 });
 

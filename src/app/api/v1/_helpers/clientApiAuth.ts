@@ -1,8 +1,9 @@
 import { errorResponse } from "@omniroute/open-sse/utils/error.ts";
 import { HTTP_STATUS } from "@omniroute/open-sse/config/constants.ts";
-import { getApiKeyMetadata } from "@/lib/db/apiKeys";
+import { getApiKeyMetadata, validateApiKey } from "@/lib/db/apiKeys";
 import { extractApiKey } from "@/sse/services/auth";
 import { isDashboardSessionAuthenticated } from "@/shared/utils/apiAuth";
+import { isRequireApiKeyEnabled } from "@/shared/utils/featureFlags";
 
 /**
  * Direct API-key guard for /v1 route handlers.
@@ -15,10 +16,7 @@ export async function enforceClientApiAuth(request: Request): Promise<Response |
   const apiKey = extractApiKey(request);
 
   if (!apiKey) {
-    if (
-      process.env.REQUIRE_API_KEY === "true" &&
-      !(await isDashboardSessionAuthenticated(request))
-    ) {
+    if (isRequireApiKeyEnabled() && !(await isDashboardSessionAuthenticated(request))) {
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Authentication required");
     }
     return null;
@@ -46,6 +44,9 @@ export async function enforceClientApiAuth(request: Request): Promise<Response |
       if (Number.isFinite(expiry) && Date.now() > expiry) {
         return errorResponse(HTTP_STATUS.FORBIDDEN, "This API key has expired");
       }
+    }
+    if (!(await validateApiKey(apiKey))) {
+      return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
     }
   } catch {
     return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, "API key authentication unavailable");

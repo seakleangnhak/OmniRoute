@@ -295,6 +295,7 @@ test("Batch dispatches non-chat endpoints through the matching route handler", a
       apiKey: "sk-mock-embeddings-key",
       isActive: true,
     });
+    const apiKey = await createApiKey("Embeddings Batch Key", "embeddings-batch-machine");
 
     const batchItems = [
       JSON.stringify({
@@ -313,14 +314,14 @@ test("Batch dispatches non-chat endpoints through the matching route handler", a
       filename: "embeddings_batch.jsonl",
       purpose: "batch",
       content: Buffer.from(batchItems),
-      apiKeyId: null,
+      apiKeyId: apiKey.id,
     });
 
     const batch = createBatch({
       endpoint: "/v1/embeddings",
       completionWindow: "24h",
       inputFileId: file.id,
-      apiKeyId: null,
+      apiKeyId: apiKey.id,
     });
 
     let maxAttempts = 20;
@@ -396,6 +397,7 @@ test("Batch rejects input lines whose url does not match the batch endpoint", as
 test("Batch forces stream: false for all requests", async () => {
   initBatchProcessor();
   try {
+    const apiKey = await createApiKey("Stream Batch Key", "stream-batch-machine");
     const batchItems = [
       JSON.stringify({
         custom_id: "stream-request",
@@ -414,14 +416,14 @@ test("Batch forces stream: false for all requests", async () => {
       filename: "stream_force_batch.jsonl",
       purpose: "batch",
       content: Buffer.from(batchItems),
-      apiKeyId: null,
+      apiKeyId: apiKey.id,
     });
 
     const batch = createBatch({
       endpoint: "/v1/chat/completions",
       completionWindow: "24h",
       inputFileId: file.id,
-      apiKeyId: null,
+      apiKeyId: apiKey.id,
     });
 
     let maxAttempts = 20;
@@ -751,6 +753,7 @@ test("Batch processor recovers orphaned finalizing batches during startup recove
 });
 
 test("Files upload route stores multipart content", async () => {
+  const apiKey = await createApiKey("File Upload Key", "file-upload-machine");
   const fileContent = '{"custom_id":"req-1"}\n';
   const formData = new FormData();
   formData.set("purpose", "batch");
@@ -762,6 +765,7 @@ test("Files upload route stores multipart content", async () => {
   const response = await filesRoute.POST(
     new Request("http://localhost/api/v1/files", {
       method: "POST",
+      headers: { authorization: `Bearer ${apiKey.key}` },
       body: formData,
     })
   );
@@ -794,7 +798,7 @@ test("Files and batches routes expose explicit CORS preflight handlers", async (
   }
 });
 
-test("Batch by-id route exposes ownerless records to anonymous requests", async () => {
+test("Batch by-id route rejects anonymous requests for ownerless records", async () => {
   const file = createFile({
     bytes: 2,
     filename: "ownerless.jsonl",
@@ -815,9 +819,8 @@ test("Batch by-id route exposes ownerless records to anonymous requests", async 
   );
   const body = await response.json();
 
-  assert.strictEqual(response.status, 200);
-  assert.strictEqual(body.id, batch.id);
-  assert.strictEqual(body.status, "validating");
+  assert.strictEqual(response.status, 401);
+  assert.match(String(body.error?.message || ""), /authentication required/i);
 });
 
 test("Batch Cancel API", async () => {

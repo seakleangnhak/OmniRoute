@@ -12,6 +12,7 @@ import {
   readCompressionRequestHeader,
   withCompressionHeaderEcho,
 } from "@/shared/utils/compressionHeaderEcho";
+import { enforceClientApiAuth } from "@/app/api/v1/_helpers/clientApiAuth";
 
 let initPromise = null;
 
@@ -60,6 +61,9 @@ export async function POST(request) {
       { status: 415, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
     );
   }
+
+  const authRejection = await enforceClientApiAuth(request);
+  if (authRejection) return authRejection;
 
   // Heap-pressure-aware admission: shed a large body with 503 (or 413 if pathological)
   // BEFORE the request is cloned + JSON-parsed below. A large coding-agent compact body

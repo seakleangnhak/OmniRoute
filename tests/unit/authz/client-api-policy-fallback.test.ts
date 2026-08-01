@@ -1,11 +1,8 @@
 /**
- * Issue #2257 — clientApi policy behavior when an invalid Bearer is sent and
- * REQUIRE_API_KEY=false.
+ * Issue #2257 — clientApi policy behavior when an invalid API key is sent.
  *
- * The existing `client-api-policy.test.ts` shares a DB-backed setup via
- * `resetStorage()` and `apiKeysDb` that has SQLite migration races on this
- * branch. This standalone file mocks `validateApiKey` to test the policy's
- * fallback branch in isolation — no DB, no migration runner.
+ * This standalone file mocks `validateApiKey` so invalid-key rejection can be
+ * tested in isolation without a DB or migration runner.
  */
 
 import test from "node:test";
@@ -109,51 +106,33 @@ test("#2257 — invalid bearer + REQUIRE_API_KEY=true → 401", async () => {
   }
 });
 
-test("#2257 — invalid bearer + REQUIRE_API_KEY=false → anonymous (with warning log)", async () => {
-  const originalWarn = console.warn;
-  const warnings: string[] = [];
-  console.warn = (msg: string) => warnings.push(String(msg));
-  try {
-    const policy = await loadPolicy();
-    const headers = new Headers({ authorization: "Bearer sk-stub-bogus" });
-    const out = await policy.evaluate(ctx(headers));
-    assert.equal(out.allow, true);
-    if (out.allow) {
-      assert.equal(out.subject.kind, "anonymous");
-      assert.equal(out.subject.id, "local");
-    }
-    assert.ok(
-      warnings.some((w) => w.includes("[clientApiPolicy]") && w.includes("REQUIRE_API_KEY=false")),
-      "expected a warning about the fallback"
-    );
-  } finally {
-    console.warn = originalWarn;
+test("#2257 — invalid bearer is rejected even when REQUIRE_API_KEY=false", async () => {
+  process.env.REQUIRE_API_KEY = "false";
+  const policy = await loadPolicy();
+  const headers = new Headers({ authorization: "Bearer sk-stub-bogus" });
+  const out = await policy.evaluate(ctx(headers));
+  assert.equal(out.allow, false);
+  if (!out.allow) {
+    assert.equal(out.status, 401);
+    assert.equal(out.code, "AUTH_002");
+    assert.equal(out.message, "Invalid API key");
   }
 });
 
-test("#2257 — invalid x-api-key + REQUIRE_API_KEY=false → anonymous (with warning log)", async () => {
-  const originalWarn = console.warn;
-  const warnings: string[] = [];
-  console.warn = (msg: string) => warnings.push(String(msg));
-  try {
-    const policy = await loadPolicy();
-    const headers = new Headers({ "x-api-key": "sk-stub-bogus" });
-    const out = await policy.evaluate(ctx(headers));
-    assert.equal(out.allow, true);
-    if (out.allow) {
-      assert.equal(out.subject.kind, "anonymous");
-      assert.equal(out.subject.id, "local");
-    }
-    assert.ok(
-      warnings.some((w) => w.includes("[clientApiPolicy]") && w.includes("REQUIRE_API_KEY=false")),
-      "expected a warning about the fallback"
-    );
-  } finally {
-    console.warn = originalWarn;
+test("#2257 — invalid x-api-key is rejected even when REQUIRE_API_KEY=false", async () => {
+  process.env.REQUIRE_API_KEY = "false";
+  const policy = await loadPolicy();
+  const headers = new Headers({ "x-api-key": "sk-stub-bogus" });
+  const out = await policy.evaluate(ctx(headers));
+  assert.equal(out.allow, false);
+  if (!out.allow) {
+    assert.equal(out.status, 401);
+    assert.equal(out.code, "AUTH_002");
+    assert.equal(out.message, "Invalid API key");
   }
 });
 
-test("#2257 — fallback warning masks the x-api-key (only last-4 in log)", async () => {
+test("#2257 — invalid-key rejection does not log credential fragments", async () => {
   const originalWarn = console.warn;
   const warnings: string[] = [];
   console.warn = (msg: string) => warnings.push(String(msg));
@@ -161,58 +140,33 @@ test("#2257 — fallback warning masks the x-api-key (only last-4 in log)", asyn
     const policy = await loadPolicy();
     const headers = new Headers({ "x-api-key": "sk-secretprefix-secretmiddle-XYZW" });
     const out = await policy.evaluate(ctx(headers));
-    assert.equal(out.allow, true);
+    assert.equal(out.allow, false);
     assert.ok(
       warnings.every((w) => !w.includes("secretprefix") && !w.includes("secretmiddle")),
-      "warning leaked the full bearer; only masked key id should be logged"
-    );
-    assert.ok(
-      warnings.some((w) => w.includes("key_XYZW")),
-      "expected masked key id (last-4) in the warning"
+      "invalid-key rejection must not leak credentials"
     );
   } finally {
     console.warn = originalWarn;
   }
 });
 
-test("#2257 — fallback warning masks the bearer (only last-4 in log)", async () => {
-  const originalWarn = console.warn;
-  const warnings: string[] = [];
-  console.warn = (msg: string) => warnings.push(String(msg));
-  try {
-    const policy = await loadPolicy();
-    const headers = new Headers({ authorization: "Bearer sk-secretprefix-secretmiddle-XYZW" });
-    const out = await policy.evaluate(ctx(headers));
-    assert.equal(out.allow, true);
-    assert.ok(
-      warnings.every((w) => !w.includes("secretprefix") && !w.includes("secretmiddle")),
-      "warning leaked the full bearer; only masked key id should be logged"
-    );
-    assert.ok(
-      warnings.some((w) => w.includes("key_XYZW")),
-      "expected masked key id (last-4) in the warning"
-    );
-  } finally {
-    console.warn = originalWarn;
-  }
-});
-
-test("#2257 — no bearer + REQUIRE_API_KEY=false → anonymous (unchanged, no fallback warning)", async () => {
+test("#2257 — missing key is rejected even when REQUIRE_API_KEY=false", async () => {
+  process.env.REQUIRE_API_KEY = "false";
   const originalWarn = console.warn;
   const warnings: string[] = [];
   console.warn = (msg: string) => warnings.push(String(msg));
   try {
     const policy = await loadPolicy();
     const out = await policy.evaluate(ctx(new Headers()));
-    assert.equal(out.allow, true);
-    if (out.allow) {
-      assert.equal(out.subject.kind, "anonymous");
+    assert.equal(out.allow, false);
+    if (!out.allow) {
+      assert.equal(out.status, 401);
+      assert.equal(out.code, "AUTH_002");
+      assert.equal(out.message, "Authentication required");
     }
-    // No warning should fire when no bearer is sent in the first place —
-    // the warning is specifically for the "invalid-bearer-fell-through" case.
     assert.ok(
       warnings.every((w) => !w.includes("[clientApiPolicy]")),
-      "no fallback warning expected when no bearer was sent"
+      "missing-key rejection should not emit fallback warnings"
     );
   } finally {
     console.warn = originalWarn;

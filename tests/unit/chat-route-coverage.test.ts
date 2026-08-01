@@ -20,6 +20,7 @@ const {
 
 const { getCircuitBreaker, STATE } = await import("../../src/shared/utils/circuitBreaker.ts");
 const { clearProviderFailure } = await import("../../open-sse/services/accountFallback.ts");
+const { getCallLogs } = await import("../../src/lib/usageDb.ts");
 const { getDefaultTaskModelMap, resetTaskRoutingStats, setTaskRoutingConfig } =
   await import("../../open-sse/services/taskAwareRouter.ts");
 const chatRoute = await import("../../src/app/api/v1/chat/completions/route.ts");
@@ -120,6 +121,35 @@ test("client chat routes reject API keys created on another server", async () =>
   assert.match(chatJson.error?.message || "", /Invalid API key/);
   assert.equal(responsesResponse.status, 401);
   assert.match(responsesJson.error?.message || "", /Invalid API key/);
+});
+
+test("client chat route accepts an active x-api-key without anthropic-version", async () => {
+  const created = await seedApiKey({ name: "unscoped-x-api-key" });
+  await seedConnection("openai", { apiKey: "sk-openai-x-api-key" });
+  globalThis.fetch = async () => buildOpenAIResponse("accepted");
+
+  const response = await chatRoute.POST(
+    buildRequest({
+      headers: { "x-api-key": created.key },
+      body: {
+        model: "openai/gpt-4o-mini",
+        messages: [{ role: "user", content: "hello" }],
+        stream: false,
+      },
+    })
+  );
+  const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+
+  assert.equal(response.status, 200);
+  assert.equal(json.choices?.[0]?.message?.content, "accepted");
+
+  let attributedLog: { apiKeyId?: string | null } | undefined;
+  for (let attempt = 0; attempt < 40 && !attributedLog; attempt++) {
+    const logs = await getCallLogs({ apiKey: created.id, limit: 5 });
+    attributedLog = logs.find((log) => log.apiKeyId === created.id);
+    if (!attributedLog) await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.equal(attributedLog?.apiKeyId, created.id);
 });
 
 test("handleChat rejects suspicious prompt-injection payloads before routing", async () => {
