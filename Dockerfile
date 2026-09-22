@@ -347,4 +347,17 @@ RUN --mount=type=cache,id=s/92ca8a61-c1ba-421f-a389-d48ac7258c2d-apt-cache,targe
 RUN --mount=type=cache,id=s/92ca8a61-c1ba-421f-a389-d48ac7258c2d-npm-cache,target=/root/.npm \
   npm install -g --no-audit --no-fund @openai/codex @anthropic-ai/claude-code droid openclaw@latest
 
+# npm 11 may block dependency lifecycle scripts unless explicitly allowlisted.
+# Run the two lifecycle steps required by the CLI runtime so a successful image
+# build cannot ship wrappers whose native/plugin payloads were never installed.
+RUN node /usr/local/lib/node_modules/@anthropic-ai/claude-code/install.cjs \
+  && node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs
+
 USER node
+
+# Keep the CLI image self-validating: these commands exercise the installed
+# entrypoints after dropping privileges to the runtime user.
+RUN codex --version \
+  && claude --version \
+  && droid --version \
+  && openclaw --version
