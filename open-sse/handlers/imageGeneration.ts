@@ -1183,11 +1183,34 @@ async function handleOpenAIImageGeneration({
         "output_format",
         "image",
         "images",
-        "image_url",
-        "image_urls",
-        "imageUrls",
       ]) {
         if (body[field] !== undefined) upstreamBody[field] = body[field];
+      }
+
+      // 9Router's Codex image handler intentionally reads `body.image` and
+      // `body.images` when deciding whether the hosted image tool should run
+      // in edit mode. OpenAI-style clients commonly send `image_url` instead;
+      // passing that field through unchanged makes 9Router see zero references
+      // and silently perform text-to-image generation. Normalize the aliases
+      // only for nested Codex gateway models so other custom OpenAI-compatible
+      // image providers keep their native `image_url` contract.
+      const isCodexGatewayModel = /^(?:cx|codex)\//i.test(model);
+      if (isCodexGatewayModel) {
+        if (upstreamBody.image === undefined && typeof body.image_url === "string") {
+          upstreamBody.image = body.image_url;
+        }
+        if (upstreamBody.images === undefined) {
+          const imageUrls = Array.isArray(body.image_urls)
+            ? body.image_urls
+            : Array.isArray(body.imageUrls)
+              ? body.imageUrls
+              : null;
+          if (imageUrls?.length) upstreamBody.images = imageUrls;
+        }
+      } else {
+        for (const field of ["image_url", "image_urls", "imageUrls"]) {
+          if (body[field] !== undefined) upstreamBody[field] = body[field];
+        }
       }
     } else {
       const { imageUrl } = extractImageInputs(body);

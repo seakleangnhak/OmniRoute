@@ -150,7 +150,7 @@ test("custom image routing preserves the nested Codex model and 9router image op
   assert.equal(calls, 1);
 });
 
-test("image generations accepts multipart form fields and forwards image_url to 9router", async () => {
+test("image generations maps multipart image_url to 9router's image edit field", async () => {
   await seedGateway();
   const imageUrl = "https://assets.example.test/reference.jpg";
   globalThis.fetch = async (input, init) => {
@@ -162,7 +162,7 @@ test("image generations accepts multipart form fields and forwards image_url to 
       response_format: "url",
       n: 1,
       aspect_ratio: "16:9",
-      image_url: imageUrl,
+      image: imageUrl,
     });
     return Response.json({ created: 123, data: [{ url: "https://cdn.example.test/result.png" }] });
   };
