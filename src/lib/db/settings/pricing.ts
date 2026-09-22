@@ -6,6 +6,8 @@ import { getDbInstance } from "../core";
 import { backupDbFile } from "../backup";
 import { invalidateDbCache } from "../readCache";
 import { PROVIDER_ID_TO_ALIAS } from "@omniroute/open-sse/config/providerModels.ts";
+import { getProviderPrefixIndex } from "@/lib/providerNodePrefixes";
+import { isCompatibleProviderConnectionId } from "@/shared/utils/compatibleProviderId";
 import { type JsonRecord, toRecord } from "./shared";
 
 type PricingModels = Record<string, JsonRecord>;
@@ -159,17 +161,33 @@ export async function getPricingForModel(provider: string, model: string) {
     }
   }
 
-  if (!providerPricing) return null;
-
-  const mLower = (model || "").toLowerCase();
-  let modelPricing = findKeyInsensitive<JsonRecord>(providerPricing, mLower);
-
-  if (!modelPricing) {
-    const hyphenModel = mLower.replace(/\./g, "-");
-    modelPricing = findKeyInsensitive(providerPricing, hyphenModel);
+  if (!providerPricing && isCompatibleProviderConnectionId(provider)) {
+    try {
+      const { nodeToPrefix } = await getProviderPrefixIndex();
+      const prefix = nodeToPrefix.get(provider);
+      if (prefix) providerPricing = findKeyInsensitive(pricing, prefix);
+    } catch {
+      // Pricing lookup remains best-effort if the provider-node table is unavailable.
+    }
   }
 
-  return modelPricing || null;
+  if (!providerPricing) return null;
+
+  const modelCandidates = [model];
+  const providerPrefix = `${provider}/`;
+  if (model.toLowerCase().startsWith(providerPrefix.toLowerCase())) {
+    modelCandidates.push(model.slice(providerPrefix.length));
+  }
+
+  for (const modelCandidate of [...new Set(modelCandidates)]) {
+    const mLower = (modelCandidate || "").toLowerCase();
+    const modelPricing =
+      findKeyInsensitive<JsonRecord>(providerPricing, mLower) ||
+      findKeyInsensitive<JsonRecord>(providerPricing, mLower.replace(/\./g, "-"));
+    if (modelPricing) return modelPricing;
+  }
+
+  return null;
 }
 
 export async function updatePricing(pricingData: PricingByProvider) {

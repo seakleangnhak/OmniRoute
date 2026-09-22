@@ -510,6 +510,29 @@ describe("issue #9557: model overrides expose configured provider prefix, not no
     );
   });
 
+  it("prices nested image models logged under a compatible node id", async () => {
+    await nodes.createProviderNode({
+      id: NODE_ID,
+      type: NODE_TYPE,
+      prefix: NODE_PREFIX,
+      name: "VibeProxy",
+      apiType: "chat",
+      baseUrl: "https://example.com/v1",
+    });
+
+    const pricing = await import("../../src/lib/db/settings/pricing.ts");
+    const costCalculator = await import("../../src/lib/usage/costCalculator.ts");
+    await pricing.updatePricing({
+      [NODE_PREFIX]: {
+        "cx/gpt-image-2.5": { image: 1.75 },
+      },
+    });
+
+    const loggedModel = `${NODE_ID}/cx/gpt-image-2.5`;
+    assert.deepEqual(await pricing.getPricingForModel(NODE_ID, loggedModel), { image: 1.75 });
+    assert.equal(await costCalculator.calculateCost(NODE_ID, loggedModel, { images: 1 }), 1.75);
+  });
+
   it("no-prefix fallback and built-in providers keep raw internal id / unchanged behavior", async () => {
     // Node with no prefix → target falls back to internal node id.
     const noPrefixNodeId = "openai-compatible-chat-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
