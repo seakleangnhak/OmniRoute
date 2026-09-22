@@ -48,3 +48,33 @@ test("@omniroute/opencode-plugin sources parse without syntax errors", async () 
 
   assert.deepEqual(problems, [], `syntax errors in opencode-plugin:\n${problems.join("\n")}`);
 });
+
+test("resolved OpenCode plugin options expose a required numeric auto-sync interval", () => {
+  // Transpilation alone cannot catch a missing field in the exported return type.
+  // Check the consumer-facing contract that declaration generation relies on.
+  const fileName = join(PLUGIN_SRC, "index.ts");
+  const program = ts.createProgram([fileName], {
+    target: ts.ScriptTarget.ES2022,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    strict: true,
+    skipLibCheck: true,
+    noEmit: true,
+    types: ["node"],
+  });
+  const checker = program.getTypeChecker();
+  const source = program.getSourceFile(fileName);
+  assert.ok(source);
+  const moduleSymbol = checker.getSymbolAtLocation(source);
+  assert.ok(moduleSymbol);
+  const resolver = checker
+    .getExportsOfModule(moduleSymbol)
+    .find((symbol) => symbol.name === "resolveOmniRoutePluginOptions");
+  assert.ok(resolver);
+  const signature = checker.getTypeOfSymbolAtLocation(resolver, source).getCallSignatures()[0];
+  assert.ok(signature);
+  const interval = signature.getReturnType().getProperty("autoSyncIntervalMs");
+  assert.ok(interval, "resolved options must include autoSyncIntervalMs");
+  assert.equal(interval.flags & ts.SymbolFlags.Optional, 0, "the resolver always supplies a value");
+  assert.equal(checker.typeToString(checker.getTypeOfSymbolAtLocation(interval, source)), "number");
+});

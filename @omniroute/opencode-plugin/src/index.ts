@@ -353,7 +353,10 @@ function trimLeadingDashes(value: string): string {
  * sees a consistent identifier.
  */
 export function resolveOmniRoutePluginOptions(opts?: OmniRoutePluginOptions): Required<
-  Pick<OmniRoutePluginOptions, "providerId" | "displayName" | "modelCacheTtl">
+  Pick<
+    OmniRoutePluginOptions,
+    "providerId" | "displayName" | "modelCacheTtl" | "autoSyncIntervalMs"
+  >
 > & {
   /**
    * #6859: the UNPREFIXED provider id ("omniroute", "omniroute-preprod", …).
