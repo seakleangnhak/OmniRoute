@@ -30,7 +30,7 @@ async function resetStorage() {
   globalThis.fetch = originalFetch;
   apiKeysDb.resetApiKeyState();
   core.resetDbInstance();
-  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
   v1ModelsCatalog.__resetCatalogBuilderRunsForTest();
 }
@@ -71,7 +71,7 @@ test.after(() => {
   globalThis.fetch = originalFetch;
   apiKeysDb.resetApiKeyState();
   core.resetDbInstance();
-  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 test("v1 image generation POST requires an API key when REQUIRE_API_KEY is enabled", async () => {
@@ -138,21 +138,17 @@ test("v1 image generation POST rejects an invalid presented API key", async () =
   }
 });
 
-// Issue #2257: with enforcement off, a stale key in a CLI config must degrade to
-// anonymous exactly like clientApiPolicy does — the route guard must not be
-// stricter than the middleware that already fronts it.
-test("v1 image generation POST ignores an invalid presented key while REQUIRE_API_KEY is off", async () => {
+// This fork requires active client keys even when an operator sets the upstream flag off.
+test("v1 image generation POST rejects invalid keys even when REQUIRE_API_KEY is false", async () => {
   const originalOmniRouteApiKey = process.env.OMNIROUTE_API_KEY;
   const originalRequireApiKey = process.env.REQUIRE_API_KEY;
   process.env.OMNIROUTE_API_KEY = "valid-image-route-key";
   process.env.REQUIRE_API_KEY = "false";
 
-  globalThis.fetch = async (url) => {
-    assert.equal(String(url), "http://localhost:7860/sdapi/v1/txt2img");
-    return new Response(JSON.stringify({ images: ["YW5vbnltb3Vz"] }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
+  let upstreamCalls = 0;
+  globalThis.fetch = async () => {
+    upstreamCalls += 1;
+    throw new Error("Invalid client keys must not reach the image provider");
   };
 
   try {
@@ -165,12 +161,14 @@ test("v1 image generation POST ignores an invalid presented key while REQUIRE_AP
         },
         body: JSON.stringify({
           model: "sdwebui/stable-diffusion-v1-5",
-          prompt: "stale key degrades to anonymous",
+          prompt: "invalid key must be rejected",
         }),
       })
     );
 
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 401);
+    assert.match(await readErrorMessage(response), /Invalid API key/);
+    assert.equal(upstreamCalls, 0);
   } finally {
     if (originalOmniRouteApiKey === undefined) {
       delete process.env.OMNIROUTE_API_KEY;

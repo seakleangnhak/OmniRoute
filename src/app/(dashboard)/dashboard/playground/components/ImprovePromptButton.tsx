@@ -24,6 +24,7 @@ export default function ImprovePromptButton({
   configState,
   setConfigState,
 }: ImprovePromptButtonProps) {
+  const t = useTranslations("playground");
   const { loading, error, improve } = useImprovePrompt();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [improveError, setImproveError] = useState<string | null>(null);
@@ -96,11 +97,13 @@ export default function ImprovePromptButton({
             <div className="flex items-start gap-3 mb-4">
               <span className="text-[24px] shrink-0">✨</span>
               <div>
-                <h3 className="text-sm font-semibold text-text-main mb-1">Improve prompt</h3>
+                <h3 className="text-sm font-semibold text-text-main mb-1">{t("improvePrompt")}</h3>
                 <p className="text-xs text-text-muted">
-                  This will send your current system prompt to{" "}
-                  <code className="font-mono text-primary">{configState.model}</code> to generate an
-                  improved version.
+                  {t.rich("improvePromptDescription", {
+                    model: () => (
+                      <code className="font-mono text-primary">{configState.model}</code>
+                    ),
+                  })}
                 </p>
                 <p className="text-xs text-text-muted mt-1.5 font-medium">
                   {t("improveQuotaWarning")}

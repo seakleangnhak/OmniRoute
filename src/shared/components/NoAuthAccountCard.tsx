@@ -15,10 +15,14 @@ interface NoAuthAccountCardProps {
   dataKey?: string;
   description?: string;
   addLabel?: string;
+  allowDeleteAll?: boolean;
+  enhancedMode?: boolean;
   enabled?: boolean;
   savingEnabled?: boolean;
   onEnabledChange?: (enabled: boolean) => void;
   providerProxyControl?: ReactNode;
+  showManualKeyInput?: boolean;
+  onManualApiKeyAdd?: (apiKey: string) => Promise<void>;
 }
 
 interface Connection {
@@ -95,10 +99,13 @@ export default function NoAuthAccountCard({
   dataKey = "fingerprints",
   description,
   addLabel,
+  allowDeleteAll = false,
+  enhancedMode = false,
   enabled = true,
   savingEnabled = false,
   onEnabledChange,
   providerProxyControl,
+  onManualApiKeyAdd,
 }: NoAuthAccountCardProps) {
   const t = useTranslations("noAuthProvider");
   const resolvedDescription = description || t("accountDescription");
@@ -106,6 +113,8 @@ export default function NoAuthAccountCard({
   const [connections, setConnections] = useState<Connection[]>([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
+  const addRequestInFlightRef = useRef(false);
   const [proxyAccountId, setProxyAccountId] = useState<string | null>(null);
   const [proxyMode, setProxyMode] = useState<"saved" | "custom">("saved");
   const [savedProxies, setSavedProxies] = useState<SavedProxy[]>([]);
@@ -116,6 +125,9 @@ export default function NoAuthAccountCard({
   const [proxyUsername, setProxyUsername] = useState("");
   const [proxyPassword, setProxyPassword] = useState("");
   const [savingProxy, setSavingProxy] = useState(false);
+  const [manualApiKey, setManualApiKey] = useState("");
+  const [addingManualKey, setAddingManualKey] = useState(false);
+  const [showManualKeyInput, setShowManualKeyInput] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
 
   const fetchConnections = useCallback(async () => {
@@ -174,9 +186,33 @@ export default function NoAuthAccountCard({
   const accountProxies = getAccountProxies(conn);
 
   const handleAddAccount = async () => {
+    if (adding || deletingAll || addRequestInFlightRef.current || !enabled) return;
+    const requestedCount = enhancedMode
+      ? window.prompt(`How many ${providerName} accounts do you want to create?`, "1")
+      : "1";
+    if (requestedCount === null) return;
+    const accountCount = Number(requestedCount.trim() || "1");
+    if (!Number.isInteger(accountCount) || accountCount < 1 || accountCount > 100) {
+      window.alert("Enter a whole number between 1 and 100.");
+      return;
+    }
+    addRequestInFlightRef.current = true;
     setAdding(true);
     try {
-      const accountId = generateAccountId();
+      const knownIds = new Set(allAccountIds);
+      const newAccountIds: string[] = [];
+      for (
+        let attempt = 0;
+        newAccountIds.length < accountCount && attempt < accountCount * 20;
+        attempt++
+      ) {
+        const accountId = generateAccountId();
+        if (!accountId || knownIds.has(accountId)) continue;
+        knownIds.add(accountId);
+        newAccountIds.push(accountId);
+      }
+      if (newAccountIds.length !== accountCount)
+        throw new Error("Failed to generate unique account IDs");
       const apiKey = generateApiKey ? await generateApiKey() : undefined;
       if (connections.length === 0) {
         const res = await fetch("/api/providers", {
@@ -186,7 +222,7 @@ export default function NoAuthAccountCard({
             provider: providerId,
             name: t("accountName", { provider: providerName, number: 1 }),
             ...(apiKey ? { apiKey } : {}),
-            providerSpecificData: { [dataKey]: [accountId] },
+            providerSpecificData: { [dataKey]: newAccountIds },
           }),
         });
         if (!res.ok) {
@@ -194,7 +230,7 @@ export default function NoAuthAccountCard({
           throw new Error(errData?.error || t("createConnectionFailed"));
         }
       } else {
-        const updated = [...allAccountIds, accountId];
+        const updated = [...new Set([...allAccountIds, ...newAccountIds])];
         const res = await fetch(`/api/providers/${conn.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -208,7 +244,25 @@ export default function NoAuthAccountCard({
     } catch (err) {
       console.error("Failed to add account:", err);
     } finally {
+      addRequestInFlightRef.current = false;
       setAdding(false);
+    }
+  };
+
+  const handleAddManualApiKey = async () => {
+    if (!manualApiKey.trim()) return;
+    setAddingManualKey(true);
+    try {
+      if (onManualApiKeyAdd) {
+        await onManualApiKeyAdd(manualApiKey.trim());
+      }
+      setManualApiKey("");
+      setShowManualKeyInput(false);
+      await fetchConnections();
+    } catch (err) {
+      console.error("Failed to add manual API key:", err);
+    } finally {
+      setAddingManualKey(false);
     }
   };
 
@@ -230,6 +284,39 @@ export default function NoAuthAccountCard({
       if (res.ok) await fetchConnections();
     } catch (err) {
       console.error("Failed to remove account:", err);
+    }
+  };
+
+  const handleDeleteAllAccounts = async () => {
+    if (!allowDeleteAll || adding || deletingAll || !enabled || allAccountIds.length === 0) return;
+    if (
+      !window.confirm(
+        `Delete all ${allAccountIds.length} ${providerName} account(s) and their proxy assignments?`
+      )
+    )
+      return;
+    setDeletingAll(true);
+    setProxyAccountId(null);
+    try {
+      for (const connection of connections) {
+        const res = await fetch(`/api/providers/${connection.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            providerSpecificData: {
+              ...connection.providerSpecificData,
+              [dataKey]: [],
+              accountProxies: [],
+            },
+          }),
+        });
+        if (!res.ok) throw new Error("Failed to delete all accounts");
+      }
+    } catch (err) {
+      console.error("Failed to delete all accounts:", err);
+    } finally {
+      await fetchConnections();
+      setDeletingAll(false);
     }
   };
 
@@ -368,13 +455,68 @@ export default function NoAuthAccountCard({
             {!loading && allAccountIds.length > 0 && (
               <DistributeProxiesButton
                 onDistribute={handleDistributeProxies}
-                disabled={adding || !enabled}
+                disabled={adding || deletingAll || !enabled}
                 size="sm"
               />
             )}
-            <Button size="sm" icon="add" onClick={handleAddAccount} disabled={adding || !enabled}>
+            {allowDeleteAll && !loading && allAccountIds.length > 0 && (
+              <Button
+                size="sm"
+                variant="danger"
+                icon="delete_sweep"
+                onClick={handleDeleteAllAccounts}
+                disabled={adding || deletingAll || !enabled}
+              >
+                {deletingAll ? "Deleting..." : "Delete All"}
+              </Button>
+            )}
+            <Button
+              size="sm"
+              icon="add"
+              onClick={handleAddAccount}
+              disabled={adding || deletingAll || !enabled}
+            >
               {adding ? t("adding") : resolvedAddLabel}
             </Button>
+            {showManualKeyInput && (
+              <div className="flex items-center gap-2">
+                <input
+                  type="password"
+                  value={manualApiKey}
+                  onChange={(e) => setManualApiKey(e.target.value)}
+                  placeholder="Paste API key..."
+                  className="rounded-md border border-black/10 bg-bg px-2 py-1 text-xs dark:border-white/10"
+                  disabled={addingManualKey || !enabled}
+                />
+                <Button
+                  size="sm"
+                  icon="add"
+                  onClick={handleAddManualApiKey}
+                  disabled={addingManualKey || !manualApiKey.trim() || !enabled}
+                >
+                  {addingManualKey ? t("adding") : t("add")}
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowManualKeyInput(false);
+                    setManualApiKey("");
+                  }}
+                  className="rounded p-1 text-text-muted hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <span className="material-symbols-outlined text-[16px]">close</span>
+                </button>
+              </div>
+            )}
+            {!showManualKeyInput && onManualApiKeyAdd && (
+              <button
+                type="button"
+                onClick={() => setShowManualKeyInput(true)}
+                className="rounded-md px-2 py-1 text-xs text-text-muted transition-colors hover:bg-black/5 hover:text-text-main dark:hover:bg-white/5"
+              >
+                {t("manualApiKey")}
+              </button>
+            )}
           </div>
         </div>
 
@@ -541,12 +683,14 @@ export default function NoAuthAccountCard({
                 )}
                 <div className="flex justify-end gap-2 pt-1">
                   <button
+                    type="button"
                     onClick={() => setProxyAccountId(null)}
                     className="rounded-md px-3 py-1.5 text-xs text-text-muted transition-colors hover:bg-black/5 hover:text-text-main dark:hover:bg-white/5"
                   >
                     {t("cancel")}
                   </button>
                   <button
+                    type="button"
                     onClick={handleSaveProxy}
                     disabled={savingProxy}
                     className="rounded-md bg-primary/10 px-3 py-1.5 text-xs text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"

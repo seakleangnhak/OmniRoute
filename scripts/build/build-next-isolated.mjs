@@ -89,7 +89,7 @@ export async function movePath(sourcePath, destinationPath, fsImpl = fs) {
  * resolveNextBuildEnv() may have pointed APPDATA/LOCALAPPDATA at. No-op when
  * resolveNextBuildEnv didn't set them (non-Windows, or NEXT_DIST_DIR already set).
  */
-export function ensureWindowsBuildProfileDirs(env, mkdirImpl = mkdirSync) {
+export function ensureWindowsBuildProfileDirs(env, mkdirImpl = fsSync.mkdirSync) {
   if (!env?.APPDATA || !env?.LOCALAPPDATA) return;
   mkdirImpl(env.APPDATA, { recursive: true });
   mkdirImpl(env.LOCALAPPDATA, { recursive: true });
@@ -100,7 +100,16 @@ function runNextBuild() {
     const nextBin = path.join(projectRoot, "node_modules", "next", "dist", "bin", "next");
     const buildEnv = resolveNextBuildEnv(process.env);
     ensureWindowsBuildProfileDirs(buildEnv);
-    const child = spawn(process.execPath, [nextBin, "build", resolveNextBuildBundlerFlag()], {
+    const nextArgs = process.versions.bun
+      ? [
+          "--preload",
+          path.join(projectRoot, "open-sse", "utils", "setupPolyfill.ts"),
+          nextBin,
+          "build",
+          resolveNextBuildBundlerFlag(),
+        ]
+      : [nextBin, "build", resolveNextBuildBundlerFlag()];
+    const child = spawn(process.execPath, nextArgs, {
       cwd: projectRoot,
       stdio: "inherit",
       env: buildEnv,
@@ -126,12 +135,18 @@ function runNextBuild() {
 }
 
 export function resolveNextBuildBundlerFlag(baseEnv = process.env) {
-  // Turbopack is the default production bundler (Next 16 stable). Benchmarked on
-  // this codebase: 2-3x faster than the single-threaded webpack pass (17min -> 9min
-  // on a 32-core box; ~20min -> 7min on ubuntu-latest), artifact validated
-  // end-to-end (standalone smoke + e2e/package/electron CI jobs). Webpack stays as
-  // the explicit escape hatch (=0) for bundler-compat regressions.
-  return baseEnv.OMNIROUTE_USE_TURBOPACK === "0" ? "--webpack" : "--turbopack";
+  // Turbopack is the default; OMNIROUTE_USE_TURBOPACK=0 is the documented escape hatch
+  // to webpack (Windows, native-binding trouble, RAM-constrained machines — #6409, and
+  // docs/reference/ENVIRONMENT.md). The choice is env-only ON PURPOSE: the variable is
+  // the operator's control and CI sets it explicitly, so sniffing the runtime here would
+  // silently override an operator who asked for Turbopack. Bun 1.4+ supports Turbopack's
+  // V8 worker bindings (#11471), so the historical `process.versions.bun` → `--webpack`
+  // hardcode is gone; the `OMNIROUTE_USE_TURBOPACK=0` fallback remains for Bun < 1.4
+  // images built with the webpack path.
+  if (baseEnv.OMNIROUTE_USE_TURBOPACK === "0") {
+    return "--webpack";
+  }
+  return "--turbopack";
 }
 
 function withoutMaxOldSpaceSize(nodeOptions = "") {
@@ -213,15 +228,33 @@ export function resolveBuildMemoryMb(baseEnv = process.env) {
   return String(boundedMb);
 }
 
-export function resolveNextBuildEnv(baseEnv = process.env) {
+export function getWindowsBuildProfileDir() {
+  return path.join(os.tmpdir(), `omniroute-build-winhome-${process.pid}`);
+}
+
+export function resolveNextBuildEnv(baseEnv = process.env, platform = process.platform) {
   const nodeOptions = withoutMaxOldSpaceSize(baseEnv.NODE_OPTIONS);
   const buildMemoryMb = resolveBuildMemoryMb(baseEnv);
 
-  return {
+  const env = {
     ...baseEnv,
     NEXT_PRIVATE_BUILD_WORKER: baseEnv.NEXT_PRIVATE_BUILD_WORKER || "0",
+    OMNIROUTE_BUILDING: "1",
+    NEXT_TELEMETRY_DISABLED: baseEnv.NEXT_TELEMETRY_DISABLED || "1",
     NODE_OPTIONS: `${nodeOptions} --max-old-space-size=${buildMemoryMb}`.trim(),
   };
+
+  // Keep Next's Windows profile scans away from junctions in the user's AppData.
+  // An explicit NEXT_DIST_DIR means the caller already isolated the build.
+  if (platform === "win32" && !baseEnv.NEXT_DIST_DIR) {
+    const buildHomeDir = getWindowsBuildProfileDir();
+    env.HOME = buildHomeDir;
+    env.USERPROFILE = buildHomeDir;
+    env.APPDATA = path.join(buildHomeDir, "AppData", "Roaming");
+    env.LOCALAPPDATA = path.join(buildHomeDir, "AppData", "Local");
+  }
+
+  return env;
 }
 
 async function resetStandaloneOutput(rootDir = projectRoot, fsImpl = fs) {
@@ -358,7 +391,12 @@ export async function main() {
           distDir,
           outDir: standaloneDir,
           projectRoot,
+          // Match the hardened packaging path used by Electron builds:
+          // Turbopack can emit hashed external-package references and
+          // standalone symlinks that break after the bundle is moved/copied.
+          patchTurbopackChunks: true,
           copyNatives: true,
+          materializeSymlinks: true,
         });
         const { spawnSync } = await import("node:child_process");
         const basePathWrite = spawnSync(

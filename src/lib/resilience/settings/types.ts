@@ -16,6 +16,10 @@ export interface RequestQueueSettings {
   requestsPerMinute: number;
   minTimeBetweenRequestsMs: number;
   concurrentRequests: number;
+  /**
+   * Legacy persisted key used as Bottleneck's post-dispatch execution
+   * expiration. It does not bound time spent in Bottleneck's QUEUED state.
+   */
   maxWaitMs: number;
   /**
    * Issue #6593: opt-in admission cap on the local rate-limit queue. When the
@@ -186,6 +190,20 @@ export interface StreamRecoverySettings {
    * STREAM_RECOVERY_MIDSTREAM_ENABLED feature flag / env var.
    */
   continueMidStream: boolean;
+  throughputWatchdog: StreamThroughputWatchdogSettings;
+}
+
+export interface StreamThroughputWatchdogSettings {
+  /** Opt-in; false preserves the existing stream byte path. */
+  enabled: boolean;
+  /** Grace period before the rolling window starts participating in decisions. */
+  warmupMs: number;
+  /** Full rolling window required before a slow-stream abort is possible. */
+  windowMs: number;
+  /** Minimum useful assistant-output byte rate. */
+  minUsefulBytesPerSecond: number;
+  /** Minimum amount required before a non-zero sample is considered measurable. */
+  minUsefulBytes: number;
 }
 
 export interface ResilienceSettings {

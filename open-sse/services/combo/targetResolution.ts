@@ -8,21 +8,19 @@
  *   1. provider-wildcard expansion of the combo + the combos collection (#2562)
  *   2. weighted step-group resolution + sticky-weighted eligibility
  *   3. request-tag routing
- *   4. known-context-overflow early return
- *   5. smart/pipeline-enabled dispatch (auto strategy)
- *   6. auto-strategy candidate build / scoring / ordering, or per-strategy ordering
- *   7. prompt-cache strategy affinity, session stickiness, eval scores,
+ *   4. smart/pipeline-enabled dispatch (auto strategy)
+ *   5. auto-strategy candidate build / scoring / ordering, or per-strategy ordering
+ *   6. prompt-cache strategy affinity, session stickiness, eval scores,
  *      request compatibility, context requirements
- *   8. task-aware reordering
- *   9. prompt-cache affinity application
- *  10. the parallel pre-screen (priority strategy only)
+ *   7. task-aware reordering
+ *   8. prompt-cache affinity application
+ *   9. the parallel pre-screen (priority strategy only)
  *
- * Behaviour is byte-identical to the inline block it replaces — the two early exits
- * (context overflow, pipeline dispatch, auto-strategy `earlyResponse`) become an
- * `{ earlyResponse }` result so the host decides to return them, and the values the
- * attempt loop still consumes (`orderedTargets`, `stickyWeightedLimit`,
- * `getWeightedStepKeyForTarget`, `sticky`, `preScreenMap`) are returned instead of
- * closed over.
+ * Behaviour is byte-identical to the inline block it replaces — pipeline dispatch and
+ * auto-strategy `earlyResponse` become an `{ earlyResponse }` result so the host decides
+ * to return them, and the values the attempt loop still consumes (`orderedTargets`,
+ * `stickyWeightedLimit`, `getWeightedStepKeyForTarget`, `sticky`, `preScreenMap`) are
+ * returned instead of closed over.
  *
  * See _tasks/quality/2026-06-19-DESIGN-godfiles-decomposition.md §4.
  */
@@ -53,7 +51,6 @@ import {
 } from "./comboStructure.ts";
 import { applyContextRequirements } from "./contextRequirements.ts";
 import { recordComboFailure } from "./failureTracker.ts";
-import { getKnownContextOverflow } from "./knownContextOverflow.ts";
 import { buildEmptyComboTargetsPayload, buildRecoveryHint } from "./pinRecovery.ts";
 import {
   applyPromptCacheAffinity,
@@ -75,6 +72,7 @@ import {
 } from "./rrState.ts";
 import {
   applySessionStickiness,
+  clearStickyBindingsForCombo,
   normalizeStickinessMessages,
   resolveDisableSessionStickiness,
   type ApplyStickinessResult,
@@ -88,6 +86,7 @@ import type {
   ComboRuntimeStep,
   HandleSingleModel,
   IsModelAvailable,
+  HiddenModelsByProvider,
   ResolvedComboTarget,
 } from "./types.ts";
 
@@ -111,6 +110,7 @@ export interface ResolveComboTargetPipelineDeps {
    * this leaf), so importing it directly would create an import cycle.
    */
   buildAutoCandidates: ResolveAutoStrategyDeps["buildAutoCandidates"];
+  hiddenModelsByProvider?: HiddenModelsByProvider;
 }
 
 export interface ResolvedComboTargetPipeline {
@@ -159,6 +159,12 @@ async function isTargetSelectableForWeighted(
   ) {
     return false;
   }
+  if (target.provider && rawModel && target.connectionId) {
+    const { isAlibabaFreeTierModelRoutable } = await import("../alibabaFreeTier.ts");
+    if (!(await isAlibabaFreeTierModelRoutable(target.provider, target.connectionId, rawModel))) {
+      return false;
+    }
+  }
   return isModelAvailable ? await isModelAvailable(target.modelStr, target) : true;
 }
 
@@ -204,10 +210,15 @@ async function collectWeightedEligibility(
   expandedCombo: ComboLike,
   expandedAllCombos: ComboCollectionLike,
   resilienceSettings: ResilienceSettings,
-  isModelAvailable?: IsModelAvailable
+  isModelAvailable?: IsModelAvailable,
+  hiddenModelsByProvider?: HiddenModelsByProvider
 ): Promise<{ stepGroups: WeightedStepGroups; weightedEligibleKeys: Set<string> }> {
   const weightedEligibleKeys = new Set<string>();
-  const stepGroups = resolveWeightedStepGroups(expandedCombo, expandedAllCombos);
+  const stepGroups = resolveWeightedStepGroups(
+    expandedCombo,
+    expandedAllCombos,
+    hiddenModelsByProvider
+  );
   for (const group of stepGroups) {
     const availability = await Promise.all(
       group.targets.map((target) =>
@@ -260,7 +271,8 @@ async function resolveWeightedSelection(
       expandedCombo,
       expandedAllCombos,
       deps.resilienceSettings,
-      deps.isModelAvailable
+      deps.isModelAvailable,
+      deps.hiddenModelsByProvider
     );
     stepGroups = eligibility.stepGroups;
     weightedEligibleKeys = eligibility.weightedEligibleKeys;
@@ -299,35 +311,6 @@ function buildWeightedStepKeyMapper(
   };
 }
 
-/** 400 rejection for a request no target in the pool can physically accept. */
-function buildContextOverflowResponse(
-  overflow: { requiredContextTokens: number; maxKnownContextTokens: number },
-  orderedTargets: ResolvedComboTarget[],
-  log: ComboLogger
-): Response {
-  const { requiredContextTokens, maxKnownContextTokens } = overflow;
-  log.warn(
-    "COMBO",
-    `Request context exceeds every known target limit (${requiredContextTokens} > ${maxKnownContextTokens} tokens)`
-  );
-  return errorResponseWithComboDiagnostics(
-    400,
-    `Request requires approximately ${requiredContextTokens} tokens, but the largest known context limit in this combo is ${maxKnownContextTokens} tokens. Reduce or compact the request context.`,
-    {
-      poolSize: orderedTargets.length,
-      attempted: 0,
-      excluded: orderedTargets.map((target) => ({
-        provider: target.provider,
-        model: target.modelStr,
-        reason: "context_window",
-      })),
-      attemptOrder: [],
-      terminalReason: "context_length_exceeded",
-    },
-    { code: "context_length_exceeded", type: "invalid_request_error" }
-  );
-}
-
 function logTargetPoolSize(
   strategy: string,
   allCombos: ComboCollectionLike,
@@ -351,7 +334,8 @@ function logTargetPoolSize(
  * auto routing (pipeline disabled, below token threshold, or dispatch failure).
  */
 async function dispatchSmartPipeline(
-  deps: ResolveComboTargetPipelineDeps
+  deps: ResolveComboTargetPipelineDeps,
+  availableModels: readonly string[]
 ): Promise<Response | null> {
   const { body, combo, strategy, config, settings, signal, log } = deps;
   if (strategy !== "auto") return null;
@@ -362,6 +346,7 @@ async function dispatchSmartPipeline(
     const pipelineRaw = await handlePipelineCombo({
       body,
       combo,
+      availableModels,
       handleChatCore: deps.handleSingleModelWithTimeout,
       log: {
         info: log.info,
@@ -436,6 +421,7 @@ async function orderByStrategy(
     body,
     log,
     apiKeyAllowedConnections: deps.apiKeyAllowedConnections,
+    sessionKey: deps.relayOptions?.sessionId,
   });
   return { orderedTargets, autoUsedExplicitRouter: false };
 }
@@ -473,13 +459,23 @@ async function applyContinuityFilters(
       config as Record<string, unknown> | null | undefined,
       settings as Record<string, unknown> | null | undefined
     );
+  // Evict any in-memory sticky bindings this combo still owns when stickiness is
+  // disabled. Disabling stops NEW bindings, but a binding recorded while it was
+  // enabled would otherwise keep re-promoting the old connection for the rest of
+  // the 15-minute TTL — silently defeating the combo's priority order until the
+  // binding ages out or the process restarts (user report: disabling stickiness
+  // on orchestrator still pinned opencode-go/mimo-v2.5-max first).
+  if (disableSessionStickiness) {
+    clearStickyBindingsForCombo(combo.name);
+  }
   const sticky: ApplyStickinessResult = disableSessionStickiness
     ? { targets: initialOrderedTargets, messageHash: null, stuck: false }
     : await applySessionStickiness(
         initialOrderedTargets,
         // #7270: normalize both wire shapes (.messages / Responses-API .input) so the
         // stickiness key is derivable on the /v1/responses surface, not just Chat Completions.
-        normalizeStickinessMessages(body as { messages?: unknown; input?: unknown })
+        normalizeStickinessMessages(body as { messages?: unknown; input?: unknown }),
+        combo.name
       );
   let orderedTargets = sticky.targets;
   if (!cacheStrategyAffinityApplied) {
@@ -648,10 +644,25 @@ async function applyPromptCacheStage(
     promptCacheAffinityEnabled && resolvePromptCacheAffinityKey(body)
       ? await expandPromptCacheAffinityTargets(orderedTargets)
       : orderedTargets;
+
+  // Determine affinity scope: restrict to model-level for deterministic strategies
+  // to preserve operator-defined model order; keep global for cross-model
+  // strategies. Per #8370, lkgp/auto/cache-optimized explicitly support promoting
+  // a previously-successful model ahead of the declared order, so they must stay
+  // cross-model ("global") rather than be locked into a single model step.
+  const modelOrderPreservingStrategies = new Set<string>([
+    "priority",
+    "weighted",
+    "fill-first",
+    "quota-share",
+  ]);
+  const isDeterministicStrategy = modelOrderPreservingStrategies.has(strategy);
   const promptCacheAffinity = applyPromptCacheAffinity(
     promptCacheAffinityTargets,
     body,
-    promptCacheAffinityEnabled
+    promptCacheAffinityEnabled,
+    isDeterministicStrategy ? "model" : "global",
+    deps.relayOptions?.sessionId
   );
   if (!promptCacheAffinity.applied) return orderedTargets;
   const protectedOriginal =
@@ -687,19 +698,18 @@ export async function resolveComboTargetPipeline(
       : resolveComboTargets(
           expandedCombo,
           expandedAllCombos,
-          clampComboDepth(config.maxComboDepth)
+          clampComboDepth(config.maxComboDepth),
+          deps.hiddenModelsByProvider
         );
 
   orderedTargets = await applyRequestTagRouting(orderedTargets, body, log);
 
-  const overflow = getKnownContextOverflow(orderedTargets, body);
-  if (overflow) {
-    return { earlyResponse: buildContextOverflowResponse(overflow, orderedTargets, log) };
-  }
-
   logTargetPoolSize(strategy, allCombos, orderedTargets, stickyWeightedKey, log);
 
-  const pipelineResponse = await dispatchSmartPipeline(deps);
+  const pipelineResponse = await dispatchSmartPipeline(
+    deps,
+    orderedTargets.map((target) => target.modelStr)
+  );
   if (pipelineResponse) return { earlyResponse: pipelineResponse };
 
   const ordering = await orderByStrategy(deps, orderedTargets);

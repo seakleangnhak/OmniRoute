@@ -47,7 +47,7 @@ Request → CORS → API Key Auth → Prompt Injection Guard → Input Sanitizer
 | **OAuth 2.0 + PKCE**    | Autentikasi penyedia yang aman (Claude, Codex, Gemini, Cursor, dll.) |
 | **Pembaruan Token**     | Pembaruan token OAuth otomatis sebelum kedaluwarsa                   |
 | **Cookie Aman**         | `AUTH_COOKIE_SECURE=true` untuk lingkungan HTTPS                     |
-| **Ruang Lingkup MCP**   | 10 ruang lingkup terperinci untuk kontrol akses alat MCP             |
+| **Ruang Lingkup MCP**   | 32 ruang lingkup terperinci untuk kontrol akses alat MCP             |
 
 ### 🛡️ Enkripsi Data Tersimpan
 

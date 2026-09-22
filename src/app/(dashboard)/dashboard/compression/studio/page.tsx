@@ -11,14 +11,14 @@ export default function CompressionStudioPage() {
     <div className="flex h-[calc(100dvh-6rem)] min-h-[480px] flex-col p-4">
       <div className="mb-3 flex gap-2">
         <button data-testid="tab-play" aria-pressed={tab === "play"} onClick={() => setTab("play")}>
-          Play
+          {t("playTab")}
         </button>
         <button
           data-testid="tab-compare"
           aria-pressed={tab === "compare"}
           onClick={() => setTab("compare")}
         >
-          Compare
+          {t("compareTab")}
         </button>
       </div>
       <div className="min-h-0 flex-1">

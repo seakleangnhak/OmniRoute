@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useTranslations } from "next-intl";
 
 export interface ProviderModel {
   id: string;
@@ -18,12 +19,13 @@ interface UseProviderModelsResult {
   models: ProviderModel[];
   loading: boolean;
   error: string | null;
+  /** Re-runs the model fetch for the current provider. Useful for a Retry action. */
+  retry: () => void;
 }
 
 /**
- * useProviderModels — fetch models for a specific provider. When a connection id is
- * available, prefer the connection-backed discovery endpoint so self-hosted providers
- * can populate models from their configured /models endpoint.
+ * useProviderModels — fetch models for a specific provider via
+ * GET /api/v1/providers/{providerId}/models.
  *
  * Falls back to an empty list on error so the playground is still usable.
  * The hook is stable for the lifetime of the component (only re-fetches if
@@ -33,18 +35,18 @@ export function useProviderModels(
   providerId: string,
   connectionId?: string | null
 ): UseProviderModelsResult {
+  const t = useTranslations("providers");
   const [models, setModels] = useState<ProviderModel[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  // Cancels any in-flight load (component unmount or a retry superseding the
+  // previous request) so a stale response never overwrites a newer one.
+  const cleanupRef = useRef<(() => void) | null>(null);
 
-  useEffect(() => {
-    if (!providerId) {
-      setLoading(false);
-      return;
-    }
-
+  const load = useCallback(() => {
+    cleanupRef.current?.();
     let cancelled = false;
-    const load = async () => {
+    const run = async () => {
       setLoading(true);
       setError(null);
       try {
@@ -55,77 +57,81 @@ export function useProviderModels(
               providerModelsUrl,
             ]
           : [providerModelsUrl];
-
+        let list: ProviderModel[] = [];
         let lastError: string | null = null;
+        let receivedResponse = false;
         for (const url of urls) {
           const res = await fetch(url);
+          if (cancelled) return;
           if (!res.ok) {
             const body = (await res.json().catch(() => null)) as {
               error?: string | { message?: string };
             } | null;
-            const bodyError = body?.error;
-            const msg =
-              typeof bodyError === "string"
-                ? bodyError
-                : (bodyError?.message ?? `HTTP ${res.status}`);
-            lastError = msg;
+            lastError =
+              typeof body?.error === "string"
+                ? body.error
+                : (body?.error?.message ?? `${t("providerTestFailed")} (HTTP ${res.status})`);
             continue;
           }
-
           const data = (await res.json()) as { data?: ProviderModel[]; models?: ProviderModel[] };
-          const nextModels = data.data ?? data.models ?? [];
           if (cancelled) return;
-
-          if (nextModels.length > 0 || url === providerModelsUrl) {
-            setModels(nextModels);
-            return;
-          }
+          list = data.data ?? data.models ?? [];
+          receivedResponse = true;
+          if (list.length > 0 || url === providerModelsUrl) break;
+        }
+        if (!receivedResponse) {
+          if (!cancelled) setError(lastError ?? t("providerTestFailed"));
+          return;
         }
 
-        if (!cancelled && lastError) {
-          setError(lastError);
-        }
+        // Auto-sync from upstream if local catalog is empty
+        if (list.length === 0) {
+          setTimeout(async () => {
+            try {
+              if (cancelled) return;
+              const connRes = await fetch("/api/providers");
+              if (!connRes.ok || cancelled) return;
+              const connData = (await connRes.json()) as {
+                connections?: Array<{
+                  id: string;
+                  provider: string;
+                  isActive?: boolean;
+                  providerSpecificData?: { autoFetchModels?: boolean };
+                }>;
+              };
+              if (cancelled) return;
+              const providerConn = connData.connections?.find(
+                (c) => (c.provider === providerId || c.id === providerId) && c.isActive !== false
+              );
 
-        if (!cancelled) {
-          setModels([]);
-        }
+              if (providerConn?.providerSpecificData?.autoFetchModels === true && !cancelled) {
+                const syncRes = await fetch(
+                  `/api/providers/${encodeURIComponent(providerConn.id)}/sync-models?mode=sync`,
+                  { method: "POST" }
+                );
 
-        // Auto-sync from upstream if the local catalog and connection-backed
-        // discovery endpoints are empty.
-        setTimeout(async () => {
-          try {
-            if (cancelled) return;
-            const connRes = await fetch("/api/providers");
-            if (!connRes.ok || cancelled) return;
-            const connData = (await connRes.json()) as {
-              connections?: Array<{ id: string; provider: string; isActive?: boolean }>;
-            };
-            if (cancelled) return;
-            const providerConn = connData.connections?.find(
-              (c) => (c.provider === providerId || c.id === providerId) && c.isActive !== false
-            );
-
-            if (!providerConn || cancelled) return;
-            const syncRes = await fetch(
-              `/api/providers/${encodeURIComponent(providerConn.id)}/sync-models?mode=sync`,
-              { method: "POST" }
-            );
-
-            if (!syncRes.ok || cancelled) return;
-            const refetchRes = await fetch(
-              `/api/v1/providers/${encodeURIComponent(providerId)}/models`
-            );
-            if (!refetchRes.ok || cancelled) return;
-            const refetchData = (await refetchRes.json()) as { data?: ProviderModel[] };
-            if (!cancelled) {
-              setModels(refetchData.data ?? []);
+                if (syncRes.ok && !cancelled) {
+                  const refetchRes = await fetch(
+                    `/api/v1/providers/${encodeURIComponent(providerId)}/models`
+                  );
+                  if (refetchRes.ok && !cancelled) {
+                    const refetchData = (await refetchRes.json()) as { data?: ProviderModel[] };
+                    if (!cancelled) {
+                      setModels(refetchData.data ?? []);
+                    }
+                  }
+                }
+              }
+            } catch (syncErr) {
+              if (!cancelled) {
+                console.log("Auto-fetch models failed:", syncErr);
+              }
             }
-          } catch (syncErr) {
-            if (!cancelled) {
-              console.log("Auto-fetch models failed:", syncErr);
-            }
-          }
-        }, 0);
+          }, 0);
+        }
+
+        if (cancelled) return;
+        setModels(list);
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load models");
@@ -134,11 +140,33 @@ export function useProviderModels(
         if (!cancelled) setLoading(false);
       }
     };
-    void load();
-    return () => {
+    void run();
+    const cleanup = () => {
       cancelled = true;
     };
-  }, [providerId, connectionId]);
+    cleanupRef.current = cleanup;
+    return cleanup;
+  }, [providerId, connectionId, t]);
 
-  return { models, loading, error };
+  useEffect(() => {
+    if (!providerId) {
+      setLoading(false);
+      return;
+    }
+    return load();
+  }, [providerId, load]);
+
+  // Release the current in-flight cleanup on unmount so no state updates leak.
+  useEffect(() => {
+    return () => {
+      cleanupRef.current?.();
+    };
+  }, []);
+
+  const retry = useCallback(() => {
+    if (!providerId) return;
+    load();
+  }, [providerId, load]);
+
+  return { models, loading, error, retry };
 }

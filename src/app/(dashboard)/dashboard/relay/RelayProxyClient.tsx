@@ -44,7 +44,7 @@ export default function RelayProxyClient() {
   }, []);
 
   useEffect(() => {
-    fetchTokens();
+    void fetchTokens();
   }, [fetchTokens]);
 
   const createToken = async () => {
@@ -103,11 +103,8 @@ export default function RelayProxyClient() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold">Serverless Relay Proxies</h1>
-          <p className="text-sm text-text-muted mt-1">
-            Create public API endpoints that proxy to OmniRoute with rate limiting and access
-            control
-          </p>
+          <h1 className="text-xl font-bold">{t("title")}</h1>
+          <p className="text-sm text-text-muted mt-1">{t("description")}</p>
         </div>
         <Button onClick={() => setShowCreate(!showCreate)}>
           {showCreate ? t("cancel") : t("newToken")}
@@ -158,7 +155,7 @@ export default function RelayProxyClient() {
               </div>
             </div>
             <Button onClick={createToken} disabled={!form.name.trim()}>
-              Create Token
+              {t("createButton")}
             </Button>
           </div>
         </Card>
@@ -173,22 +170,17 @@ export default function RelayProxyClient() {
             </h2>
             <div className="bg-surface/50 border border-border rounded-lg p-3">
               <p className="text-xs text-text-muted mb-1">
-                Token for <strong>{newTokenData.name}</strong>:
+                {t.rich("tokenFor", {
+                  name: newTokenData.name,
+                  strong: (chunks) => <strong>{chunks}</strong>,
+                })}
               </p>
               <code className="text-sm font-mono break-all select-all bg-black/10 dark:bg-white/10 px-2 py-1 rounded">
                 {newTokenData.rawToken}
               </code>
             </div>
-            <p className="text-xs text-text-muted">
-              This token will not be shown again. Store it securely.
-            </p>
-            <Button
-              onClick={() => {
-                setNewTokenData(null);
-              }}
-            >
-              Dismiss
-            </Button>
+            <p className="text-xs text-text-muted">{t("shownOnce")}</p>
+            <Button onClick={() => setNewTokenData(null)}>{t("dismiss")}</Button>
           </div>
         </Card>
       )}
@@ -196,8 +188,8 @@ export default function RelayProxyClient() {
       {/* Usage Guide */}
       <Card>
         <div className="p-4 space-y-2">
-          <h2 className="text-sm font-semibold">Usage</h2>
-          <p className="text-xs text-text-muted">Send requests to your relay endpoint:</p>
+          <h2 className="text-sm font-semibold">{t("usage")}</h2>
+          <p className="text-xs text-text-muted">{t("usageDescription")}</p>
           <pre className="text-xs bg-surface/50 border border-border rounded-lg p-3 overflow-x-auto">
             {`curl http://localhost:20128/v1/relay/chat/completions \\
   -H "Authorization: Bearer relay_..." \\
@@ -210,23 +202,23 @@ export default function RelayProxyClient() {
       {/* Tokens List */}
       <Card>
         <div className="p-4">
-          <h2 className="text-sm font-semibold mb-3">Relay Tokens ({tokens.length})</h2>
+          <h2 className="text-sm font-semibold mb-3">
+            {t("tokenCount", { count: tokens.length })}
+          </h2>
           {loading ? (
             <p className="text-sm text-text-muted">{t("loading")}</p>
           ) : tokens.length === 0 ? (
-            <p className="text-sm text-text-muted">
-              No relay tokens configured. Create one to get started.
-            </p>
+            <p className="text-sm text-text-muted">{t("empty")}</p>
           ) : (
             <div className="space-y-2">
-              {tokens.map((t) => (
+              {tokens.map((token) => (
                 <div
-                  key={t.id}
+                  key={token.id}
                   className="flex items-center justify-between border border-border rounded-lg p-3"
                 >
                   <div className="flex items-center gap-3">
                     <div
-                      className={`w-2 h-2 rounded-full ${t.enabled ? "bg-green-500" : "bg-red-500"}`}
+                      className={`w-2 h-2 rounded-full ${token.enabled ? "bg-green-500" : "bg-red-500"}`}
                     />
                     <div>
                       <div className="font-medium text-sm">{token.name}</div>
@@ -240,10 +232,10 @@ export default function RelayProxyClient() {
                   </div>
                   <div className="flex items-center gap-3">
                     <Badge variant="info" size="sm">
-                      {t.maxRequestsPerMinute}/min
+                      {token.maxRequestsPerMinute}/min
                     </Badge>
                     <Badge variant="info" size="sm">
-                      {t.maxRequestsPerDay}/day
+                      {token.maxRequestsPerDay}/day
                     </Badge>
                     <button
                       onClick={() => toggleToken(token.id, !token.enabled)}

@@ -66,8 +66,8 @@ describe("reasoningCache helpers", () => {
     it("returns false for reasoning_details interleaved field", () => {
       assert.equal(
         mod.requiresReasoningReplay({
-          provider: "any",
-          model: "any",
+          provider: "moonshot",
+          model: "k3",
           interleavedField: "reasoning_details",
         }),
         false
@@ -104,6 +104,48 @@ describe("reasoningCache helpers", () => {
         mod.requiresReasoningReplay({ provider: "deepseek", model: "some-model" }),
         true
       );
+    });
+
+    it("returns true for Kimi Coding providers regardless of model alias", () => {
+      assert.equal(mod.requiresReasoningReplay({ provider: "kimi-coding", model: "k3" }), true);
+      assert.equal(
+        mod.requiresReasoningReplay({ provider: "kimi-coding-apikey", model: "kimi-k2.6" }),
+        true
+      );
+    });
+
+    it("detects native Kimi thinking model IDs without matching unrelated aliases", () => {
+      for (const model of [
+        "k3",
+        "k3-256k",
+        "kimi-k3",
+        "kimi-k2",
+        "kimi-k2.6",
+        "kimi-k2.6-thinking",
+        "kimi-k2.7-code",
+        "kimi-k2.7-code-highspeed",
+        "moonshotai/kimi-k2.7-code",
+      ]) {
+        assert.equal(mod.requiresReasoningReplay({ provider: "some-other", model }), true, model);
+      }
+
+      for (const model of ["moonshot-v1-8k", "kimi-latest"]) {
+        assert.equal(mod.requiresReasoningReplay({ provider: "some-other", model }), false, model);
+      }
+    });
+
+    it("keeps K3 and native Moonshot K2.7 replay explicit", () => {
+      for (const model of ["k3", "k3-256k", "kimi-k3", "kimi-k2.7-code"]) {
+        assert.equal(
+          mod.requiresReasoningReplay({
+            provider: "moonshot",
+            model,
+            allowLegacyFallback: false,
+          }),
+          true,
+          model
+        );
+      }
     });
 
     it("returns false when allowLegacyFallback is false and no explicit signal", () => {

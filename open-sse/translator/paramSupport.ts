@@ -69,6 +69,30 @@ const STRIP_RULES: StripRule[] = [
     maxOutputCap: 32768,
     clampToModelMaxOutput: true,
   },
+  // #7364: Z.AI's glm-4.6v vision endpoint enforces a 32768 max_tokens ceiling
+  // server-side and 400s when a client sends a larger explicit max_tokens (e.g. a
+  // client defaulting to 65536). Scoped to both wire paths that can reach this
+  // model: "zai" (DefaultExecutor, Claude format by default — glm-4.6v is only
+  // reachable there as a custom model attached to the connection, so it is NOT in
+  // PROVIDER_MODELS["zai"] and clampToModelMaxOutput would find no catalog ceiling
+  // to clamp against, hence the fixed maxOutputCap) and "glm" (GlmExecutor, OpenAI
+  // format — glm-4.6v IS in the registry catalog there, `GLM_SHARED_MODELS` in
+  // glmProvider.ts, maxOutputTokens: 32768, so clampToModelMaxOutput suffices).
+  { provider: "zai", match: /^glm-4\.6v$/i, maxOutputCap: 32768 },
+  { provider: "glm", match: /^glm-4\.6v$/i, clampToModelMaxOutput: true },
+  // Azure gpt-4o-mini deployments cap completion tokens at 16384 and 400 on
+  // anything larger: "max_tokens is too large: 32000. This model supports at
+  // most 16384 completion tokens". OmniRoute's own tool-calling floor
+  // (DEFAULT_MIN_TOKENS = 32000, applied by adjustMaxTokens) raises even a tiny
+  // explicit max_tokens to 32000 whenever tools are present, so every agentic
+  // client trips this on its first turn. PROVIDER_MAX_TOKENS is not the right
+  // lever here: it is provider-wide, and the same Azure resource also serves
+  // GPT-5 deployments whose ceiling is far higher. Azure deployment names are
+  // operator-chosen, hence a prefix match rather than an exact id, and the
+  // models are passthrough (no catalog maxOutputTokens for clampToModelMaxOutput
+  // to read), hence the fixed cap.
+  { provider: "azure-openai", match: /^gpt-4o-mini/i, maxOutputCap: 16384 },
+  { provider: "azure-ai", match: /^gpt-4o-mini/i, maxOutputCap: 16384 },
 ];
 
 function matches(rule: StripRule, model: string): boolean {

@@ -1,5 +1,5 @@
 import { apiFetch } from "../api.mjs";
-import { loadContexts, saveContexts } from "../contexts.mjs";
+import { loadContexts, saveContextsSecure } from "../contexts.mjs";
 import { createPrompt, printSuccess, printError, printInfo } from "../io.mjs";
 import { t } from "../i18n.mjs";
 
@@ -109,7 +109,7 @@ export async function runConnectCommand(host, opts = {}) {
     description: `Remote OmniRoute (${host})`,
   };
   cfg.currentContext = name;
-  saveContexts(cfg);
+  await saveContextsSecure(cfg);
 
   printSuccess(`Connected to ${baseUrl} — context '${name}' (scope: ${scope})`);
   printInfo("All commands now target this server.");

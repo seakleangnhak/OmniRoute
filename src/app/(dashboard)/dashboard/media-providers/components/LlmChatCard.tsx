@@ -35,6 +35,10 @@ function resolvePlaygroundKeyId(
   return keys.find((k) => k.key === selectedMaskedKey)?.id ?? null;
 }
 
+// Mirrors NO_THINKING_PREFIX in open-sse/utils/noThinkingAlias.ts — kept as a local literal
+// (not imported) to avoid pulling server-side catalog modules into the client bundle.
+const NO_THINKING_PREFIX = "no-think/";
+
 /**
  * Qualify a provider-scoped playground model with its routing prefix so
  * OmniRoute can resolve it unambiguously. The previous heuristic only prefixed
@@ -52,6 +56,14 @@ export function qualifyPlaygroundModel(
 ): string {
   const m = (model ?? "").trim();
   if (!m || !routingPrefix) return m;
+  // A no-think id's real wire form is `no-think/<provider>/<model>` — the provider segment
+  // sits AFTER the prefix, not at the front, so it needs its own qualification branch instead
+  // of the generic leading-prefix check below.
+  if (m.startsWith(NO_THINKING_PREFIX)) {
+    const inner = m.slice(NO_THINKING_PREFIX.length);
+    const alreadyQualified = inner === routingPrefix || inner.startsWith(`${routingPrefix}/`);
+    return alreadyQualified ? m : `${NO_THINKING_PREFIX}${routingPrefix}/${inner}`;
+  }
   return m === routingPrefix || m.startsWith(`${routingPrefix}/`) ? m : `${routingPrefix}/${m}`;
 }
 
@@ -136,7 +148,7 @@ export function LlmChatCard({
 }: Props) {
   const t = useTranslations("miniPlayground");
   const { keys } = useApiKey();
-  const { models } = useProviderModels(providerId, connectionId);
+  const { models, loading, error, retry } = useProviderModels(providerId, connectionId);
 
   const [internalSelectedKey, setInternalSelectedKey] = useState<string>("");
   const [internalModel, setInternalModel] = useState<string>(initialModel ?? "");
@@ -341,7 +353,7 @@ export function LlmChatCard({
       // Refocus textarea so user can keep typing
       requestAnimationFrame(() => textareaRef.current?.focus());
     }
-  }, [input, streaming, selectedKey, keys, providerId, qualifiedModel, connectionId, messages]);
+  }, [input, streaming, selectedKey, keys, providerId, qualifiedModel, connectionId, messages, t]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -396,6 +408,7 @@ export function LlmChatCard({
             <label className="text-xs text-text-muted shrink-0">{t("model")}:</label>
             {modelOptions.length > 0 ? (
               <select
+                disabled={loading}
                 value={model || firstModel}
                 onChange={(e) => setModel(e.target.value)}
                 className="min-w-0 flex-1 rounded-md border border-border bg-bg-subtle text-xs px-2 py-1 text-text-main focus:outline-none focus:ring-1 focus:ring-primary"
@@ -408,11 +421,26 @@ export function LlmChatCard({
               </select>
             ) : (
               <input
+                disabled={loading}
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
                 placeholder="Enter model id"
                 className="min-w-0 flex-1 rounded-md border border-border bg-bg-subtle text-xs px-2 py-1 text-text-main placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-primary"
               />
+            )}
+            {error && (
+              <span className="text-xs text-red-500 flex items-center gap-1" role="alert">
+                <span className="truncate max-w-[180px]" title={String(error)}>
+                  {String(error)}
+                </span>
+                <button
+                  type="button"
+                  onClick={retry}
+                  className="shrink-0 text-xs text-primary hover:text-primary-strong underline"
+                >
+                  {t("retry") ?? "Retry"}
+                </button>
+              </span>
             )}
           </div>
           {/* Key select */}

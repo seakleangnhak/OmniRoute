@@ -8,12 +8,15 @@
 //   - stripVersion()     — strips @version suffix from package keys
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 // @ts-expect-error — .mjs helper has no type declarations; runtime shape is known.
 import {
   classifyLicense,
   stripVersion,
   loadAllowlist,
 } from "../../../scripts/check/check-licenses.mjs";
+
+const PNPM_WORKSPACE_URL = new URL("../../../pnpm-workspace.yaml", import.meta.url);
 
 // ---------------------------------------------------------------------------
 // Helpers — synthetic allowlists for testing classifyLicense in isolation
@@ -33,6 +36,15 @@ function makeAllowlist(
     ...overrides,
   };
 }
+
+test("pnpm does not auto-install the unused @lobehub/ui peer subtree", () => {
+  const workspace = fs.readFileSync(PNPM_WORKSPACE_URL, "utf8");
+  assert.match(
+    workspace,
+    /^autoInstallPeers:\s*false\s*$/m,
+    "pnpm must match npm's legacy-peer-deps posture; @lobehub/ui is not a runtime dependency"
+  );
+});
 
 // ---------------------------------------------------------------------------
 // stripVersion

@@ -36,11 +36,10 @@ export async function GET(request: Request) {
   if (authError) return authError;
 
   try {
-    const keys = await getApiKeys();
-    const maskedKeys = keys.map((key) => toSafeApiKeyMetadata(key));
     const { limit, offset } = parsePagination(request);
-    const pagedKeys =
-      limit === null ? maskedKeys.slice(offset) : maskedKeys.slice(offset, offset + limit);
+    const total = getApiKeysCount();
+    const keys = await getApiKeys(limit ?? undefined, offset);
+    const maskedKeys = keys.map((key) => toSafeApiKeyMetadata(key));
 
     return NextResponse.json({
       keys: maskedKeys,
@@ -70,6 +69,7 @@ export async function POST(request) {
       name,
       noLog,
       scopes,
+      allowedConnections,
       allowUsageCommand,
       usageLimitEnabled,
       dailyUsageLimitUsd,
@@ -80,7 +80,7 @@ export async function POST(request) {
     // Always get machineId from server
     const machineId = await getConsistentMachineId();
     const normalizedScopes = normalizeSelfServiceScopesForCreate(scopes);
-    const apiKey = await createApiKey(name, machineId, normalizedScopes);
+    const apiKey = await createApiKey(name, machineId, normalizedScopes, { allowedConnections });
     if (
       noLog === true ||
       allowUsageCommand === true ||
@@ -120,6 +120,8 @@ export async function POST(request) {
           weeklyUsageLimitUsd: weeklyUsageLimitUsd ?? null,
           chaosModeEnabled: chaosModeEnabled === true,
           streamDefaultMode: "legacy",
+          compressionEnabled: true,
+          cacheDefaultMode: "legacy",
           isActive: true,
           status: "active",
         },

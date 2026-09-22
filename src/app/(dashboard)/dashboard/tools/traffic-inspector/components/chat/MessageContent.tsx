@@ -3,6 +3,7 @@
 import type { NormalizedBlock } from "@/mitm/inspector/types";
 import { ToolCallBlock } from "./ToolCallBlock";
 import { ToolResultBlock } from "./ToolResultBlock";
+import MarkdownMessage from "@/app/(dashboard)/dashboard/playground/components/MarkdownMessage";
 
 interface MessageContentProps {
   blocks: NormalizedBlock[];
@@ -13,10 +14,9 @@ export function MessageContent({ blocks }: MessageContentProps) {
     <div className="space-y-2">
       {blocks.map((block, i) => {
         if (block.type === "text") {
+          // Most LLMs reply in Markdown — render it instead of plain text.
           return (
-            <p key={i} className="text-sm text-text-main whitespace-pre-wrap break-words">
-              {block.text}
-            </p>
+            <MarkdownMessage key={i} content={block.text} className="text-sm text-text-main" />
           );
         }
         if (block.type === "tool_use") {

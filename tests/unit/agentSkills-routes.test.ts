@@ -5,7 +5,7 @@
  * Auth tested via requireManagementAuth with live DB in temp directory.
  *
  * Coverage goals:
- * - GET  /api/agent-skills           — happy path (43 skills), filters, invalid category
+ * - GET  /api/agent-skills           — happy path (46 skills), filters, invalid category
  * - GET  /api/agent-skills/[id]      — found, 404 not found
  * - GET  /api/agent-skills/[id]/raw  — found, 404 not found, 502 on GitHub failure
  * - GET  /api/agent-skills/coverage  — happy path
@@ -46,7 +46,7 @@ const generateRoute = await import("../../src/app/api/agent-skills/generate/rout
 async function resetStorage() {
   core.resetDbInstance();
   apiKeysDb.resetApiKeyState();
-  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
   delete process.env.INITIAL_PASSWORD;
 }
@@ -76,7 +76,7 @@ test.beforeEach(async () => {
 test.after(() => {
   core.resetDbInstance();
   apiKeysDb.resetApiKeyState();
-  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 
   if (ORIGINAL_DATA_DIR === undefined) {
     delete process.env.DATA_DIR;
@@ -101,15 +101,16 @@ test.after(() => {
 // GET /api/agent-skills
 // ═════════════════════════════════════════════════════════════════════════════
 
-test("GET /api/agent-skills — returns 45 skills with count and coverage", async () => {
+// 46 = 23 api + 21 cli + 1 config + 1 external ("ponytail", added in #9058 / 2e799b33a7).
+test("GET /api/agent-skills — returns 46 skills with count and coverage", async () => {
   const req = makeRequest("GET", "http://localhost/api/agent-skills");
   const res = await listRoute.GET(req);
 
   assert.equal(res.status, 200);
   const body = (await res.json()) as { skills: unknown[]; count: number; coverage: unknown };
-  assert.equal(body.count, 45, `Expected 45 skills but got ${body.count}`);
+  assert.equal(body.count, 46, `Expected 46 skills but got ${body.count}`);
   assert.equal(Array.isArray(body.skills), true);
-  assert.equal(body.skills.length, 45);
+  assert.equal(body.skills.length, 46);
   assert.ok(body.coverage !== undefined, "coverage should be present");
 });
 
@@ -136,6 +137,19 @@ test("GET /api/agent-skills?category=cli — returns 21 cli skills", async () =>
   assert.ok(
     body.skills.every((s) => s.category === "cli"),
     "All skills should be cli category"
+  );
+});
+
+test("GET /api/agent-skills?category=config — returns 1 config skill", async () => {
+  const req = makeRequest("GET", "http://localhost/api/agent-skills?category=config");
+  const res = await listRoute.GET(req);
+
+  assert.equal(res.status, 200);
+  const body = (await res.json()) as { skills: Array<{ category: string }>; count: number };
+  assert.equal(body.count, 1);
+  assert.ok(
+    body.skills.every((s) => s.category === "config"),
+    "All skills should be config category"
   );
 });
 

@@ -1,7 +1,7 @@
 /**
  * SessionFactory — Creates initialized Session instances
  *
- * For zero-auth providers (Pollinations, Puter): just assigns a fingerprint.
+ * For zero-auth providers (Pollinations): just assigns a fingerprint.
  * For cookie-based providers (ChatGPT Web, DeepSeek Web): would launch
  * headless Playwright, solve Turnstile, and extract cookies.
  *

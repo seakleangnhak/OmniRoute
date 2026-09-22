@@ -130,7 +130,7 @@ export async function DELETE(request: Request, { params }: RouteParams): Promise
 
   try {
     const { id } = await params;
-    const existed = deletePool(id);
+    const existed = await deletePool(id);
     if (!existed) {
       return NextResponse.json(buildErrorBody(404, "Pool not found"), { status: 404 });
     }

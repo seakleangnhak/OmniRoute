@@ -316,24 +316,39 @@ test("plugin hooks system", async (t) => {
     resetHooks();
   });
 
-  await t.test("BUILTIN_EVENTS has all 14 events (incl. lifecycle)", () => {
-    assert.equal(BUILTIN_EVENTS.length, 14);
-    assert.ok(BUILTIN_EVENTS.includes("onRequest"));
-    assert.ok(BUILTIN_EVENTS.includes("onResponse"));
-    assert.ok(BUILTIN_EVENTS.includes("onError"));
-    assert.ok(BUILTIN_EVENTS.includes("onModelSelect"));
-    assert.ok(BUILTIN_EVENTS.includes("onComboResolve"));
-    assert.ok(BUILTIN_EVENTS.includes("onRateLimit"));
-    assert.ok(BUILTIN_EVENTS.includes("onQuotaExhaust"));
-    assert.ok(BUILTIN_EVENTS.includes("onProviderError"));
-    assert.ok(BUILTIN_EVENTS.includes("onStreamStart"));
-    assert.ok(BUILTIN_EVENTS.includes("onStreamEnd"));
-    // Lifecycle events added in #3473.
-    assert.ok(BUILTIN_EVENTS.includes("onInstall"));
-    assert.ok(BUILTIN_EVENTS.includes("onActivate"));
-    assert.ok(BUILTIN_EVENTS.includes("onDeactivate"));
-    assert.ok(BUILTIN_EVENTS.includes("onUninstall"));
+  await t.test("BUILTIN_EVENTS contains only emitted/public plugin events", () => {
+    assert.deepEqual(BUILTIN_EVENTS, [
+      "onRequest",
+      "onResponse",
+      "onError",
+      "onInstall",
+      "onActivate",
+      "onDeactivate",
+      "onUninstall",
+      // #9668: fire-and-forget stream telemetry hook (runOnStreamCompleteHooks)
+      "onStreamComplete",
+    ]);
     resetHooks();
+  });
+
+  await t.test("BUILTIN_EVENTS does not advertise events with no emission path", () => {
+    for (const deadEvent of [
+      "onModelSelect",
+      "onComboResolve",
+      "onRateLimit",
+      "onQuotaExhaust",
+      "onProviderError",
+      "onStreamStart",
+      "onStreamEnd",
+    ]) {
+      assert.equal((BUILTIN_EVENTS as readonly string[]).includes(deadEvent), false, deadEvent);
+    }
+  });
+
+  await t.test("lifecycle events remain represented because manager emits them", () => {
+    for (const event of ["onInstall", "onActivate", "onDeactivate", "onUninstall"] as const) {
+      assert.ok(BUILTIN_EVENTS.includes(event));
+    }
   });
 });
 
@@ -440,7 +455,7 @@ test("full lifecycle: install → activate → hook fires → deactivate → uni
 
 test("cleanup fixture directory", () => {
   if (existsSync(FIXTURE_DIR)) {
-    rmSync(FIXTURE_DIR, { recursive: true, force: true });
+    rmSync(FIXTURE_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
   assert.ok(!existsSync(FIXTURE_DIR));
 });

@@ -81,6 +81,7 @@ function ChaosAvailableProvidersHint({
 }: {
   availableProviders: ChaosProviderInfo[];
 }) {
+  const t = useTranslations("chaosConfig");
   if (availableProviders.length === 0) return null;
   return (
     <details className="text-xs text-text-muted">

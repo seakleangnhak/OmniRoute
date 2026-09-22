@@ -242,7 +242,8 @@ test("call-log sync includes stable apiKeyId, event id, token fields, and costUs
     compressed: null,
     images: null,
   });
-  assert.ok(Math.abs(recent.costUsd - 0.202) < 1e-12);
+  // Output includes reasoning tokens; charge only the reasoning price premium.
+  assert.ok(Math.abs(recent.costUsd - 0.192) < 1e-12, `Unexpected cost: ${recent.costUsd}`);
   assert.equal(JSON.stringify(logs).includes(created.key), false);
   assert.equal(JSON.stringify(logs).includes(MANAGEMENT_TOKEN), false);
 });

@@ -6,7 +6,6 @@ import {
   createPreparedRequestLogger,
   type ProviderRequestPrepared,
 } from "../../open-sse/utils/providerRequestLogging.ts";
-import { cloakAntigravityToolPayload, AG_TOOL_SUFFIX } from "../../open-sse/config/toolCloaking.ts";
 
 function makeCapture() {
   const reqLogger = {
@@ -30,13 +29,8 @@ test("Antigravity request capture preserves original tool names without a cloak 
         {
           functionDeclarations: [
             {
-              name: CUSTOM_TOOL,
+              name: "workspace_read",
               description: "Read a file",
-              parameters: { type: "OBJECT", properties: {} },
-            },
-            {
-              name: NATIVE_TOOL,
-              description: "Run a shell command",
               parameters: { type: "OBJECT", properties: {} },
             },
           ],
@@ -63,19 +57,9 @@ test("Antigravity request capture preserves original tool names without a cloak 
   const finalBody = capture.body(sanitized) as {
     _toolNameMap?: unknown;
     request: {
-      tools: [
-        {
-          functionDeclarations: [
-            {
-              name: NATIVE_TOOL,
-              description: "Run a shell command",
-              parameters: { type: "OBJECT", properties: {} },
-            },
-          ],
-        },
-      ],
-      contents: [],
-    },
+      tools: Array<{ functionDeclarations: Array<{ name: string }> }>;
+      contents: Array<{ parts: Array<{ functionCall: { name: string } }> }>;
+    };
   };
 
   assert.equal("_toolNameMap" in sanitized, false);

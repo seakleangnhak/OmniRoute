@@ -14,6 +14,7 @@ import { join } from "node:path";
 import os from "node:os";
 import { printHeading, printInfo, printSuccess, printError, createPrompt } from "../io.mjs";
 import { resolveActiveContext } from "../contexts.mjs";
+import { guardHostConfigTarget } from "../utils/config-home-guard.mjs";
 
 /** Ensure the URL ends with /v1 (Kilo appends /chat/completions to it). */
 function ensureV1(url) {
@@ -103,6 +104,14 @@ export async function runSetupKiloCommand(opts = {}) {
     opts.authPath ??
     opts["auth-path"] ??
     join(os.homedir(), ".local", "share", "kilo", "auth.json");
+
+  const guard = await guardHostConfigTarget(authPath, {
+    toolLabel: "Kilo Code",
+    hostCommand: "omniroute setup-kilo",
+    allowContainerWrite: Boolean(opts.allowContainerWrite ?? opts["allow-container-write"]),
+    dryRun,
+  });
+  if (guard !== 0) return guard;
   const vscodePath =
     opts.vscodeSettings ??
     opts["vscode-settings"] ??
@@ -195,6 +204,10 @@ export function registerSetupKilo(program) {
     )
     .option("--yes", "Non-interactive: do not prompt (requires --model)")
     .option("--dry-run", "Print what would be written without touching the filesystem")
+    .option(
+      "--allow-container-write",
+      "Write even when the target is inside a container and not mounted from the host"
+    )
     .action(async (opts) => {
       const code = await runSetupKiloCommand(opts);
       if (code !== 0) process.exit(code);

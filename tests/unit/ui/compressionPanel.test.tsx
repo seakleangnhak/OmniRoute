@@ -2,7 +2,7 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { ENGINE_IDS, engineMeta } from "../../../open-sse/services/compression/engineCatalog.ts";
+import { ENGINE_IDS } from "../../../open-sse/services/compression/engineCatalog.ts";
 
 // i18n does not resolve to a real locale in vitest/jsdom, so mock next-intl to echo
 // the key. This test therefore asserts on translation keys, engine ids,

@@ -108,7 +108,7 @@ function reset() {
   core.resetDbInstance();
   apiKeysDb.resetApiKeyState();
   if (fs.existsSync(TEST_DATA_DIR)) {
-    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
 }
@@ -118,7 +118,7 @@ test.beforeEach(() => {
 });
 
 test.after(() => {
-  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 test("regenerateApiKey creates a new key and invalidates the old one", async () => {
@@ -180,6 +180,31 @@ test("direct route auth rejects an old key whose metadata was cached by another 
     await stopValidatorProcess(validator.child);
   }
 });
+
+for (const [operation, removeKey] of [
+  ["revocation", apiKeysDb.revokeApiKey],
+  ["deletion", apiKeysDb.deleteApiKey],
+] as const) {
+  test(`${operation} and replacement reject key A in a process with cached metadata`, async () => {
+    const keyA = await apiKeysDb.createApiKey("Cross-process Replacement", "replacement-machine");
+    const validator = startValidatorProcess(keyA.key);
+
+    try {
+      assert.equal(await validator.enforce(), 200);
+      assert.equal(await removeKey(keyA.id), true);
+      assert.equal(await validator.validate(), false);
+      assert.equal(await validator.enforce(), 401);
+
+      const keyB = await apiKeysDb.createApiKey("Cross-process Replacement", "replacement-machine");
+      assert.notEqual(keyB.key, keyA.key);
+      assert.equal(await apiKeysDb.validateApiKey(keyB.key), true);
+      assert.equal(await validator.validate(), false);
+      assert.equal(await validator.enforce(), 401);
+    } finally {
+      await stopValidatorProcess(validator.child);
+    }
+  });
+}
 
 test("regenerateApiKey returns null for non-existent ID", async () => {
   const result = await apiKeysDb.regenerateApiKey("00000000-0000-0000-0000-000000000000");

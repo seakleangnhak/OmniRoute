@@ -1,4 +1,5 @@
 import { CORS_HEADERS } from "./cors.ts";
+import { getReadableReasoningValue } from "./reasoningFields.ts";
 
 type PendingToolCall = {
   id?: string;
@@ -10,6 +11,11 @@ type PendingToolCall = {
 
 // Transform OpenAI SSE stream to Ollama JSON lines format
 export function transformToOllama(response, model) {
+  // Only successful SSE responses belong to the NDJSON transformer. Preserve errors,
+  // bodyless responses, and successful JSON responses without losing status/body/headers.
+  const contentType = String(response.headers?.get?.("content-type") || "").toLowerCase();
+  if (!response.ok || !response.body || !contentType.includes("text/event-stream")) return response;
+
   let buffer = "";
   let pendingToolCalls: Record<number, PendingToolCall> = {};
   const completedToolCalls: PendingToolCall[] = [];
@@ -38,6 +44,7 @@ export function transformToOllama(response, model) {
             const parsed = JSON.parse(data);
             const delta = parsed.choices?.[0]?.delta || {};
             const content = delta.content || "";
+            const thinking = getReadableReasoningValue(delta);
             const toolCalls = delta.tool_calls;
 
             if (toolCalls) {
@@ -66,6 +73,16 @@ export function transformToOllama(response, model) {
                 if (tc.function?.arguments)
                   pendingToolCalls[idx].function.arguments += tc.function.arguments;
               }
+            }
+
+            if (thinking) {
+              const ollama =
+                JSON.stringify({
+                  model,
+                  message: { role: "assistant", content: "", thinking },
+                  done: false,
+                }) + "\n";
+              controller.enqueue(new TextEncoder().encode(ollama));
             }
 
             if (content) {

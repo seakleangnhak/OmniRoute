@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getProviderConnectionById, updateProviderConnection } from "@/models";
-import { listProxies } from "@/lib/localDb";
+import { listProxies } from "@/lib/db/proxies";
 import { requireManagementAuth } from "@/lib/api/requireManagementAuth";
 
 type JsonRecord = Record<string, unknown>;

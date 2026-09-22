@@ -1,8 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const { prepareClaudeRequest, NON_ANTHROPIC_THINKING_PLACEHOLDER: PLACEHOLDER } =
-  await import("../../open-sse/translator/helpers/claudeHelper.ts");
+const { prepareClaudeRequest } = await import("../../open-sse/translator/helpers/claudeHelper.ts");
 const { DEFAULT_THINKING_CLAUDE_SIGNATURE } =
   await import("../../open-sse/config/defaultThinkingSignature.ts");
 const reasoningCache = await import("../../open-sse/services/reasoningCache.ts");

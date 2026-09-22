@@ -149,15 +149,15 @@ describe("cloakThirdPartyToolNames", () => {
     // Anthropic requires tools.N.web_search_20250305.name === "web_search".
     assert.equal((body.tools as AnyRecord[])[0].name, "web_search");
     // No reverse-map entry needed because nothing was cloaked.
-    assert.equal((body._toolNameMap as Map<string, string> | undefined)?.has("WebSearch") ?? false, false);
+    assert.equal(
+      (body._toolNameMap as Map<string, string> | undefined)?.has("WebSearch") ?? false,
+      false
+    );
   });
 
   it("still cloaks a genuine third-party tool sitting next to a server tool", () => {
     const body: AnyRecord = {
-      tools: [
-        { type: "web_search_20250305", name: "web_search" },
-        { name: "mixture_of_agents" },
-      ],
+      tools: [{ type: "web_search_20250305", name: "web_search" }, { name: "mixture_of_agents" }],
     };
     cloakThirdPartyToolNames(body);
     assert.equal((body.tools as AnyRecord[])[0].name, "web_search");
@@ -382,14 +382,82 @@ describe("native claude OAuth path — versioned built-in tool model prefix stri
     assert.equal(tools[0].model, "claude-opus-4-8");
   });
 
-  it("leaves non-versioned tool types untouched even with a prefixed model", () => {
+  it("normalizes a non-versioned tool carrying a cc/ or claude/ prefixed model (upstream #2649)", () => {
+    // Non-versioned server tools (Task/subagent, web_search) leak the same
+    // provider-prefixed model the versioned ones do; Anthropic rejects both.
+    // Foreign prefixes (openrouter/...) are preserved.
     const tools: AnyRecord[] = [
       { type: "custom", name: "x", model: "cc/claude-opus-4-8" },
       { type: "advisor_2026", name: "y", model: "cc/claude-opus-4-8" }, // not 8 digits
+      { type: "custom", name: "z", model: "claude/claude-sonnet-4-6" },
+      { type: "custom", name: "w", model: "openrouter/anthropic/claude-opus-4.1" },
     ];
     stripVersionedToolModelPrefix(tools);
-    assert.equal(tools[0].model, "cc/claude-opus-4-8", "non-versioned type untouched");
-    assert.equal(tools[1].model, "cc/claude-opus-4-8", "short date suffix untouched");
+    assert.equal(tools[0].model, "claude-opus-4-8", "cc/ stripped from non-versioned type");
+    assert.equal(tools[1].model, "claude-opus-4-8", "cc/ stripped from short date suffix");
+    assert.equal(tools[2].model, "claude-sonnet-4-6", "claude/ stripped from non-versioned type");
+    assert.equal(
+      tools[3].model,
+      "openrouter/anthropic/claude-opus-4.1",
+      "foreign prefix preserved"
+    );
+  });
+
+  it("strips cc/ prefix from a NON-versioned server tool (Task/subagent)", () => {
+    const tools: AnyRecord[] = [
+      {
+        name: "Task",
+        description: "Launch a subagent",
+        model: "cc/claude-opus-4-8",
+        input_schema: { type: "object" },
+      },
+    ];
+    stripVersionedToolModelPrefix(tools);
+    assert.equal(tools[0].model, "claude-opus-4-8", "cc/ stripped from non-versioned Task tool");
+  });
+
+  it("strips claude/ prefix from a NON-versioned server tool", () => {
+    const tools: AnyRecord[] = [
+      {
+        name: "Task",
+        description: "Launch a subagent",
+        model: "claude/claude-sonnet-4-6",
+        input_schema: { type: "object" },
+      },
+    ];
+    stripVersionedToolModelPrefix(tools);
+    assert.equal(
+      tools[0].model,
+      "claude-sonnet-4-6",
+      "claude/ stripped from non-versioned Task tool"
+    );
+  });
+
+  it("preserves other-provider prefixes on a non-versioned tool (openrouter/...)", () => {
+    const tools: AnyRecord[] = [
+      {
+        name: "Task",
+        model: "openrouter/anthropic/claude-opus-4.1",
+        input_schema: { type: "object" },
+      },
+    ];
+    stripVersionedToolModelPrefix(tools);
+    assert.equal(
+      tools[0].model,
+      "openrouter/anthropic/claude-opus-4.1",
+      "foreign prefix preserved"
+    );
+  });
+
+  it("is idempotent across repeated runs", () => {
+    const tools: AnyRecord[] = [
+      { name: "Task", model: "claude/claude-sonnet-4-6", input_schema: { type: "object" } },
+      { type: "advisor_20260301", name: "advisor", model: "cc/claude-opus-4-8" },
+    ];
+    stripVersionedToolModelPrefix(tools);
+    const first = JSON.stringify(tools);
+    stripVersionedToolModelPrefix(tools);
+    assert.equal(JSON.stringify(tools), first, "second run is a no-op");
   });
 
   it("is a no-op for non-array input", () => {

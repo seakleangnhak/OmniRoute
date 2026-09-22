@@ -125,24 +125,6 @@ describe("CompressionHub", () => {
   // that the master toggle/mode selector/reorder buttons no longer render, is
   // covered by compressionHub-active-selector.test.tsx.
 
-    let container!: HTMLElement;
-    await act(async () => {
-      container = mountInContainer(<CompressionHub />);
-    });
-    await flush();
-
-    const text = container.textContent ?? "";
-    expect(text).toContain("Compression Hub");
-    expect(text).toContain("Token Saver");
-    expect(text).toContain("Stacked");
-    // Active pipeline engine (from the default combo) renders
-    expect(text).toContain("RTK");
-    // Inactive engines from the catalog render too
-    expect(text).toContain("Caveman");
-    // Active-pipeline callout shows when enabled && stacked
-    expect(text).toContain("Layer pipeline is active");
-  });
-
   it(
     "INVARIANT #1: no per-layer control issues a PUT/POST to /api/context/combos/default",
     { timeout: 20000 },
@@ -199,22 +181,6 @@ describe("CompressionHub", () => {
       expect(comboWrites).toHaveLength(0);
     }
   );
-
-  it("shows the activation warning when Token Saver is off", async () => {
-    setupFetchMock({ enabled: false, mode: "off", pipeline: [] });
-    const { default: CompressionHub } =
-      await import("../../../src/app/(dashboard)/dashboard/context/combos/CompressionHub");
-
-    let container!: HTMLElement;
-    await act(async () => {
-      container = mountInContainer(<CompressionHub />);
-    });
-    await flush();
-
-    const text = container.textContent ?? "";
-    expect(text).toContain("Enable Token Saver");
-    expect(text).toContain("only run in Stacked mode");
-  });
 });
 
 describe("CompressionCombosPageClient", () => {

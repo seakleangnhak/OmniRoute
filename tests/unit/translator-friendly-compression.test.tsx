@@ -21,7 +21,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // ---------------------------------------------------------------------------
 
 vi.mock("next-intl", () => ({
-  useTranslations: () => (key: string) => key,
+  useTranslations: () => {
+    const t = (key: string) => key;
+    t.has = () => true;
+    return t;
+  },
+  useLocale: () => "en",
 }));
 
 // Stub shared components
@@ -574,7 +579,7 @@ describe("CompressionPreviewAccordion — error path (Hard Rule #12)", () => {
 
     const errorEl = container.querySelector("[role='alert']");
     expect(errorEl).toBeTruthy();
-    expect(errorEl?.textContent).toContain("Preview failed");
+    expect(errorEl?.textContent).toContain("compressionPreviewFailed");
 
     vi.unstubAllGlobals();
   });

@@ -16,7 +16,7 @@ export interface FreeBudgetPerModel {
   monthlyTokens: number;
   creditTokens: number;
   freeType: string;
-  poolKey: string;
+  poolKey: string | null;
   tos: string;
 }
 
@@ -29,6 +29,10 @@ export interface FreeBudgetData {
   modelCount: number;
   poolCount: number;
   perModel: FreeBudgetPerModel[];
+  /** Extra recurring tokens/mo unlocked by a one-time small deposit (OpenRouter $10 → 1000 RPD). */
+  boostMonthlyTokens?: number;
+  /** Providers that are permanently free but publish no token cap (rate/concurrency-limited). */
+  uncappedProviders?: string[];
   headline?: string;
   /** ISO timestamp of the last catalog update. Absent/null → freshness is not shown. */
   catalogUpdatedAt?: string | null;
@@ -41,39 +45,114 @@ export interface FreeBudgetData {
   noCredentialProviders?: string[];
 }
 
+export type FreeBudgetSort = "tokens" | "name" | "provider";
+
 // ────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ────────────────────────────────────────────────────────────────────────────
 
 function fmt(n: number): string {
   if (n >= 1e9) return (n / 1e9).toFixed(2).replace(/\.?0+$/, "") + "B";
-  return Math.round(n / 1e6) + "M";
+  if (n >= 1e6) return Math.round(n / 1e6) + "M";
+  if (n >= 1e3) return Math.round(n / 1e3) + "K";
+  return String(n);
 }
+
+/**
+ * Compact "N unit(s) ago" formatting for the catalog freshness indicator.
+ * Returns null on unparsable input so callers can degrade to "show nothing".
+ */
+export function relativeTimeFromNow(iso: string, now: number = Date.now()): string | null {
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return null;
+  const diffMs = now - ts;
+  if (diffMs < 60_000) return "just now";
+  const min = Math.floor(diffMs / 60_000);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day}d ago`;
+  const month = Math.floor(day / 30);
+  if (month < 12) return `${month}mo ago`;
+  const year = Math.floor(month / 12);
+  return `${year}y ago`;
+}
+
+interface FreeBudgetLabels {
+  title: string;
+  remaining: (remaining: string, percent: number, total: string) => string;
+  steadyMonth: string;
+  firstMonth: string;
+  usedThisMonth: string;
+  segmentHint: string;
+  boost: (tokens: string) => string;
+  uncapped: string;
+  tosRestricted: (count: number) => string;
+  provider: string;
+  model: string;
+  type: string;
+  tokensMonth: string;
+  credit: (tokens: string) => string;
+  freeTypes: Record<string, string>;
+  tosTitles: Record<string, string>;
+  noApiKey: string;
+}
+
+const DEFAULT_LABELS: FreeBudgetLabels = {
+  title: "Free-token budget",
+  remaining: (remaining, percent, total) => `${remaining} remaining · ${percent}% of ${total}`,
+  steadyMonth: "Steady / month",
+  firstMonth: "First month (+ credits)",
+  usedThisMonth: "Used this month",
+  segmentHint:
+    "Each segment = one free pool · pool-deduped, honest counting (no inflated rate-limit ceilings).",
+  boost: (tokens) =>
+    `Unlock ~${tokens} more/mo with a one-time $10 OpenRouter top-up (50 → 1000 req/day)`,
+  uncapped:
+    "Permanently free, no published cap (rate-limited) — real access, not counted in the headline:",
+  tosRestricted: (count) =>
+    `${count} model${count === 1 ? "" : "s"} flagged as ToS-restricted — you decide`,
+  provider: "Provider",
+  model: "Model",
+  type: "Type",
+  tokensMonth: "Tokens/mo",
+  credit: (tokens) => `${tokens} credit`,
+  noApiKey: "No API key required",
+  freeTypes: {
+    "recurring-daily": "daily",
+    "recurring-monthly": "monthly",
+    "recurring-credit": "credit/mo",
+    "recurring-uncapped": "uncapped",
+    "one-time-initial": "signup credit",
+    keyless: "keyless",
+    discontinued: "discontinued",
+  },
+  tosTitles: {
+    avoid: "ToS-restricted — review terms",
+    caution: "Caution — personal-use / proxy clauses",
+    ok: "Generally permissive",
+  },
+};
 
 // Distinct hues for stacked bar segments (cycling)
 const BAR_HUES = [
-  "#6366f1", // indigo
-  "#10b981", // emerald
-  "#f59e0b", // amber
-  "#3b82f6", // blue
-  "#ec4899", // pink
-  "#14b8a6", // teal
-  "#f97316", // orange
-  "#8b5cf6", // violet
-  "#06b6d4", // cyan
-  "#84cc16", // lime
+  "#6366f1",
+  "#10b981",
+  "#f59e0b",
+  "#3b82f6",
+  "#ec4899",
+  "#14b8a6",
+  "#f97316",
+  "#8b5cf6",
+  "#06b6d4",
+  "#84cc16",
 ];
-
-// ────────────────────────────────────────────────────────────────────────────
-// Pool-dedup helpers
-// ────────────────────────────────────────────────────────────────────────────
 
 const RECURRING_TYPES = new Set(["recurring-daily", "recurring-monthly", "keyless"]);
 
 interface BarSegment {
-  /** Unique key for React rendering */
   key: string;
-  /** Label shown in the tooltip */
   label: string;
   tokens: number;
   color: string;
@@ -81,19 +160,14 @@ interface BarSegment {
 
 /**
  * Build an ordered list of bar segments from per-model data.
- * - For recurring-type models that share a poolKey, emit ONE segment using the
- *   pool's MAX monthlyTokens, labeled by the top model's displayName.
- * - For recurring-type models with poolKey===null, emit one segment each.
- * The segments therefore sum to `steadyRecurringTokens` (the deduped header total).
+ * Recurring models sharing a poolKey collapse to ONE segment (pool MAX); poolKey===null
+ * models each get a segment. Segments therefore sum to `steadyRecurringTokens`.
  */
 function buildBarSegments(perModel: FreeBudgetPerModel[]): BarSegment[] {
-  // Deterministic color by provider — stable hue even if model order changes
   const providerColorCache = new Map<string, string>();
   function colorFor(provider: string): string {
     if (!providerColorCache.has(provider)) {
-      // Assign from BAR_HUES in first-seen order
-      const idx = providerColorCache.size;
-      providerColorCache.set(provider, BAR_HUES[idx % BAR_HUES.length]);
+      providerColorCache.set(provider, BAR_HUES[providerColorCache.size % BAR_HUES.length]);
     }
     return providerColorCache.get(provider)!;
   }
@@ -115,7 +189,6 @@ function buildBarSegments(perModel: FreeBudgetPerModel[]): BarSegment[] {
           color: colorFor(m.provider),
         });
       } else if (m.monthlyTokens > existing.tokens) {
-        // Keep max within the pool; update label to the larger model
         seenPools.set(m.poolKey, {
           ...existing,
           tokens: m.monthlyTokens,
@@ -135,72 +208,162 @@ function buildBarSegments(perModel: FreeBudgetPerModel[]): BarSegment[] {
   return [...seenPools.values(), ...looseSegments];
 }
 
+function colorForProvider(perModel: FreeBudgetPerModel[]): Map<string, string> {
+  const cache = new Map<string, string>();
+  for (const m of perModel) {
+    if (!cache.has(m.provider)) cache.set(m.provider, BAR_HUES[cache.size % BAR_HUES.length]);
+  }
+  return cache;
+}
+
+function sortRows(rows: FreeBudgetPerModel[], sort: FreeBudgetSort): FreeBudgetPerModel[] {
+  const copy = rows.slice();
+  if (sort === "name") return copy.sort((a, b) => a.displayName.localeCompare(b.displayName));
+  if (sort === "provider")
+    return copy.sort(
+      (a, b) => a.provider.localeCompare(b.provider) || b.monthlyTokens - a.monthlyTokens
+    );
+  return copy.sort((a, b) => b.monthlyTokens - a.monthlyTokens || b.creditTokens - a.creditTokens);
+}
+
 /**
- * Map each perModel entry to the color of its pool/provider bar segment.
- * Used so the legend swatches match the bar segment for that provider.
+ * Substring filter across displayName / modelId / provider (case-insensitive).
+ * Empty/whitespace-only query is a no-op (returns all rows).
  */
-function buildLegendColorMap(
-  perModel: FreeBudgetPerModel[],
-  segments: BarSegment[]
-): Map<string, string> {
-  // Build: poolKey → color, provider → color from the resolved segments
-  const poolColorMap = new Map<string, string>();
-  const providerColorMap = new Map<string, string>();
-  for (const seg of segments) {
-    if (seg.key.startsWith("pool:")) {
-      const pk = seg.key.slice("pool:".length);
-      poolColorMap.set(pk, seg.color);
-    }
+function filterRows(
+  rows: FreeBudgetPerModel[],
+  {
+    search,
+    providerFilter,
+    keylessOnly,
+    noCredentialProviders,
+  }: {
+    search: string;
+    providerFilter: string;
+    keylessOnly: boolean;
+    noCredentialProviders: string[];
   }
-  for (const m of perModel) {
-    if (m.poolKey && poolColorMap.has(m.poolKey)) {
-      providerColorMap.set(m.provider, poolColorMap.get(m.poolKey)!);
-    }
+): FreeBudgetPerModel[] {
+  let out = rows;
+  if (keylessOnly) out = out.filter((m) => noCredentialProviders.includes(m.provider));
+  if (providerFilter !== "all") out = out.filter((m) => m.provider === providerFilter);
+  if (search.trim()) {
+    out = out.filter(
+      (m) =>
+        matchesSearch(m.displayName, search) ||
+        matchesSearch(m.modelId, search) ||
+        matchesSearch(m.provider, search)
+    );
   }
-  // For loose segments, map by model key directly
-  const modelColorMap = new Map<string, string>();
-  for (const seg of segments) {
-    if (seg.key.startsWith("model:")) {
-      const mid = seg.key.slice("model:".length);
-      modelColorMap.set(mid, seg.color);
-    }
+  return out;
+}
+
+function tosBadge(
+  tos: string,
+  labels: FreeBudgetLabels
+): { icon: string; cls: string; title: string } | null {
+  if (tos === "avoid") {
+    return { icon: "warning", cls: "text-amber-400", title: labels.tosTitles.avoid };
   }
-  // Final lookup: per modelId → color
-  const result = new Map<string, string>();
-  for (const m of perModel) {
-    if (modelColorMap.has(m.modelId)) {
-      result.set(m.modelId, modelColorMap.get(m.modelId)!);
-    } else if (m.poolKey && poolColorMap.has(m.poolKey)) {
-      result.set(m.modelId, poolColorMap.get(m.poolKey)!);
-    } else {
-      // Fallback: stable hash by provider
-      const provColor = providerColorMap.get(m.provider) ?? BAR_HUES[0];
-      result.set(m.modelId, provColor);
-    }
+  if (tos === "caution") {
+    return { icon: "bolt", cls: "text-text-muted", title: labels.tosTitles.caution };
   }
-  return result;
+  if (tos === "ok") {
+    return { icon: "check_circle", cls: "text-emerald-500", title: labels.tosTitles.ok };
+  }
+  return null;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Pure view (SSR-testable — no hooks)
+// KPI tile
 // ────────────────────────────────────────────────────────────────────────────
 
-export function FreeBudgetView({ data }: { data: FreeBudgetData }) {
-  const { steadyRecurringTokens, firstMonthRealisticTokens, remaining, perModel } = data;
+function Kpi({ label, value, valueClass }: { label: string; value: string; valueClass?: string }) {
+  return (
+    <div className="flex flex-col gap-0.5 px-3 py-2 rounded-md border border-border bg-black/[0.015] dark:bg-white/[0.015]">
+      <span className="text-[10px] uppercase tracking-wide text-text-muted">{label}</span>
+      <span className={`text-[19px] font-bold tabular-nums ${valueClass ?? "text-text-main"}`}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Free-type badge (keyless gets an emerald highlight; the rest stay neutral)
+// ────────────────────────────────────────────────────────────────────────────
+
+function FreeTypeBadge({ freeType, label }: { freeType: string; label: string }) {
+  const isKeyless = freeType === "keyless";
+  return (
+    <span
+      data-testid="free-type-badge"
+      className={`inline-flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap ${
+        isKeyless
+          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-500"
+          : "border-border bg-black/[0.02] dark:bg-white/[0.03] text-text-muted"
+      }`}
+    >
+      {isKeyless && <span className="material-symbols-outlined text-[10px]">lock_open</span>}
+      {label}
+    </span>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Pure view (SSR-testable — no hooks). Sort/filter are controlled via props.
+// ────────────────────────────────────────────────────────────────────────────
+
+export function FreeBudgetView({
+  data,
+  sort = "tokens",
+  hideAvoid = false,
+  search = "",
+  providerFilter = "all",
+  keylessOnly = false,
+  labels = DEFAULT_LABELS,
+}: {
+  data: FreeBudgetData;
+  sort?: FreeBudgetSort;
+  hideAvoid?: boolean;
+  search?: string;
+  providerFilter?: string;
+  keylessOnly?: boolean;
+  labels?: FreeBudgetLabels;
+}) {
+  const {
+    steadyRecurringTokens,
+    firstMonthRealisticTokens,
+    usedThisMonth,
+    remaining,
+    perModel,
+    boostMonthlyTokens = 0,
+    uncappedProviders = [],
+    catalogUpdatedAt,
+    noCredentialProviders = [],
+  } = data;
 
   const pct = steadyRecurringTokens > 0 ? Math.round((remaining / steadyRecurringTokens) * 100) : 0;
-
   const avoidModels = perModel.filter((m) => m.tos === "avoid");
 
-  // Pool-deduped bar segments — their token sum equals steadyRecurringTokens
   const barSegments = buildBarSegments(perModel);
   const totalBarTokens = barSegments.reduce((s, seg) => s + seg.tokens, 0);
+  const providerColor = colorForProvider(perModel);
 
-  // Per-model color lookup for legend swatches (matches bar)
-  const legendColorMap = buildLegendColorMap(perModel, barSegments);
+  // "No API key required" — derived from routing behaviour, NOT from
+  // freeType: "keyless". That field means "free access not quantifiable in
+  // tokens"; probing the endpoints showed several of those rows (blackbox,
+  // iflytek, sparkdesk, friendliai, muse-spark-web) answering 401/403
+  // with no credential. Listing them here would invite users to call providers
+  // that reject them.
+  const keylessModels = perModel.filter((m) => noCredentialProviders.includes(m.provider));
+  const keylessProviders = Array.from(new Set(keylessModels.map((m) => m.provider))).sort();
 
-  // Filter legend to entries with something to show (no zero-budget clutter)
-  const legendModels = perModel.filter((m) => m.monthlyTokens > 0 || m.creditTokens > 0);
+  // Table rows: only entries with real budget; hide-ToS-avoid + search + provider + keyless filters; sorted.
+  let rows = perModel.filter((m) => m.monthlyTokens > 0 || m.creditTokens > 0);
+  if (hideAvoid) rows = rows.filter((m) => m.tos !== "avoid");
+  rows = filterRows(rows, { search, providerFilter, keylessOnly, noCredentialProviders });
+  rows = sortRows(rows, sort);
 
   const freshness = catalogUpdatedAt ? relativeTimeFromNow(catalogUpdatedAt) : null;
 
@@ -208,16 +371,36 @@ export function FreeBudgetView({ data }: { data: FreeBudgetData }) {
     <div className="rounded-lg border border-border bg-surface">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
-        <span className="material-symbols-outlined text-[14px] text-text-muted">token</span>
-        <span className="text-[13px] font-semibold text-text-main">Monthly free-token budget</span>
+        <span className="material-symbols-outlined text-[14px] text-text-muted">savings</span>
+        <span className="text-[13px] font-semibold text-text-main">{labels.title}</span>
+        {freshness && (
+          <span
+            data-testid="catalog-freshness"
+            className="text-[10px] text-text-muted"
+            title={catalogUpdatedAt ?? undefined}
+          >
+            · updated {freshness}
+          </span>
+        )}
         <span className="ml-auto text-[11px] text-text-muted tabular-nums">
           {labels.remaining(fmt(remaining), pct, fmt(steadyRecurringTokens))}
         </span>
       </div>
 
+      {/* KPI tiles */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 px-3 pt-3">
+        <Kpi label={labels.steadyMonth} value={`~${fmt(steadyRecurringTokens)}`} />
+        <Kpi
+          label={labels.firstMonth}
+          value={`~${fmt(firstMonthRealisticTokens)}`}
+          valueClass="text-emerald-500"
+        />
+        <Kpi label={labels.usedThisMonth} value={fmt(usedThisMonth)} valueClass="text-text-muted" />
+      </div>
+
       {/* Stacked bar — pool-deduped; segments sum to steadyRecurringTokens */}
       {barSegments.length > 0 && (
-        <div className="px-3 pt-2">
+        <div className="px-3 pt-3">
           <div className="flex h-3 rounded-sm overflow-hidden w-full" data-testid="budget-bar">
             {barSegments.map((seg) => {
               const width =
@@ -227,64 +410,153 @@ export function FreeBudgetView({ data }: { data: FreeBudgetData }) {
                   key={seg.key}
                   title={`${seg.label}: ${fmt(seg.tokens)}`}
                   data-testid="bar-segment"
-                  style={{
-                    flexBasis: `${width}%`,
-                    background: seg.color,
-                    minWidth: "2px",
-                  }}
+                  style={{ flexBasis: `${width}%`, background: seg.color, minWidth: "2px" }}
                 />
               );
             })}
           </div>
+          <p className="mt-1 text-[10.5px] text-text-muted">{labels.segmentHint}</p>
         </div>
       )}
 
-      {/* First-month callout */}
-      <div className="px-3 py-2 text-[11px] text-text-muted tabular-nums">
-        Up to <span className="font-semibold text-text-main">{fmt(firstMonthRealisticTokens)}</span>{" "}
-        in your first month with signup credits
-      </div>
+      {/* "No API key required" — highlighted overview of keyless providers */}
+      {keylessProviders.length > 0 && (
+        <div
+          data-testid="keyless-section"
+          className="mx-3 mt-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2"
+        >
+          <div className="flex items-center gap-1.5">
+            <span className="material-symbols-outlined text-[14px] text-emerald-500">
+              lock_open
+            </span>
+            <span className="text-[11px] font-semibold text-emerald-500">
+              {labels.noApiKey}
+            </span>
+            <span className="text-[10.5px] text-text-muted">
+              ({keylessModels.length}个模型 · {keylessProviders.length}个提供者)
+            </span>
+          </div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {keylessProviders.map((p) => (
+              <span
+                key={p}
+                className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10.5px] text-text-muted tabular-nums"
+                style={{ borderColor: providerColor.get(p) ?? "var(--border)" }}
+              >
+                {p}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Boost + uncapped callouts */}
+      {boostMonthlyTokens > 0 && (
+        <div className="mx-3 mt-2 flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5">
+          <span className="material-symbols-outlined text-[14px] text-emerald-500">bolt</span>
+          <span className="text-[11px] text-emerald-500">
+            {labels.boost(fmt(boostMonthlyTokens))}
+          </span>
+        </div>
+      )}
+      {uncappedProviders.length > 0 && (
+        <div className="mx-3 mt-2 rounded-md border border-border bg-black/[0.015] dark:bg-white/[0.015] px-3 py-2">
+          <span className="text-[11px] text-text-muted">{labels.uncapped}</span>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {uncappedProviders.map((p) => (
+              <span
+                key={p}
+                className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-[10.5px] text-text-muted tabular-nums"
+                style={{ borderColor: providerColor.get(p) ?? "var(--border)" }}
+              >
+                {p}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ToS-restricted callout */}
       {avoidModels.length > 0 && (
-        <div className="mx-3 mb-2 flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5">
+        <div className="mx-3 mt-2 flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5">
           <span className="material-symbols-outlined text-[14px] text-text-muted">warning</span>
           <span className="text-[11px] text-amber-400">
-            {avoidModels.length} model
-            {avoidModels.length !== 1 ? "s" : ""} flagged as ToS-restricted
+            {labels.tosRestricted(avoidModels.length)}
           </span>
         </div>
       )}
 
-      {/* Per-model legend grid — filtered to non-zero entries; colors match bar */}
-      <div className="px-3 pb-3">
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-x-4 gap-y-0.5 mt-1">
-          {legendModels.map((m) => {
-            const swatchColor = legendColorMap.get(m.modelId) ?? BAR_HUES[0];
-            return (
-              <div
-                key={m.modelId}
-                className="flex items-center gap-1.5 px-0 py-1 hover:bg-black/[0.02] dark:hover:bg-white/[0.02] rounded"
-                title={`${m.provider} · ${m.freeType}${m.tos === "avoid" ? " · ⚠ ToS-restricted" : m.tos === "caution" ? " · ⚡ caution" : ""}`}
-              >
-                <span
-                  className="inline-block w-2 h-2 rounded-sm flex-shrink-0"
-                  style={{ background: swatchColor }}
-                />
-                <span className="text-[11px] text-text-muted tabular-nums truncate">
-                  {m.displayName}
-                </span>
-                <span className="text-[11px] text-text-muted tabular-nums ml-auto">
-                  {m.monthlyTokens >= 1e6 ? fmt(m.monthlyTokens) : m.monthlyTokens.toLocaleString()}
-                </span>
-                {m.tos === "avoid" && (
-                  <span className="material-symbols-outlined text-[11px] text-amber-400">
-                    warning
-                  </span>
-                )}
-              </div>
-            );
-          })}
+      {/* Per-model table */}
+      <div className="px-3 pb-3 pt-2">
+        <div className="overflow-x-auto">
+          <table className="w-full text-[11px]" data-testid="budget-table">
+            <thead>
+              <tr className="text-text-muted text-left border-b border-border">
+                <th className="font-medium py-1 pr-2">{labels.provider}</th>
+                <th className="font-medium py-1 pr-2">{labels.model}</th>
+                <th className="font-medium py-1 pr-2">{labels.type}</th>
+                <th className="font-medium py-1 pr-2 text-right">{labels.tokensMonth}</th>
+                <th className="font-medium py-1 pr-1 text-center">ToS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="py-3 text-center text-text-muted">
+                    No models match the current filters.
+                  </td>
+                </tr>
+              )}
+              {rows.map((m) => {
+                const badge = tosBadge(m.tos, labels);
+                const amount =
+                  m.monthlyTokens > 0
+                    ? fmt(m.monthlyTokens)
+                    : m.creditTokens > 0
+                      ? labels.credit(fmt(m.creditTokens))
+                      : "—";
+                return (
+                  <tr
+                    key={`${m.provider}:${m.modelId}`}
+                    className="border-b border-border/40 hover:bg-black/[0.02] dark:hover:bg-white/[0.02]"
+                  >
+                    <td className="py-1 pr-2">
+                      <span className="inline-flex items-center gap-1.5">
+                        <span
+                          className="inline-block w-2 h-2 rounded-sm flex-shrink-0"
+                          style={{ background: providerColor.get(m.provider) ?? BAR_HUES[0] }}
+                        />
+                        <span className="text-text-muted">{m.provider}</span>
+                      </span>
+                    </td>
+                    <td
+                      className="py-1 pr-2 text-text-main truncate max-w-[180px]"
+                      title={m.modelId}
+                    >
+                      {m.displayName}
+                    </td>
+                    <td className="py-1 pr-2">
+                      <FreeTypeBadge
+                        freeType={m.freeType}
+                        label={labels.freeTypes[m.freeType] ?? m.freeType}
+                      />
+                    </td>
+                    <td className="py-1 pr-2 text-right text-text-main tabular-nums">{amount}</td>
+                    <td className="py-1 pr-1 text-center">
+                      {badge && (
+                        <span
+                          className={`material-symbols-outlined text-[13px] ${badge.cls}`}
+                          title={badge.title}
+                        >
+                          {badge.icon}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -292,12 +564,17 @@ export function FreeBudgetView({ data }: { data: FreeBudgetData }) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Fetch wrapper (client component)
+// Fetch + interactivity wrapper (client component)
 // ────────────────────────────────────────────────────────────────────────────
 
 export default function FreeBudgetCard() {
   const t = useTranslations("freeBudget");
   const [data, setData] = useState<FreeBudgetData | null>(null);
+  const [sort, setSort] = useState<FreeBudgetSort>("tokens");
+  const [hideAvoid, setHideAvoid] = useState(false);
+  const [search, setSearch] = useState("");
+  const [providerFilter, setProviderFilter] = useState("all");
+  const [keylessOnly, setKeylessOnly] = useState(false);
 
   useEffect(() => {
     fetch("/api/free-tier/summary")
@@ -317,5 +594,104 @@ export default function FreeBudgetCard() {
 
   if (!data) return null;
 
-  return <FreeBudgetView data={data} />;
+  return (
+    <div className="flex flex-col gap-2">
+      {/* Controls */}
+      <div className="flex flex-wrap items-center gap-2 px-1 text-[11px] text-text-muted">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search model, provider…"
+          aria-label="Search free models"
+          data-testid="budget-search-input"
+          className="rounded border border-border bg-surface px-2 py-1 text-[11px] text-text-main placeholder:text-text-muted min-w-[160px]"
+        />
+        <select
+          value={providerFilter}
+          onChange={(e) => setProviderFilter(e.target.value)}
+          aria-label="Filter by provider"
+          data-testid="budget-provider-select"
+          className="rounded border border-border bg-surface px-1.5 py-1 text-[11px] text-text-main"
+        >
+          <option value="all">{t("allProviders")}</option>
+          {providers.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+        <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={keylessOnly}
+            onChange={(e) => setKeylessOnly(e.target.checked)}
+            className="accent-emerald-500"
+            data-testid="budget-keyless-toggle"
+          />
+          Keyless only
+        </label>
+        <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={hideAvoid}
+            onChange={(e) => setHideAvoid(e.target.checked)}
+            className="accent-indigo-500"
+          />
+          {t("hideTosRestricted")}
+        </label>
+        <span className="ml-auto inline-flex items-center gap-1.5">
+          {t("sort")}
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as FreeBudgetSort)}
+            className="rounded border border-border bg-surface px-1.5 py-0.5 text-[11px] text-text-main"
+          >
+            <option value="tokens">{t("tokensMonth")}</option>
+            <option value="provider">{t("provider")}</option>
+            <option value="name">{t("modelName")}</option>
+          </select>
+        </span>
+      </div>
+      <FreeBudgetView
+        data={data}
+        sort={sort}
+        hideAvoid={hideAvoid}
+        search={search}
+        providerFilter={providerFilter}
+        keylessOnly={keylessOnly}
+        labels={{
+          title: t("title"),
+          remaining: (remaining, percent, total) => t("remaining", { remaining, percent, total }),
+          steadyMonth: t("steadyMonth"),
+          firstMonth: t("firstMonth"),
+          usedThisMonth: t("usedThisMonth"),
+          segmentHint: t("segmentHint"),
+          boost: (tokens) => t("boost", { tokens }),
+          uncapped: t("uncapped"),
+          tosRestricted: (count) => t("tosRestricted", { count }),
+          provider: t("provider"),
+          model: t("model"),
+          type: t("type"),
+          tokensMonth: t("tokensMonth"),
+          credit: (tokens) => t("credit", { tokens }),
+          noApiKey: t("noApiKeyRequired"),
+          freeTypes: {
+            "recurring-daily": t("freeType.daily"),
+            "recurring-monthly": t("freeType.monthly"),
+            "recurring-credit": t("freeType.creditMonthly"),
+            "recurring-uncapped": t("freeType.uncapped"),
+            "one-time-initial": t("freeType.signupCredit"),
+            keyless: t("freeType.keyless"),
+            discontinued: t("freeType.discontinued"),
+          },
+          tosTitles: {
+            avoid: t("tosTitle.avoid"),
+            caution: t("tosTitle.caution"),
+            ok: t("tosTitle.ok"),
+          },
+        }}
+      />
+    </div>
+  );
 }

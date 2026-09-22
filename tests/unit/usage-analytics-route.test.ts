@@ -22,7 +22,7 @@ const EXPECTED_TOTAL_COST = 0.020925;
 async function resetStorage() {
   core.resetDbInstance();
   apiKeysDb.resetApiKeyState();
-  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
   clearPendingRequests();
 }
@@ -76,7 +76,7 @@ test.beforeEach(async () => {
 test.after(() => {
   core.resetDbInstance();
   apiKeysDb.resetApiKeyState();
-  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 
   if (ORIGINAL_API_KEY_SECRET === undefined) {
     delete process.env.API_KEY_SECRET;
@@ -333,7 +333,7 @@ test("GET /api/usage/analytics includes image generation call log costs", async 
   assert.equal(response.status, 200);
   assert.equal(body.summary.totalRequests, 1);
   assertClose(body.summary.totalCost, 0.08);
-  assert.equal(body.byProvider[0].provider, "chatgpt-web");
+  assert.equal(body.byProvider[0].provider, "ChatGPT Web (Plus/Pro)");
   assertClose(body.byProvider[0].cost, 0.08);
   assert.equal(body.byModel[0].model, "gpt-5.5-pro");
   assertClose(body.byModel[0].cost, 0.08);

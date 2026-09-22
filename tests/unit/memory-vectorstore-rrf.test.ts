@@ -50,7 +50,7 @@ function cleanup() {
   _resetVectorStoreSingleton();
   core.resetDbInstance();
   if (fs.existsSync(TEST_DATA_DIR)) {
-    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
 }
@@ -62,7 +62,7 @@ test.afterEach(() => {
 test.after(() => {
   core.resetDbInstance();
   if (fs.existsSync(TEST_DATA_DIR)) {
-    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -96,8 +96,7 @@ function insertMemoryWithFts(
   // If the trigger didn't fire (e.g. test DB without triggers), manually sync FTS.
   try {
     const row = db.prepare("SELECT rowid, memory_id FROM memories WHERE id = ?").get(id) as
-      | { rowid: number; memory_id: number | null }
-      | undefined;
+      { rowid: number; memory_id: number | null } | undefined;
     if (row) {
       const ftsRowid = row.memory_id ?? row.rowid;
       const ftsCount = db

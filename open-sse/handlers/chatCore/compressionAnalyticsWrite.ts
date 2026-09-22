@@ -10,7 +10,7 @@
  * stays under the complexity cap.
  */
 
-import { type CompressionStats } from "../../services/compression/stats.ts";
+import { type CompressionStats } from "../../services/compression/types.ts";
 
 type LoggerLike =
   | {
@@ -138,7 +138,6 @@ export function writeCompressionAnalytics(
     try {
       const { insertCompressionAnalyticsRow, insertCompressionEngineBreakdown } =
         await import("@/lib/db/compressionAnalytics");
-      const { calculateCost } = await import("@/lib/usage/costCalculator");
       const { stats } = opts;
       const tokensSaved = Math.max(0, stats.originalTokens - stats.compressedTokens);
       const rtkPointers = (stats.rtkRawOutputPointers ?? []) as RtkPointer[];
@@ -158,9 +157,6 @@ export function writeCompressionAnalytics(
           "Compression cost estimate skipped: " + (err instanceof Error ? err.message : String(err))
         );
       }
-      insertCompressionAnalyticsRow(
-        buildAnalyticsRow(opts, tokensSaved, rtkPointers, estimatedUsdSaved)
-      );
       insertCompressionAnalyticsRow(
         buildAnalyticsRow(opts, tokensSaved, rtkPointers, estimatedUsdSaved)
       );

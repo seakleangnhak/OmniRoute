@@ -13,6 +13,7 @@ import { join } from "node:path";
 import os from "node:os";
 import { printHeading, printInfo, printSuccess, printError, createPrompt } from "../io.mjs";
 import { resolveActiveContext } from "../contexts.mjs";
+import { guardHostConfigTarget } from "../utils/config-home-guard.mjs";
 
 function stripToRoot(url) {
   const s = String(url || "").replace(/\/+$/, "");
@@ -93,6 +94,14 @@ export async function runSetupAiderCommand(opts = {}) {
   const configPath =
     opts.configPath ?? opts["config-path"] ?? join(os.homedir(), ".aider.conf.yml");
 
+  const guard = await guardHostConfigTarget(configPath, {
+    toolLabel: "Aider",
+    hostCommand: "omniroute setup-aider",
+    allowContainerWrite: Boolean(opts.allowContainerWrite ?? opts["allow-container-write"]),
+    dryRun,
+  });
+  if (guard !== 0) return guard;
+
   printHeading("OmniRoute → Aider (openai-compatible via LiteLLM)");
   printInfo(`OPENAI_API_BASE: ${apiBase}   (no /v1 — LiteLLM appends it)`);
 
@@ -144,6 +153,10 @@ export function registerSetupAider(program) {
     .option("--config-path <path>", ".aider.conf.yml path (default: ~/.aider.conf.yml)")
     .option("--yes", "Non-interactive: do not prompt (requires --model)")
     .option("--dry-run", "Print what would be written without touching the filesystem")
+    .option(
+      "--allow-container-write",
+      "Write even when the target is inside a container and not mounted from the host"
+    )
     .action(async (opts) => {
       const code = await runSetupAiderCommand(opts);
       if (code !== 0) process.exit(code);

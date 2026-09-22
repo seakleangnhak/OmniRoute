@@ -57,6 +57,7 @@ export default function SearchTab({
   catalogProviders,
   onMetrics,
 }: SearchTabProps) {
+  const t = useTranslations("search");
   const [response, setResponse] = useState<SearchResponse | null>(null);
   const [rawJson, setRawJson] = useState("");
   const [loading, setLoading] = useState(false);

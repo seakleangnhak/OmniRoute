@@ -15,16 +15,20 @@ const core = await import("../../src/lib/db/core.ts");
 const dbPlugins = await import("../../src/lib/db/plugins.ts");
 const { scanPluginDir } = await import("../../src/lib/plugins/scanner.ts");
 const { pluginManager } = await import("../../src/lib/plugins/manager.ts");
-const { registerHook, unregisterHooks, emitHook, emitHookBlocking, resetHooks, getHooks } =
-  await import("../../src/lib/plugins/hooks.ts");
+const {
+  registerHook,
+  unregisterHooks,
+  emitHook,
+  emitHookBlocking,
+  resetHooks,
+  getHooks,
+} = await import("../../src/lib/plugins/hooks.ts");
 
 const activeSourceDirs: string[] = [];
 
 function cleanupSourceDirs() {
   for (const dir of activeSourceDirs) {
-    try {
-      fs.rmSync(dir, { recursive: true, force: true });
-    } catch {}
+    try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch {}
   }
   activeSourceDirs.length = 0;
 }
@@ -61,14 +65,10 @@ function writeTestPlugin(opts: {
   let indexJs = opts.indexJs;
   if (!indexJs) {
     const handlers: string[] = [];
-    if (opts.onRequest)
-      handlers.push(
-        `onRequest: function(ctx) { ctx.metadata = ctx.metadata || {}; ctx.metadata.hookCalled = true; }`
-      );
+    if (opts.onRequest) handlers.push(`onRequest: function(ctx) { ctx.metadata = ctx.metadata || {}; ctx.metadata.hookCalled = true; }`);
     if (opts.onResponse) handlers.push(`onResponse: function(ctx, resp) { return resp; }`);
     if (opts.onError) handlers.push(`onError: function(ctx, err) {}`);
-    indexJs =
-      handlers.length > 0 ? `module.exports = { ${handlers.join(", ")} };` : `module.exports = {};`;
+    indexJs = handlers.length > 0 ? `module.exports = { ${handlers.join(", ")} };` : `module.exports = {};`;
   }
   fs.writeFileSync(path.join(pluginDir, "index.js"), indexJs);
 
@@ -94,7 +94,7 @@ test.beforeEach(() => {
     // Production DB may not have the plugins table — ignore; fresh DB created below.
   }
   resetHooks();
-  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
   cleanupSourceDirs();
 });
@@ -102,9 +102,7 @@ test.beforeEach(() => {
 test.after(() => {
   core.resetDbInstance();
   cleanupSourceDirs();
-  try {
-    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
-  } catch {}
+  try { fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch {}
 });
 
 // ══════════════════════════════════════════
@@ -143,9 +141,7 @@ test("scanner: invalid JSON manifest reports error", async () => {
   const result = await scanPluginDir(badDir);
   assert.equal(result.plugins.length, 0);
   assert.equal(result.errors.length, 1);
-  assert.ok(
-    result.errors[0].error.includes("invalid manifest") || result.errors[0].error.includes("JSON")
-  );
+  assert.ok(result.errors[0].error.includes("invalid manifest") || result.errors[0].error.includes("JSON"));
 });
 
 test("scanner: missing required fields reports error", async () => {
@@ -196,9 +192,7 @@ test("manager: install with null bytes in path throws", async () => {
     () => pluginManager.install("/tmp/test\0malicious"),
     (err: Error) => {
       assert.ok(
-        err.message.includes("Invalid") ||
-          err.message.includes("null") ||
-          err.message.includes("No valid plugin found"),
+        err.message.includes("Invalid") || err.message.includes("null") || err.message.includes("No valid plugin found"),
         `Unexpected error: ${err.message}`
       );
       return true;
@@ -210,7 +204,10 @@ test("manager: double install same plugin throws", async () => {
   const { sourceDir, name } = writeTestPlugin({ name: "double-install" });
 
   await pluginManager.install(sourceDir);
-  await assert.rejects(() => pluginManager.install(sourceDir), /already installed/);
+  await assert.rejects(
+    () => pluginManager.install(sourceDir),
+    /already installed/
+  );
 
   await pluginManager.uninstall(name);
 });
@@ -259,10 +256,7 @@ test("manager: activate registers hooks from manifest", async () => {
 
   assert.ok(getHooks("onRequest").find((r) => r.pluginName === name));
   assert.ok(getHooks("onResponse").find((r) => r.pluginName === name));
-  assert.equal(
-    getHooks("onError").find((r) => r.pluginName === name),
-    undefined
-  );
+  assert.equal(getHooks("onError").find((r) => r.pluginName === name), undefined);
 
   await pluginManager.uninstall(name);
 });
@@ -284,18 +278,9 @@ test("manager: deactivate unregisters all hooks", async () => {
 
   await pluginManager.deactivate(name);
 
-  assert.equal(
-    getHooks("onRequest").find((r) => r.pluginName === name),
-    undefined
-  );
-  assert.equal(
-    getHooks("onResponse").find((r) => r.pluginName === name),
-    undefined
-  );
-  assert.equal(
-    getHooks("onError").find((r) => r.pluginName === name),
-    undefined
-  );
+  assert.equal(getHooks("onRequest").find((r) => r.pluginName === name), undefined);
+  assert.equal(getHooks("onResponse").find((r) => r.pluginName === name), undefined);
+  assert.equal(getHooks("onError").find((r) => r.pluginName === name), undefined);
 
   await pluginManager.uninstall(name);
 });
@@ -312,30 +297,9 @@ test("hooks: emitHookBlocking with no handlers returns empty body", async () => 
 
 test("hooks: multiple plugins on same event fire in priority order", async () => {
   const order: string[] = [];
-  registerHook(
-    "onRequest",
-    "low",
-    () => {
-      order.push("low");
-    },
-    200
-  );
-  registerHook(
-    "onRequest",
-    "high",
-    () => {
-      order.push("high");
-    },
-    10
-  );
-  registerHook(
-    "onRequest",
-    "mid",
-    () => {
-      order.push("mid");
-    },
-    100
-  );
+  registerHook("onRequest", "low", () => { order.push("low"); }, 200);
+  registerHook("onRequest", "high", () => { order.push("high"); }, 10);
+  registerHook("onRequest", "mid", () => { order.push("mid"); }, 100);
 
   await emitHookBlocking("onRequest", { body: {}, metadata: {} });
   assert.deepEqual(order, ["high", "mid", "low"]);
@@ -348,9 +312,7 @@ test("hooks: handler that returns undefined does not modify payload", async () =
 });
 
 test("hooks: handler error in emitHookBlocking stops chain", async () => {
-  registerHook("onRequest", "bad", () => {
-    throw new Error("handler error");
-  });
+  registerHook("onRequest", "bad", () => { throw new Error("handler error"); });
   registerHook("onRequest", "good", () => ({ metadata: { from: "good" } }));
 
   // emitHookBlocking should handle the error gracefully
@@ -421,22 +383,8 @@ test("db: updatePluginConfig replaces existing config", () => {
 });
 
 test("db: listPlugins with no status returns all", () => {
-  dbPlugins.insertPlugin({
-    id: "p1",
-    name: "alpha",
-    version: "1.0.0",
-    main: "index.js",
-    pluginDir: "/tmp/a",
-    manifest: {},
-  });
-  dbPlugins.insertPlugin({
-    id: "p2",
-    name: "beta",
-    version: "1.0.0",
-    main: "index.js",
-    pluginDir: "/tmp/b",
-    manifest: {},
-  });
+  dbPlugins.insertPlugin({ id: "p1", name: "alpha", version: "1.0.0", main: "index.js", pluginDir: "/tmp/a", manifest: {} });
+  dbPlugins.insertPlugin({ id: "p2", name: "beta", version: "1.0.0", main: "index.js", pluginDir: "/tmp/b", manifest: {} });
 
   const all = dbPlugins.listPlugins();
   assert.equal(all.length, 2);
@@ -446,22 +394,8 @@ test("db: listPlugins with no status returns all", () => {
 });
 
 test("db: listPlugins with status filters correctly", () => {
-  dbPlugins.insertPlugin({
-    id: "f1",
-    name: "installed-filter",
-    version: "1.0.0",
-    main: "index.js",
-    pluginDir: "/tmp/f1",
-    manifest: {},
-  });
-  dbPlugins.insertPlugin({
-    id: "f2",
-    name: "active-filter",
-    version: "1.0.0",
-    main: "index.js",
-    pluginDir: "/tmp/f2",
-    manifest: {},
-  });
+  dbPlugins.insertPlugin({ id: "f1", name: "installed-filter", version: "1.0.0", main: "index.js", pluginDir: "/tmp/f1", manifest: {} });
+  dbPlugins.insertPlugin({ id: "f2", name: "active-filter", version: "1.0.0", main: "index.js", pluginDir: "/tmp/f2", manifest: {} });
   dbPlugins.updatePluginStatus("active-filter", "active");
 
   const installed = dbPlugins.listPlugins("installed");
@@ -474,28 +408,14 @@ test("db: listPlugins with status filters correctly", () => {
 });
 
 test("db: pluginExists returns true/false correctly", () => {
-  dbPlugins.insertPlugin({
-    id: "exists-test",
-    name: "exists-test",
-    version: "1.0.0",
-    main: "index.js",
-    pluginDir: "/tmp/e",
-    manifest: {},
-  });
+  dbPlugins.insertPlugin({ id: "exists-test", name: "exists-test", version: "1.0.0", main: "index.js", pluginDir: "/tmp/e", manifest: {} });
 
   assert.equal(dbPlugins.pluginExists("exists-test"), true);
   assert.equal(dbPlugins.pluginExists("nope"), false);
 });
 
 test("db: deletePlugin returns true when plugin exists, false when not", () => {
-  dbPlugins.insertPlugin({
-    id: "del-test",
-    name: "del-test",
-    version: "1.0.0",
-    main: "index.js",
-    pluginDir: "/tmp/d",
-    manifest: {},
-  });
+  dbPlugins.insertPlugin({ id: "del-test", name: "del-test", version: "1.0.0", main: "index.js", pluginDir: "/tmp/d", manifest: {} });
 
   assert.equal(dbPlugins.deletePlugin("del-test"), true);
   assert.equal(dbPlugins.deletePlugin("del-test"), false);

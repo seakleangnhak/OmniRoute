@@ -417,8 +417,8 @@ export default function CompressionPanel() {
               className="flex items-center justify-between gap-2"
             >
               <div className="min-w-0">
-                <p className="text-sm text-text-main">{meta.label}</p>
-                {meta.description && <p className="text-xs text-text-muted">{meta.description}</p>}
+                <p className="text-sm text-text-main">{styleLabel}</p>
+                {meta.description && <p className="text-xs text-text-muted">{styleDescription}</p>}
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <select

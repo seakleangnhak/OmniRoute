@@ -39,22 +39,22 @@ npm run test:all
 
 ## 项目概览
 
-**OmniRoute** — 统一的 AI 代理/路由。一个端点接入 236 家 LLM 服务商，自动容灾。
+**OmniRoute** — 统一的 AI 代理/路由。一个端点接入 329 个服务商目录项，并在上游可用时自动回退。
 
-| 层级       | 位置                    | 用途                                                                                                                                                   |
-| ---------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| API 路由   | `src/app/api/v1/`       | Next.js App Router — 入口点                                                                                                                            |
-| 处理器     | `open-sse/handlers/`    | 请求处理（对话、嵌入等）                                                                                                                               |
-| 执行器     | `open-sse/executors/`   | 服务商特定的 HTTP 分发                                                                                                                                 |
-| 翻译器     | `open-sse/translator/`  | 格式转换（OpenAI↔Claude↔Gemini）                                                                                                                       |
-| 转换器     | `open-sse/transformer/` | Responses API ↔ Chat Completions                                                                                                                       |
-| 服务       | `open-sse/services/`    | Combo 路由、速率限制、缓存等                                                                                                                           |
-| 数据库     | `src/lib/db/`           | SQLite 领域模块（94 个文件，106 个迁移）                                                                                                               |
-| 领域/策略  | `src/domain/`           | 策略引擎、成本规则、容灾逻辑                                                                                                                           |
-| MCP 服务器 | `open-sse/mcp-server/`  | 94 个工具（34 个基础 + memory/skill/agentSkill/pool/notion/obsidian/gamification/plugin 模块），3 种传输（stdio / SSE / Streamable HTTP），30 个权限域 |
-| A2A 服务器 | `src/lib/a2a/`          | JSON-RPC 2.0 代理协议                                                                                                                                  |
-| 技能       | `src/lib/skills/`       | 可扩展技能框架                                                                                                                                         |
-| 记忆       | `src/lib/memory/`       | 持久化对话记忆                                                                                                                                         |
+| 层级       | 位置                    | 用途                                                                      |
+| ---------- | ----------------------- | ------------------------------------------------------------------------- |
+| API 路由   | `src/app/api/v1/`       | Next.js App Router — 入口点                                               |
+| 处理器     | `open-sse/handlers/`    | 请求处理（对话、嵌入等）                                                  |
+| 执行器     | `open-sse/executors/`   | 服务商特定的 HTTP 分发                                                    |
+| 翻译器     | `open-sse/translator/`  | 格式转换（OpenAI↔Claude↔Gemini）                                          |
+| 转换器     | `open-sse/transformer/` | Responses API ↔ Chat Completions                                          |
+| 服务       | `open-sse/services/`    | Combo 路由、速率限制、缓存等                                              |
+| 数据库     | `src/lib/db/`           | 110 top-level SQLite domain modules, 130 migrations                       |
+| 领域/策略  | `src/domain/`           | 策略引擎、成本规则、容灾逻辑                                              |
+| MCP 服务器 | `open-sse/mcp-server/`  | 107 unique tools, 3 transports (stdio / SSE / Streamable HTTP), 32 scopes |
+| A2A 服务器 | `src/lib/a2a/`          | JSON-RPC 2.0 代理协议                                                     |
+| 技能       | `src/lib/skills/`       | 可扩展技能框架                                                            |
+| 记忆       | `src/lib/memory/`       | 持久化对话记忆                                                            |
 
 Monorepo：`src/`（Next.js 16 应用）、`open-sse/`（流式引擎 workspace）、`electron/`（桌面应用）、`tests/`、`bin/`（CLI 入口点）。
 
@@ -76,7 +76,7 @@ Client → /v1/chat/completions (Next.js 路由)
 
 API 路由遵循一致的模式：`路由 → CORS 预检 → Zod 请求体校验 → 可选鉴权（extractApiKey/isValidApiKey）→ API Key 策略执行 → 处理器委派（open-sse）`。没有全局 Next.js 中间件 — 拦截在路由级别进行。
 
-**Combo 路由** (`open-sse/services/combo.ts`)：17 种策略（priority、weighted、fill-first、round-robin、P2C、random、least-used、cost-optimized、reset-aware、reset-window、headroom、strict-random、auto、lkgp、context-optimized、context-relay、fusion）。每个目标调用 `handleSingleModel()`，该函数封装了 `handleChatCore()` 并附带逐目标的错误处理和熔断器检查。`fusion` 策略是一个例外：它并行扇出到一组模型面板，然后由裁判模型综合出一个最终答案 (`open-sse/services/fusion.ts`)。关于 12 因子 Auto-Combo 评分及完整策略表，见 `docs/routing/AUTO-COMBO.md`；关于 3 层容灾机制，见 `docs/architecture/RESILIENCE_GUIDE.md`。
+**Combo 路由** (`open-sse/services/combo.ts`)：19 种公开策略（priority、weighted、fill-first、round-robin、P2C、random、least-used、cost-optimized、reset-aware、reset-window、headroom、strict-random、auto、lkgp、context-optimized、cache-optimized、context-relay、fusion、pipeline）。每个目标调用 `handleSingleModel()`，该函数封装了 `handleChatCore()` 并附带逐目标的错误处理和熔断器检查。`fusion` 策略是一个例外：它并行扇出到一组模型面板，然后由裁判模型综合出一个最终答案 (`open-sse/services/fusion.ts`)。关于 13 因子 Auto-Combo 评分及完整策略表，见 `docs/routing/AUTO-COMBO.md`；关于 3 层容灾机制，见 `docs/architecture/RESILIENCE_GUIDE.md`。
 
 ---
 
@@ -309,7 +309,7 @@ baseCooldownMs * 2 ** failureIndex;
 | 仓库导航                               | `docs/architecture/REPOSITORY_MAP.md`                   |
 | 架构                                   | `docs/architecture/ARCHITECTURE.md`                     |
 | 工程参考                               | `docs/architecture/CODEBASE_DOCUMENTATION.md`           |
-| Auto-Combo（12 因子评分，17 种策略）   | `docs/routing/AUTO-COMBO.md`                            |
+| Auto-Combo（13 因子评分，19 种公开策略） | `docs/routing/AUTO-COMBO.md`                          |
 | 容灾（3 种机制）                       | `docs/architecture/RESILIENCE_GUIDE.md`                 |
 | 推理重播                               | `docs/routing/REASONING_REPLAY.md`                      |
 | 技能框架                               | `docs/frameworks/SKILLS.md`                             |
@@ -415,9 +415,17 @@ git push -u origin feat/your-feature
    git fetch origin "$BASE_BRANCH"
    git worktree add ".claude/worktrees/${TASK##*/}" -b "$TASK" "origin/$BASE_BRANCH"
    cd ".claude/worktrees/${TASK##*/}"
-   # 从主工作区符号链接 node_modules，省去每个 worktree 的 npm install：
-   ln -s "$(git -C <main_checkout> rev-parse --show-toplevel)/node_modules" node_modules
+   # 复用主工作区的 node_modules，省去每个 worktree 的 npm install。
+   # 必须用硬链接（`cp -al`），绝不能用符号链接：整棵树约 5 秒，几乎不占额外磁盘
+   # （inode 是共享的），而且与符号链接不同，它不会破坏开发服务器。
+   cp -al "$(git -C <main_checkout> rev-parse --show-toplevel)/node_modules" node_modules
    ```
+
+   **绝不要对 node_modules 使用 `ln -s`。** Turbopack 会拒绝解析到项目根目录之外的符号链接，
+   因此 `npm run dev` 会以 FATAL panic 崩溃（`Symlink [project]/node_modules is invalid, it
+   points out of the filesystem root`），而 typecheck、lint 和测试运行器却都照常通过 —— 错误信息
+   提到的是 "filesystem root" 而不是 worktree，看起来像 Next/构建的 bug，排查会浪费大量时间
+   （事故 2026-07-31，#9043）。
 
    在 Claude Code 中优先使用原生的 `EnterWorktree` 工具（它已经在 `.claude/worktrees/` 下创建 worktree）：先用上述命令创建 worktree，然后用其 `path` 调用 `EnterWorktree`。
 
@@ -430,7 +438,8 @@ git push -u origin feat/your-feature
 
 ## 环境
 
-- **运行时**：Node.js ≥22.0.0 <23 || ≥24.0.0 <27，ES Modules
+- **运行时**：Node.js ≥22.0.0 <23 |
+  | ≥24.0.0 <27，ES Modules
 - **TypeScript**：6.0+，目标 ES2022，模块 esnext，解析策略 bundler
 - **路径别名**：`@/*` → `src/`，`@omniroute/open-sse` → `open-sse/`，`@omniroute/open-sse/*` → `open-sse/*`
 - **默认端口**：20128（API + 仪表盘在同一端口）

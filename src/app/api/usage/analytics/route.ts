@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getProviderById } from "@/shared/constants/providers";
+export const dynamic = "force-dynamic";
 import { requireManagementAuth } from "@/lib/api/requireManagementAuth";
 import { getApiKeys } from "@/lib/db/apiKeys";
 import { getUserDatabaseSettings } from "@/lib/db/databaseSettings";
@@ -21,7 +21,14 @@ import {
   getWeeklyPatternRows,
   getPresetCostModelRows,
 } from "@/lib/db/usageAnalytics";
-import { getFallbackStats, getImageCostRows, getImageCostTotal } from "@/lib/db/callLogStats";
+import {
+  getFallbackStats,
+  getImageCostRows,
+  getImageCostTotal,
+  getErrorTypeBreakdown,
+} from "@/lib/db/callLogStats";
+import { buildByProviderRows } from "@/lib/usage/providerDisplayNames";
+import { toNumber } from "@/shared/utils/numeric";
 
 function getRangeStartIso(range: string): string | null {
   const end = new Date();
@@ -214,7 +221,12 @@ function resolveModelPricing(
     }
   }
 
-  // Last resort fallback for historical usage (e.g. "gpt-4" missing, matches "gpt-4.1" or first available)
+  // Short-circuit :free models to $0 (they have no pricing entry → should not fall back to arbitrary rates)
+  if (!pricing && model.endsWith(":free")) {
+    return null;
+  }
+
+  // Last resort fallback for historical usage (e.g. "gpt-4" missing, matches "gpt-4.1")
   if (!pricing && providerPricing && typeof providerPricing === "object") {
     for (const [key, val] of Object.entries(providerPricing as Record<string, unknown>)) {
       const lm = model.toLowerCase();
@@ -222,10 +234,6 @@ function resolveModelPricing(
         pricing = val;
         break;
       }
-    }
-    if (!pricing) {
-      const keys = Object.keys(providerPricing as Record<string, unknown>);
-      if (keys.length > 0) pricing = (providerPricing as Record<string, unknown>)[keys[0]];
     }
   }
 
@@ -501,6 +509,7 @@ export async function GET(request: Request) {
     >;
 
     const fallbackRow = getFallbackStats(whereClause, params) as Record<string, unknown>;
+    const errorBreakdown = getErrorTypeBreakdown(whereClause, params);
 
     const imageCostWhereClause = appendWhereCondition(
       whereClause,
@@ -848,7 +857,14 @@ export async function GET(request: Request) {
       existing.cost = roundCost(Number(existing.cost || 0) + Number(row.cost || 0));
       providerMap.set(provider, existing);
     }
-    const byProvider = Array.from(providerMap.values());
+    const mergedProviderRows = Array.from(providerMap.values()).map((row) => ({
+      ...row,
+      successfulRequests: (Number(row.successRatePct || 0) / 100) * Number(row.requests || 0),
+    }));
+    const mergedProviderCosts = new Map(
+      Array.from(providerMap, ([provider, row]) => [provider, Number(row.cost || 0)])
+    );
+    const byProvider = await buildByProviderRows(mergedProviderRows, mergedProviderCosts);
 
     const accountCostByAccount = new Map<string, number>();
     for (const row of accountCostRows) {
@@ -866,6 +882,7 @@ export async function GET(request: Request) {
     const accountMap = new Map<string, Record<string, unknown>>();
     for (const row of accountRows) {
       const account = toStringValue(row.account, "unknown");
+      const accountKey = toStringValue(row.accountKey, account);
       accountMap.set(account, {
         account,
         requests: Number(row.requests),
@@ -874,7 +891,7 @@ export async function GET(request: Request) {
         totalTokens: Number(row.totalTokens),
         avgLatencyMs: Math.round(Number(row.avgLatencyMs)),
         lastUsed: row.lastUsed,
-        cost: roundCost(accountCostByAccount.get(account) || 0),
+        cost: roundCost(accountCostByAccount.get(accountKey) || 0),
       });
     }
     for (const row of imageCostRows) {
@@ -1114,6 +1131,7 @@ export async function GET(request: Request) {
       weeklyCounts,
       dailyByModel,
       modelNames,
+      errorBreakdown,
       range,
     } as any;
 
@@ -1142,9 +1160,7 @@ export async function GET(request: Request) {
           apiKeyParams: apiKeyParamEntries,
         });
 
-        const presetModelRows = getPresetCostModelRows(presetUnifiedSource, presetParams) as Array<
-          Record<string, unknown>
-        >;
+        const presetModelRows = getPresetCostModelRows(pSrc, pParams) as UsageRows;
 
         let presetTotalCost = 0;
         for (const row of presetModelRows) {

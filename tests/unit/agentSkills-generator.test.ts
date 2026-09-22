@@ -30,7 +30,7 @@ function mkTmpDir(): string {
 /** Cleanup a tmp directory. */
 function rmTmpDir(dir: string): void {
   try {
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   } catch {
     // best-effort cleanup
   }
@@ -58,11 +58,12 @@ test("dry-run (default) returns report without writing any files", async () => {
       outputDir: tmpDir,
     });
 
-    // All 45 skills should appear as generated (would-write) since dir is empty
+    // All 46 skills (45 canonical + ponytail external, #9058) should appear as
+    // generated (would-write) since dir is empty
     assert.equal(
       report.generated.length + report.unchanged.length,
-      44,
-      `Expected 44 total (generated+unchanged), got generated=${report.generated.length} unchanged=${report.unchanged.length}`
+      46,
+      `Expected 46 total (generated+unchanged), got generated=${report.generated.length} unchanged=${report.unchanged.length}`
     );
     assert.equal(report.errors.length, 0, `Unexpected errors: ${JSON.stringify(report.errors)}`);
 
@@ -78,7 +79,7 @@ test("dry-run (default) returns report without writing any files", async () => {
   }
 });
 
-test("dry-run generates report with 45 total (generated+unchanged)", async () => {
+test("dry-run generates report with 46 total (generated+unchanged)", async () => {
   const tmpDir = mkTmpDir();
   try {
     refreshCatalog();
@@ -88,7 +89,7 @@ test("dry-run generates report with 45 total (generated+unchanged)", async () =>
       outputDir: tmpDir,
     });
     const total = report.generated.length + report.unchanged.length;
-    assert.equal(total, 45);
+    assert.equal(total, 46);
   } finally {
     rmTmpDir(tmpDir);
   }
@@ -131,7 +132,7 @@ test("apply mode writes SKILL.md with valid frontmatter for omni-providers", asy
   }
 });
 
-test("apply mode writes all 45 SKILL.md files when no onlyIds filter", async () => {
+test("apply mode writes all 46 SKILL.md files when no onlyIds filter", async () => {
   const tmpDir = mkTmpDir();
   try {
     refreshCatalog();
@@ -142,7 +143,7 @@ test("apply mode writes all 45 SKILL.md files when no onlyIds filter", async () 
     });
 
     assert.equal(report.errors.length, 0, `Errors: ${JSON.stringify(report.errors)}`);
-    assert.equal(report.generated.length, 45);
+    assert.equal(report.generated.length, 46);
 
     // Verify all dirs exist
     const catalog = getCatalog();
@@ -196,6 +197,66 @@ test("apply mode writes SKILL.md for an API skill with correct sections", async 
     assert.ok(content.includes("## Authentication"), "Missing Authentication section");
     assert.ok(content.includes("## Endpoints"), "Missing endpoints section");
     assert.ok(content.includes("## Payloads"), "Missing payloads section");
+    assert.ok(content.includes('-d \'{"password":"<management-password>"}\''));
+    assert.ok(content.includes("-c cookie.jar"), "login must save the dashboard session cookie");
+    assert.ok(content.includes("-b cookie.jar"), "auth examples must send the session cookie");
+    assert.ok(content.includes("x-omniroute-csrf"), "mutations must include a CSRF token");
+    const loginExample = content.slice(
+      content.indexOf("### POST /api/auth/login"),
+      content.indexOf("### POST /api/auth/logout")
+    );
+    assert.ok(!loginExample.includes("Authorization: Bearer"));
+    const logoutExample = content.slice(
+      content.indexOf("### POST /api/auth/logout"),
+      content.indexOf("### GET /api/auth/oidc/login")
+    );
+    assert.ok(logoutExample.includes("-b cookie.jar"));
+    assert.ok(logoutExample.includes("x-omniroute-csrf"));
+    assert.ok(!logoutExample.includes("Authorization: Bearer"));
+  } finally {
+    rmTmpDir(tmpDir);
+  }
+});
+
+test("generic API skill GET and mutation examples use standalone Bearer auth", async () => {
+  const tmpDir = mkTmpDir();
+  try {
+    refreshCatalog();
+    const report = await generateAgentSkills({
+      dryRun: false,
+      prune: false,
+      outputDir: tmpDir,
+      onlyIds: ["omni-providers", "omni-settings"],
+    });
+
+    assert.equal(report.errors.length, 0, `Errors: ${JSON.stringify(report.errors)}`);
+    for (const id of ["omni-providers", "omni-settings"]) {
+      const content = fs.readFileSync(path.join(tmpDir, id, "SKILL.md"), "utf-8");
+      assert.ok(content.includes('  -H "Authorization: Bearer $OMNIROUTE_TOKEN"'));
+      assert.ok(!content.includes("cookie.jar"), `${id} must not assume a session cookie`);
+      assert.ok(!content.includes("CSRF_TOKEN"), `${id} must not assume a CSRF token`);
+    }
+
+    const providers = fs.readFileSync(path.join(tmpDir, "omni-providers", "SKILL.md"), "utf-8");
+    const providersGet = providers.slice(
+      providers.indexOf("### GET /api/providers"),
+      providers.indexOf("### POST /api/providers")
+    );
+    const providersPost = providers.slice(
+      providers.indexOf("### POST /api/providers"),
+      providers.indexOf("### GET /api/providers/{id}")
+    );
+    assert.ok(providersGet.includes('  -H "Authorization: Bearer $OMNIROUTE_TOKEN"'));
+    assert.ok(providersPost.includes('  -H "Authorization: Bearer $OMNIROUTE_TOKEN" \\\n'));
+    assert.ok(providersPost.includes('  -H "Content-Type: application/json" \\\n'));
+
+    const settings = fs.readFileSync(path.join(tmpDir, "omni-settings", "SKILL.md"), "utf-8");
+    const settingsPatch = settings.slice(
+      settings.indexOf("### PATCH /api/settings"),
+      settings.indexOf("### POST /api/settings/purge-request-history")
+    );
+    assert.ok(settingsPatch.includes('  -H "Authorization: Bearer $OMNIROUTE_TOKEN" \\\n'));
+    assert.ok(settingsPatch.includes('  -H "Content-Type: application/json" \\\n'));
   } finally {
     rmTmpDir(tmpDir);
   }

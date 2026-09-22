@@ -39,7 +39,7 @@ const REQUIRED_DOC_DIAGRAMS = [
   "docs/diagrams/exported/resilience-3layers.svg",
   "docs/diagrams/exported/authz-pipeline.svg",
   "docs/diagrams/exported/db-schema-overview.svg",
-  "docs/diagrams/exported/mcp-tools-43.svg",
+  "docs/diagrams/exported/mcp-tools-107.svg",
 ];
 
 const REQUIRED_DOC_SCREENSHOTS = [

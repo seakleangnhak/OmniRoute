@@ -45,7 +45,7 @@ export function deepMergeFallback(
         targetValue as Record<string, unknown>,
         sourceValue as Record<string, unknown>
       );
-    } else if (targetValue === undefined) {
+    } else if (targetValue === undefined || isUntranslatedPlaceholder(targetValue)) {
       target[key] = sourceValue;
     }
   }

@@ -43,7 +43,7 @@ const memoryVec = await import("../../src/lib/db/memoryVec.ts");
 function cleanup() {
   core.resetDbInstance();
   if (fs.existsSync(TEST_DATA_DIR)) {
-    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
 }
@@ -54,7 +54,7 @@ test.afterEach(() => {
 
 test.after(() => {
   if (fs.existsSync(TEST_DATA_DIR)) {
-    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -87,8 +87,7 @@ test("createMemory() inserts row and returns valid Memory object", async () => {
   // Verify row exists in DB
   const db = core.getDbInstance();
   const row = db.prepare("SELECT * FROM memories WHERE id = ?").get(created.id) as
-    | { id: string; content: string }
-    | undefined;
+    { id: string; content: string } | undefined;
   assert.ok(row, "row should exist in DB after createMemory");
   assert.equal(row.content, "content for create test");
 });
@@ -182,8 +181,7 @@ test("updateMemory() with content change returns true and updates the row", asyn
   // Verify the DB was updated
   const db = core.getDbInstance();
   const row = db.prepare("SELECT content FROM memories WHERE id = ?").get(created.id) as
-    | { content: string }
-    | undefined;
+    { content: string } | undefined;
   assert.equal(row?.content, "new content changed", "content should be updated in DB");
 });
 

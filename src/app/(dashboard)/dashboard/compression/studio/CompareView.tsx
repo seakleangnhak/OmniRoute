@@ -82,10 +82,11 @@ function VerifyControls({
   spent,
   capped,
 }: VerifyControlsProps) {
+  const t = useTranslations("compressionStudio");
   return (
     <>
       <label className="text-[10px]">
-        provider
+        {t("provider")}
         <input
           className="ml-1 w-24 rounded border px-1 text-xs"
           value={provider}
@@ -93,17 +94,17 @@ function VerifyControls({
         />
       </label>
       <label className="text-[10px]">
-        juiz (modelo)
+        {t("judgeModel")}
         <input
           data-testid="verify-model"
           className="ml-1 w-32 rounded border px-1 text-xs"
           value={judgeModel}
           onChange={(e) => onJudgeModel(e.target.value)}
-          placeholder="ex: claude-haiku"
+          placeholder={t("judgeModelPlaceholder")}
         />
       </label>
       <label className="text-[10px]">
-        cap USD
+        {t("maxCostUsd")}
         <input
           type="number"
           step="0.01"
@@ -117,15 +118,15 @@ function VerifyControls({
         data-testid="verify-all"
         onClick={onVerify}
         disabled={verifying || !judgeModel}
-        title={!judgeModel ? "informe o modelo-juiz" : undefined}
+        title={!judgeModel ? t("enterJudgeModel") : undefined}
         className="rounded bg-purple-500/30 px-3 py-1 text-sm disabled:opacity-40"
       >
-        {verifying ? "Verificando..." : "⚖ Verificar todas"}
+        {verifying ? t("verifying") : `⚖ ${t("verifyAll")}`}
       </button>
       {spent !== null && (
         <span className="text-[10px] opacity-70">
-          gasto ${spent.toFixed(3)} / ${capUsd.toFixed(2)}
-          {capped ? " · cap atingido" : ""}
+          {t("spent", { spent: spent.toFixed(3), cap: capUsd.toFixed(2) })}
+          {capped ? ` · ${t("capReached")}` : ""}
         </span>
       )}
     </>
@@ -224,7 +225,7 @@ export function CompareView({ text }: CompareViewProps) {
           disabled={loading}
           className="rounded bg-blue-500/30 px-3 py-1 text-sm"
         >
-          {loading ? "Rodando..." : "Carregar A/B"}
+          {loading ? t("running") : t("loadAb")}
         </button>
         {rows.length > 0 && (
           <VerifyControls
@@ -241,33 +242,7 @@ export function CompareView({ text }: CompareViewProps) {
           />
         )}
       </div>
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="text-left opacity-60">
-            <th>Engine</th>
-            <th>Savings</th>
-            <th>Retention</th>
-            <th>Out tok</th>
-            <th>Fidelity</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => {
-            const v = verdicts[r.engine];
-            return (
-              <tr key={r.engine} data-testid="compare-row" className="border-b">
-                <td className="font-semibold">{r.engine}</td>
-                <td>−{r.meanSavingsPercent.toFixed(0)}%</td>
-                <td>{Math.round(r.meanRetention * 100)}%</td>
-                <td>{r.totalCompressedTokens}</td>
-                <td data-testid="verify-verdict">
-                  {v ? (v.skippedCapped ? "—(cap)" : (v.verdict ?? "?")) : ""}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <ComparisonTable rows={rows} verdicts={verdicts} />
     </div>
   );
 }

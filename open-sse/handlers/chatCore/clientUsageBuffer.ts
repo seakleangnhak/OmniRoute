@@ -22,6 +22,8 @@ import {
   addBufferToUsage as defaultAddBuffer,
   filterUsageForFormat as defaultFilterUsage,
   estimateUsage as defaultEstimateUsage,
+  sanitizeProviderUsageForRequest,
+  type UsageLike,
 } from "../../utils/usageTracking.ts";
 
 type ResponseLike =
@@ -98,14 +100,25 @@ export interface ApplyClientUsageBufferOptions {
 export function applyClientUsageBuffer(
   translatedResponse: ResponseLike,
   body: unknown,
-  clientResponseFormat: unknown,
+  clientResponseFormat: string,
   options: ApplyClientUsageBufferOptions = {},
   deps: ClientUsageBufferDeps = DEFAULT_DEPS
 ): void {
   const { preserveContextBudgetInVisibleUsage = false } = options;
+  if (translatedResponse?.usage) {
+    translatedResponse.usage = sanitizeProviderUsageForRequest(
+      translatedResponse.usage as UsageLike,
+      body,
+      clientResponseFormat
+    );
+  }
+
   // Add buffer and filter usage for client (to prevent CLI context errors)
-  if (translatedResponse?.usage && !isEmptyUsage(translatedResponse.usage)) {
-    const buffered = deps.addBufferToUsage(translatedResponse.usage) as Record<string, unknown>;
+  if (translatedResponse?.usage && !isEmptyUsage(translatedResponse.usage as UsageLike)) {
+    const buffered = deps.addBufferToUsage(translatedResponse.usage as UsageLike) as Record<
+      string,
+      unknown
+    >;
     if (preserveContextBudgetInVisibleUsage) {
       foldContextBudgetIntoVisibleUsage(buffered);
     }

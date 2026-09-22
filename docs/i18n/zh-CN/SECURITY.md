@@ -42,17 +42,17 @@ Request → CORS → Authz pipeline (classify → policies → enforce)
 
 ### 🔐 认证与授权
 
-| 特性                  | 实现                                                                                                                                      |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| **管理面板登录**      | 基于密码的认证，使用 JWT Token（HttpOnly Cookie）                                                                                         |
-| **API Key 认证**      | 带 CRC 校验的 HMAC 签名密钥                                                                                                               |
-| **OAuth 2.0 + PKCE**  | 14 个服务商（Claude、Codex、GitHub、Cursor、Antigravity、Gemini、Kimi Coding、Kilo Code、Cline、Qwen、Kiro、Qoder、Windsurf、GitLab Duo） |
-| **Token 刷新**        | OAuth Token 到期前自动刷新                                                                                                                |
-| **安全 Cookie**       | HTTPS 环境设置 `AUTH_COOKIE_SECURE=true`                                                                                                  |
-| **授权管线**          | 路由分类（PUBLIC / CLIENT_API / MANAGEMENT）— 参见 `docs/architecture/AUTHZ_GUIDE.md`                                                     |
-| **路由防护层级**      | 管理路由的三层模型（LOCAL_ONLY / ALWAYS_PROTECTED / MANAGEMENT）— 参见 `docs/security/ROUTE_GUARD_TIERS.md`                               |
-| **Manage 权限域 MCP** | 远程 `/api/mcp/*` 访问受拥有 `manage` 权限域的 API Key 管控；`/api/cli-tools/runtime/*` 保持严格 loopback。参见 ROUTE_GUARD_TIERS         |
-| **MCP 权限域**        | 约 13 个细粒度权限域（read:health、write:combos、execute:completions 等）— 参见 `docs/frameworks/MCP-SERVER.md`                           |
+| 特性                  | 实现                                                                                                                              |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| **管理面板登录**      | 基于密码的认证，使用 JWT Token（HttpOnly Cookie）                                                                                 |
+| **API Key 认证**      | 带 CRC 校验的 HMAC 签名密钥                                                                                                       |
+| **OAuth 2.0 + PKCE**  | 服务商专用的浏览器/设备 OAuth 在支持时使用 PKCE；仅导入的 Devin 凭据单独处理。                                                    |
+| **Token 刷新**        | OAuth Token 到期前自动刷新                                                                                                        |
+| **安全 Cookie**       | HTTPS 环境设置 `AUTH_COOKIE_SECURE=true`                                                                                          |
+| **授权管线**          | 路由分类（PUBLIC / CLIENT_API / MANAGEMENT）— 参见 `docs/architecture/AUTHZ_GUIDE.md`                                             |
+| **路由防护层级**      | 管理路由的三层模型（LOCAL_ONLY / ALWAYS_PROTECTED / MANAGEMENT）— 参见 `docs/security/ROUTE_GUARD_TIERS.md`                       |
+| **Manage 权限域 MCP** | 远程 `/api/mcp/*` 访问受拥有 `manage` 权限域的 API Key 管控；`/api/cli-tools/runtime/*` 保持严格 loopback。参见 ROUTE_GUARD_TIERS |
+| **MCP 权限域**        | 约 13 个细粒度权限域（read:health、write:combos、execute:completions 等）— 参见 `docs/frameworks/MCP-SERVER.md`                   |
 
 ### 🛡️ 静态加密
 

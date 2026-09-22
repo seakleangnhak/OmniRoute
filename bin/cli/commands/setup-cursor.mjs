@@ -10,6 +10,7 @@
 
 import { printHeading, printInfo, printSuccess } from "../io.mjs";
 import { resolveActiveContext } from "../contexts.mjs";
+import { isContainerRuntime } from "../utils/config-home-guard.mjs";
 
 function ensureV1(url) {
   const s = String(url || "").replace(/\/+$/, "");
@@ -95,6 +96,12 @@ export async function runSetupCursorCommand(opts = {}) {
 
   console.log("\n" + buildCursorInstructions({ apiBase, models }));
   printSuccess("\nCursor is configured manually (no file written — Cursor's storage is opaque).");
+  if (await isContainerRuntime()) {
+    printInfo(
+      "Note: this ran inside a container, so the base URL above is the container's own view. " +
+        "Use the address the host reaches OmniRoute on (e.g. the published port) in Cursor's settings."
+    );
+  }
   return 0;
 }
 

@@ -11,7 +11,7 @@ import {
   AUDIO_TRANSCRIPTION_PROVIDERS,
 } from "@omniroute/open-sse/config/audioRegistry.ts";
 import { SegmentedControl } from "@/shared/components";
-import { AI_PROVIDERS } from "@/shared/constants/providers";
+import { toProviderModels, type ProviderModelGroup } from "./mediaProviderModels";
 
 type Modality = "image" | "video" | "music" | "speech" | "transcription";
 type GenerationResult = {
@@ -392,6 +392,7 @@ function ImageResults({
   data: any;
   onEditCacheId?: (cacheId: string) => void;
 }) {
+  const t = useTranslations("media");
   const images: Array<{
     url?: string;
     b64_json?: string;
@@ -713,7 +714,11 @@ export default function MediaPageClient() {
         const res = await fetch("/api/v1/images/edits", { method: "POST", body: form });
         if (!res.ok) {
           const raw = await res.json().catch(() => ({}));
-          const { message, isCredentials } = parseApiError(raw, res.status);
+          const { message, isCredentials } = parseApiError(
+            raw,
+            res.status,
+            t("requestFailed", { status: res.status })
+          );
           setIsCredentialsError(isCredentials);
           throw new Error(message);
         }
@@ -1090,7 +1095,7 @@ export default function MediaPageClient() {
                   ? "Transcribe Audio"
                   : activeTab === "image" && hasImageEditCacheId
                     ? "Edit Image"
-                    : `${t("generate")} ${config.label}`}
+                    : t("generateModality", { modality: t(config.labelKey) })}
             </>
           )}
         </button>

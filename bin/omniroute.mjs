@@ -17,12 +17,18 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import updateNotifier from "update-notifier";
+let updateNotifier = null;
+try {
+  updateNotifier = (await import("update-notifier")).default;
+} catch {
+  // update-notifier is optional in pruned standalone environments
+}
 import { isNativeBinaryCompatible } from "../scripts/build/native-binary-compat.mjs";
 import { getNodeRuntimeSupport, getNodeRuntimeWarning } from "./nodeRuntimeSupport.mjs";
 import { getDefaultDataDir } from "./cli/data-dir.mjs";
 import { shouldProvisionStorageKey } from "./cli/utils/storageKeyProvision.mjs";
 import { isVersionFastPath } from "./cli/utils/versionFastPath.mjs";
+import { parseEnvValue } from "./cli/utils/parseEnvValue.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -43,6 +49,19 @@ if (isVersionFastPath(process.argv)) {
   process.exit(0);
 }
 
+// MCP stdio transport uses stdout exclusively for JSON-RPC messages. Redirect
+// console.log/warn to stderr before anything else runs — including the tsx/esm and
+// polyfill imports below, since those (and their transitive module graphs, e.g. DB
+// init) can themselves log during evaluation. Redirecting after those imports let
+// early output leak straight into the JSON-RPC stream and corrupt it client-side
+// (e.g. Claude Desktop: "Unexpected token 'D', \"[DB] Changi\"... is not valid JSON").
+if (process.argv.includes("--mcp")) {
+  const { Console } = await import("node:console");
+  const stderrConsole = new Console({ stdout: process.stderr, stderr: process.stderr });
+  console.log = stderrConsole.log.bind(stderrConsole);
+  console.warn = stderrConsole.warn.bind(stderrConsole);
+}
+
 // Register tsx so dynamic imports of .ts source files (referenced as .js per
 // TypeScript conventions) resolve correctly. The build never emits .js for
 // src/lib/cli-helper/, so tsx handles the .ts → .js resolution at runtime.
@@ -57,16 +76,6 @@ await import("../open-sse/utils/setupPolyfill.ts");
 // (paths already resolve via tsconfig) and when ROOT has no `src/` dir.
 const { registerAliasResolver } = await import("./aliasResolver.mjs");
 await registerAliasResolver(ROOT);
-
-// MCP stdio transport uses stdout exclusively for JSON-RPC messages.
-// Redirect console.log/warn to stderr early (before loadEnvFile and DB init)
-// so no startup output corrupts the protocol.
-if (process.argv.includes("--mcp")) {
-  const { Console } = await import("node:console");
-  const stderrConsole = new Console({ stdout: process.stderr, stderr: process.stderr });
-  console.log = stderrConsole.log.bind(stderrConsole);
-  console.warn = stderrConsole.warn.bind(stderrConsole);
-}
 
 // Electron persists secrets (JWT_SECRET, API_KEY_SECRET, STORAGE_ENCRYPTION_KEY) to
 // `<DATA_DIR>/server.env` (electron/main.js), never `.env`. Migrating an existing
@@ -115,6 +124,9 @@ function loadEnvFile() {
     addEnvPath(join(ROOT, ".env"));
   }
 
+  const keyOrigin = new Map();
+  const shadowed = new Map();
+
   for (const envPath of envPaths) {
     try {
       if (existsSync(envPath)) {
@@ -125,21 +137,32 @@ function loadEnvFile() {
           const eqIdx = trimmed.indexOf("=");
           if (eqIdx > 0) {
             const key = trimmed.slice(0, eqIdx).trim();
-            const value = trimmed.slice(eqIdx + 1).trim();
             if (process.env[key] === undefined) {
-              process.env[key] = value.replace(/^["']|["']$/g, "");
+              process.env[key] = parseEnvValue(trimmed.slice(eqIdx + 1));
+              keyOrigin.set(key, envPath);
+            } else if (!shadowed.has(key)) {
+              // The line is inert: something set this key first. Report it once
+              // per key, whether the winner was an earlier file or the process
+              // environment (#6194: a shell's own HOSTNAME beat the .env and the
+              // server bound to the wrong address in silence).
+              shadowed.set(key, { winner: keyOrigin.get(key) ?? null, loser: envPath });
             }
           }
         }
         loadedEnvPaths.push(envPath);
       }
-    } catch {
-      // Ignore errors reading env files.
+    } catch (err) {
+      console.warn(`  \x1b[33m⚠ Could not read ${envPath}: ${err?.message ?? err}\x1b[0m`);
     }
   }
 
   for (const envPath of loadedEnvPaths) {
     console.log(`  \x1b[2m📋 Loaded env from ${envPath}\x1b[0m`);
+  }
+
+  for (const [key, { winner, loser }] of shadowed) {
+    const setter = winner ? winner : "the environment";
+    console.warn(`  \x1b[33m⚠ ${key} in ${loser} is ignored, ${setter} set it first\x1b[0m`);
   }
 }
 
@@ -233,8 +256,9 @@ if (shouldProvisionStorageKey(process.argv)) {
 
 // Register update notifier — checks npm once per 24h, notifies on exit via stderr.
 const _pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
-const _notifier = updateNotifier({ pkg: _pkg, updateCheckInterval: 1000 * 60 * 60 * 24 });
+const _notifier = updateNotifier ? updateNotifier({ pkg: _pkg, updateCheckInterval: 1000 * 60 * 60 * 24 }) : null;
 process.on("exit", () => {
+  if (!_notifier || !_notifier.update) return;
   if (process.env.OMNIROUTE_NO_UPDATE_NOTIFIER) return;
   if (process.env.CI) return;
   if (process.argv.includes("--quiet") || process.argv.includes("-q")) return;

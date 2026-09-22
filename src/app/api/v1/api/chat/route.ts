@@ -2,6 +2,7 @@ import { handleChat } from "@/sse/handlers/chat";
 import { initTranslators } from "@omniroute/open-sse/translator/index.ts";
 import { transformToOllama } from "@omniroute/open-sse/utils/ollamaTransform.ts";
 import { enforceClientApiAuth } from "../../_helpers/clientApiAuth";
+import { withChatAdmission } from "@/shared/middleware/withChatAdmission";
 
 let initialized = false;
 
@@ -22,7 +23,7 @@ export async function OPTIONS() {
   });
 }
 
-export async function POST(request) {
+async function postHandler(request) {
   const authRejection = await enforceClientApiAuth(request);
   if (authRejection) return authRejection;
 
@@ -38,3 +39,5 @@ export async function POST(request) {
   const response = await handleChat(request);
   return transformToOllama(response, modelName);
 }
+
+export const POST = withChatAdmission(postHandler);

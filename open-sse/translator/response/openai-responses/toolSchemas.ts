@@ -24,7 +24,7 @@ export function extractToolSchemaMap(body: unknown): Map<string, JsonRecord> | n
       typeof fn?.name === "string" ? fn.name : typeof item.name === "string" ? item.name : ""
     ).trim();
     if (!name) continue;
-    const schema = asRecord(fn?.parameters ?? item.parameters);
+    const schema = asRecord(fn?.parameters ?? item.parameters ?? item.input_schema);
     if (schema) map.set(name, schema);
   }
   return map.size > 0 ? map : null;

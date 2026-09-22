@@ -59,6 +59,7 @@ export default function OneproxyTab() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
+  const [syncSucceeded, setSyncSucceeded] = useState(false);
   const [filterProtocol, setFilterProtocol] = useState("");
   const [filterCountry, setFilterCountry] = useState("");
   const [minQuality, setMinQuality] = useState("");
@@ -98,26 +99,38 @@ export default function OneproxyTab() {
   const handleSync = async () => {
     setSyncing(true);
     setSyncResult(null);
+    setSyncSucceeded(false);
     try {
       const res = await fetch("/api/settings/oneproxy", { method: "POST" });
       const data = await res.json();
       if (res.ok && data.success) {
-        setSyncResult(`Synced ${data.total} proxies (${data.added} new, ${data.updated} updated)`);
+        setSyncSucceeded(true);
+        setSyncResult(
+          t("oneproxySyncSuccess", {
+            total: data.total,
+            added: data.added,
+            updated: data.updated,
+          })
+        );
       } else {
         setSyncResult(
-          `Sync failed: ${getResponseErrorMessage(data, res.statusText || "Unknown error")}`
+          t("oneproxySyncFailed", {
+            error: getResponseErrorMessage(data, res.statusText || "Unknown error"),
+          })
         );
       }
       await loadData();
     } catch (err) {
-      setSyncResult(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
+      setSyncResult(
+        t("oneproxySyncFailed", { error: err instanceof Error ? err.message : String(err) })
+      );
     } finally {
       setSyncing(false);
     }
   };
 
   const handleClearAll = async () => {
-    if (!confirm("Clear all 1proxy proxies?")) return;
+    if (!confirm(t("oneproxyClearAllConfirm"))) return;
     try {
       await fetch("/api/settings/oneproxy?clearAll=1", { method: "DELETE" });
       await loadData();
@@ -158,17 +171,15 @@ export default function OneproxyTab() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold text-text-main">{t("oneproxyTitle")}</h2>
-          <p className="text-sm text-text-muted mt-1">
-            Fetch and rotate free validated proxies from the 1proxy community platform
-          </p>
+          <p className="text-sm text-text-muted mt-1">{t("oneproxyDescription")}</p>
         </div>
         <div className="flex gap-2">
           <Button onClick={handleSync} disabled={syncing} variant="primary">
-            {syncing ? "Syncing..." : "Sync Now"}
+            {syncing ? t("oneproxySyncing") : t("oneproxySyncNow")}
           </Button>
           {proxies.length > 0 && (
             <Button onClick={handleClearAll} variant="danger">
-              Clear All
+              {t("oneproxyClearAll")}
             </Button>
           )}
         </div>
@@ -177,7 +188,7 @@ export default function OneproxyTab() {
       {syncResult && (
         <div
           className={`p-3 rounded-lg text-sm ${
-            syncResult.startsWith("Synced")
+            syncSucceeded
               ? "bg-green-50 text-green-800 dark:bg-green-900/30 dark:text-green-300"
               : "bg-red-50 text-red-800 dark:bg-red-900/30 dark:text-red-300"
           }`}
@@ -194,7 +205,7 @@ export default function OneproxyTab() {
           </Card>
           <Card className="p-4">
             <div className="text-2xl font-bold text-green-600">{stats.active}</div>
-            <div className="text-sm text-text-muted">Active</div>
+            <div className="text-sm text-text-muted">{t("oneproxyActive")}</div>
           </Card>
           <Card className="p-4">
             <div className="text-2xl font-bold text-text-main">
@@ -247,22 +258,36 @@ export default function OneproxyTab() {
         {loading ? (
           <div className="text-center py-8 text-text-muted">{t("oneproxyLoadingProxies")}</div>
         ) : proxies.length === 0 ? (
-          <div className="text-center py-8 text-text-muted">
-            No 1proxy proxies found. Click &quot;Sync Now&quot; to fetch free proxies.
-          </div>
+          <div className="text-center py-8 text-text-muted">{t("oneproxyEmpty")}</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border">
-                  <th className="text-left py-2 px-3 text-text-muted font-medium">Host</th>
-                  <th className="text-left py-2 px-3 text-text-muted font-medium">Protocol</th>
-                  <th className="text-left py-2 px-3 text-text-muted font-medium">Country</th>
-                  <th className="text-left py-2 px-3 text-text-muted font-medium">Quality</th>
-                  <th className="text-left py-2 px-3 text-text-muted font-medium">Latency</th>
-                  <th className="text-left py-2 px-3 text-text-muted font-medium">Anonymity</th>
-                  <th className="text-left py-2 px-3 text-text-muted font-medium">Google</th>
-                  <th className="text-left py-2 px-3 text-text-muted font-medium">Actions</th>
+                  <th className="text-left py-2 px-3 text-text-muted font-medium">
+                    {t("oneproxyHost")}
+                  </th>
+                  <th className="text-left py-2 px-3 text-text-muted font-medium">
+                    {t("oneproxyProtocol")}
+                  </th>
+                  <th className="text-left py-2 px-3 text-text-muted font-medium">
+                    {t("oneproxyCountry")}
+                  </th>
+                  <th className="text-left py-2 px-3 text-text-muted font-medium">
+                    {t("oneproxyQuality")}
+                  </th>
+                  <th className="text-left py-2 px-3 text-text-muted font-medium">
+                    {t("oneproxyLatency")}
+                  </th>
+                  <th className="text-left py-2 px-3 text-text-muted font-medium">
+                    {t("oneproxyAnonymity")}
+                  </th>
+                  <th className="text-left py-2 px-3 text-text-muted font-medium">
+                    {t("oneproxyGoogle")}
+                  </th>
+                  <th className="text-left py-2 px-3 text-text-muted font-medium">
+                    {t("oneproxyActions")}
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -306,7 +331,7 @@ export default function OneproxyTab() {
                         onClick={() => handleDelete(proxy.id)}
                         className="text-red-500 hover:text-red-700 text-xs"
                       >
-                        Delete
+                        {t("oneproxyDelete")}
                       </button>
                     </td>
                   </tr>

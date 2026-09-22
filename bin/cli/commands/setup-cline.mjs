@@ -16,6 +16,7 @@ import { join } from "node:path";
 import os from "node:os";
 import { printHeading, printInfo, printSuccess, printError, createPrompt } from "../io.mjs";
 import { resolveActiveContext } from "../contexts.mjs";
+import { guardHostConfigTarget } from "../utils/config-home-guard.mjs";
 
 function stripToRoot(url) {
   let s = String(url || "").replace(/\/+$/, "");
@@ -96,6 +97,14 @@ export async function runSetupClineCommand(opts = {}) {
   const dryRun = Boolean(opts.dryRun ?? opts["dry-run"]);
   const clineDir = opts.clineDir ?? opts["cline-dir"] ?? join(os.homedir(), ".cline", "data");
 
+  const guard = await guardHostConfigTarget(clineDir, {
+    toolLabel: "Cline",
+    hostCommand: "omniroute setup-cline",
+    allowContainerWrite: Boolean(opts.allowContainerWrite ?? opts["allow-container-write"]),
+    dryRun,
+  });
+  if (guard !== 0) return guard;
+
   printHeading("OmniRoute → Cline (OpenAI-compatible)");
   printInfo(`Server: ${baseUrl}`);
 
@@ -169,6 +178,10 @@ export function registerSetupCline(program) {
     .option("--cline-dir <dir>", "Cline data dir (default: ~/.cline/data)")
     .option("--yes", "Non-interactive: do not prompt (requires --model)")
     .option("--dry-run", "Print what would be written without touching the filesystem")
+    .option(
+      "--allow-container-write",
+      "Write even when the target is inside a container and not mounted from the host"
+    )
     .action(async (opts) => {
       const code = await runSetupClineCommand(opts);
       if (code !== 0) process.exit(code);

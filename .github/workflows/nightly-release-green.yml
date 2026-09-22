@@ -68,7 +68,7 @@ jobs:
     # this runs on the dedicated VPS runner — clean env (no operator OMNIROUTE_API_KEY,
     # no local noauth CLIs => zero machine-specific false positives) and no contention.
     # Nightly cron normally finds the var false (VM off) and falls back to hosted.
-    runs-on: ${{ (vars.USE_VPS_RUNNER == 'true' && fromJSON('["self-hosted","omni-release"]')) || 'ubuntu-latest' }}
+    runs-on: ${{ (vars.USE_VPS_RUNNER == 'true' && fromJSON('["self-hosted","omni-build"]')) || 'ubuntu-latest' }}
     env:
       JWT_SECRET: ci-nightly-secret-with-sufficient-length-for-validation
       API_KEY_SECRET: ci-nightly-api-key-secret-long
@@ -193,7 +193,27 @@ jobs:
             gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" --body-file issue-body.md
             echo "Updated existing issue #$EXISTING"
           else
-            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file issue-body.md
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --label base-red --body-file issue-body.md
+          fi
+
+      - name: Close tracking issue when the branch is green again
+        if: steps.validate.outputs.exit == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ steps.branch.outputs.target }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # The open/update step above is the UPWARD half of the loop; without this
+          # step a stale "not green" issue outlives the fix and every base-green check
+          # (`AGENTS.md` → "Base-green check") keeps stamping new PRs as base-red inherited.
+          TITLE="🔴 Release branch not green: ${TARGET}"
+          EXISTING=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "in:title $TITLE" --json number --jq '.[0].number' 2>/dev/null || echo "")
+          if [ -n "$EXISTING" ]; then
+            gh issue close "$EXISTING" --repo "$GITHUB_REPOSITORY" --reason completed \
+              --comment "✅ \`${TARGET}\` is release-green again at \`${GITHUB_SHA:0:9}\` — ${RUN_URL}. Auto-closed by Release-Green (continuous)."
+            echo "Closed issue #$EXISTING"
           fi
 
       - name: Upload report artifact
@@ -217,7 +237,7 @@ jobs:
     # On a push, only run for a push to main — a push to release/* is handled by
     # release-green above. Schedule/dispatch always run (they also sweep main).
     if: ${{ github.event_name != 'push' || github.ref_name == 'main' }}
-    runs-on: ${{ (vars.USE_VPS_RUNNER == 'true' && fromJSON('["self-hosted","omni-release"]')) || 'ubuntu-latest' }}
+    runs-on: ${{ (vars.USE_VPS_RUNNER == 'true' && fromJSON('["self-hosted","omni-build"]')) || 'ubuntu-latest' }}
     env:
       JWT_SECRET: ci-nightly-secret-with-sufficient-length-for-validation
       API_KEY_SECRET: ci-nightly-api-key-secret-long
@@ -291,7 +311,26 @@ jobs:
             gh issue comment "$EXISTING" --repo "$GITHUB_REPOSITORY" --body-file issue-body.md
             echo "Updated existing issue #$EXISTING"
           else
-            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file issue-body.md
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --label base-red --body-file issue-body.md
+          fi
+
+      - name: Close tracking issue when the branch is green again
+        if: steps.validate.outputs.exit == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # The open/update step above is the UPWARD half of the loop; without this
+          # step a stale "not green" issue outlives the fix and every base-green check
+          # (`AGENTS.md` → "Base-green check") keeps stamping new PRs as base-red inherited.
+          TITLE="🔴 main branch not green"
+          EXISTING=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "in:title $TITLE" --json number --jq '.[0].number' 2>/dev/null || echo "")
+          if [ -n "$EXISTING" ]; then
+            gh issue close "$EXISTING" --repo "$GITHUB_REPOSITORY" --reason completed \
+              --comment "✅ \`main\` is main-green again at \`${GITHUB_SHA:0:9}\` — ${RUN_URL}. Auto-closed by Release-Green (continuous)."
+            echo "Closed issue #$EXISTING"
           fi
 
       - name: Upload report artifact
