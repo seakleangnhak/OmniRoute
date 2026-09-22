@@ -89,7 +89,7 @@ export async function movePath(sourcePath, destinationPath, fsImpl = fs) {
  * resolveNextBuildEnv() may have pointed APPDATA/LOCALAPPDATA at. No-op when
  * resolveNextBuildEnv didn't set them (non-Windows, or NEXT_DIST_DIR already set).
  */
-export function ensureWindowsBuildProfileDirs(env, mkdirImpl = mkdirSync) {
+export function ensureWindowsBuildProfileDirs(env, mkdirImpl = fsSync.mkdirSync) {
   if (!env?.APPDATA || !env?.LOCALAPPDATA) return;
   mkdirImpl(env.APPDATA, { recursive: true });
   mkdirImpl(env.LOCALAPPDATA, { recursive: true });
