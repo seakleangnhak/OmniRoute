@@ -24,6 +24,10 @@ import { getAllCustomModels } from "@/lib/db/models";
 import { resolveProxyForConnection } from "@/lib/db/settings";
 import { resolveImageRouteModel } from "@/lib/images/imageRouteModel";
 import {
+  resolveCodexImageGatewayRoute,
+  type CodexImageGatewayRoute,
+} from "@/lib/images/codexImageGateway";
+import {
   resolveLocalSyncedEndpointRoute,
   type LocalSyncedEndpointRoute,
 } from "@/lib/providerModels/syncedEndpointRouting";
@@ -141,6 +145,39 @@ function getImageGenerationErrorMessage(error: unknown): string {
   }
 }
 
+function normalizeMultipartScalar(name: string, value: string): string | number {
+  if (name !== "n") return value;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : value;
+}
+
+async function multipartImageGenerationBody(formData: FormData): Promise<Record<string, unknown>> {
+  const body: Record<string, unknown> = {};
+  const uploadedImages: string[] = [];
+
+  for (const [rawName, value] of formData.entries()) {
+    const name = rawName === "image[]" ? "image" : rawName;
+    if (typeof value === "string") {
+      body[name] = normalizeMultipartScalar(name, value);
+      continue;
+    }
+    if (name !== "image") continue;
+
+    const bytes = Buffer.from(await value.arrayBuffer());
+    if (bytes.length === 0) continue;
+    uploadedImages.push(
+      `data:${value.type || "application/octet-stream"};base64,${bytes.toString("base64")}`
+    );
+  }
+
+  if (uploadedImages.length > 0) {
+    body.image = uploadedImages[0];
+    if (uploadedImages.length > 1) body.image_urls = uploadedImages;
+  }
+
+  return body;
+}
+
 export function shouldRetryImageGenerationWithNextAccount(
   result: { success?: unknown; status?: unknown; error?: unknown } | null | undefined,
   providerConfig: { format?: string } | null | undefined,
@@ -159,7 +196,7 @@ export function shouldRetryImageGenerationWithNextAccount(
   return status === HTTP_STATUS.FORBIDDEN && /\b(?:sentinel|turnstile)\b/i.test(message);
 }
 
-async function postHandler(request, context) {
+async function postHandler(request, _context) {
   let rawBody;
   try {
     rawBody = await request.json();
@@ -180,6 +217,18 @@ async function postHandler(request, context) {
   const authRejection = await enforceClientApiRouteAuth(request);
   if (authRejection) return authRejection;
 
+  const queryResponseFormat = new URL(request.url).searchParams.get("response_format");
+  if (queryResponseFormat !== null) {
+    if (!["binary", "url", "b64_json"].includes(queryResponseFormat)) {
+      return errorResponse(HTTP_STATUS.BAD_REQUEST, "Unsupported image response_format");
+    }
+    body.response_format = queryResponseFormat;
+  }
+  const wantsBinary = body.response_format === "binary";
+  if (wantsBinary && Number(body.n ?? 1) !== 1) {
+    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Binary image output requires n=1");
+  }
+
   // Enforce API key policies (model restrictions + budget limits)
   const policy = await enforceApiKeyPolicy(request, body.model);
   if (policy.rejection) return policy.rejection;
@@ -192,16 +241,8 @@ async function postHandler(request, context) {
   if (body.model && typeof body.model === "string" && !body.model.includes("/")) {
     const combo = await getComboByName(body.model as string);
     if (combo) {
-      const { executeImageCombo } = await import(
-        "@omniroute/open-sse/services/imageCombo"
-      );
-      return executeImageCombo(
-        body.model as string,
-        body,
-        { request, policy },
-        startTime,
-        log
-      );
+      const { executeImageCombo } = await import("@omniroute/open-sse/services/imageCombo");
+      return executeImageCombo(body.model as string, body, { request, policy }, startTime, log);
     }
   }
 
@@ -215,6 +256,21 @@ async function postHandler(request, context) {
   let { provider, model: requestedModel } = parseImageModel(body.model);
   let isCustomModel = false;
   let syncedEndpointRoute: LocalSyncedEndpointRoute | null = null;
+  let gatewayRoute: CodexImageGatewayRoute | null = null;
+  try {
+    gatewayRoute = await resolveCodexImageGatewayRoute(body.model);
+  } catch {
+    return errorResponse(
+      HTTP_STATUS.SERVICE_UNAVAILABLE,
+      "Codex image gateway is unavailable; check its connection configuration"
+    );
+  }
+  if (gatewayRoute) {
+    provider = gatewayRoute.provider;
+    requestedModel = gatewayRoute.model;
+    body.model = `${provider}/${requestedModel}`;
+    isCustomModel = true;
+  }
 
   if (!provider) {
     syncedEndpointRoute = await resolveLocalSyncedEndpointRoute(body.model, "images");
@@ -283,10 +339,11 @@ async function postHandler(request, context) {
     );
   }
 
-  if (syncedEndpointRoute?.connectionIds) {
+  const routedConnectionIds = gatewayRoute?.connectionIds ?? syncedEndpointRoute?.connectionIds;
+  if (routedConnectionIds) {
     allowedConnections = allowedConnections
-      ? syncedEndpointRoute.connectionIds.filter((id) => allowedConnections.includes(id))
-      : syncedEndpointRoute.connectionIds;
+      ? routedConnectionIds.filter((id) => allowedConnections.includes(id))
+      : routedConnectionIds;
     if (allowedConnections.length === 0) {
       return errorResponse(HTTP_STATUS.FORBIDDEN, "No allowed connections for this image model");
     }
@@ -320,7 +377,8 @@ async function postHandler(request, context) {
       provider,
       null,
       allowedConnections,
-      requestedModel    );
+      requestedModel
+    );
     if (!credentials) {
       return errorResponse(
         HTTP_STATUS.BAD_REQUEST,
@@ -355,13 +413,18 @@ async function postHandler(request, context) {
     requestedModel,
     credentials,
     selectNextCredentials: (retryProvider, retryModel, excludedConnectionIds) => {
-      if (request.signal.aborted ||
-          (providerConfig?.format === "chatgpt-web" &&
-           excludedConnectionIds.size >= CHATGPT_WEB_IMAGE_MAX_ACCOUNT_ATTEMPTS)) {
+      if (
+        request.signal.aborted ||
+        (providerConfig?.format === "chatgpt-web" &&
+          excludedConnectionIds.size >= CHATGPT_WEB_IMAGE_MAX_ACCOUNT_ATTEMPTS)
+      ) {
         return Promise.resolve(null);
       }
       return getProviderCredentialsWithQuotaPreflight(
-        retryProvider, null, allowedConnections, retryModel,
+        retryProvider,
+        null,
+        allowedConnections,
+        retryModel,
         { excludeConnectionIds: Array.from(excludedConnectionIds) }
       );
     },
@@ -406,7 +469,11 @@ async function postHandler(request, context) {
             error: err.message,
           }))
         : generateImage());
-      return shouldRetryImageGenerationWithNextAccount(attemptResult, providerConfig, attemptCredentials)
+      return shouldRetryImageGenerationWithNextAccount(
+        attemptResult,
+        providerConfig,
+        attemptCredentials
+      )
         ? { ...attemptResult, retryable: true }
         : attemptResult;
     },
@@ -429,13 +496,33 @@ async function postHandler(request, context) {
       latencyMs: Date.now() - startTime,
       requestId: generateRequestId(),
     });
+    if (wantsBinary) {
+      const binary = (
+        result as {
+          binary?: { bytes: ArrayBuffer; contentType: string };
+        }
+      ).binary;
+      if (!binary) {
+        return errorResponse(
+          HTTP_STATUS.BAD_GATEWAY,
+          "Image provider did not return binary image data"
+        );
+      }
+      headers.set("Content-Type", binary.contentType);
+      headers.set("X-Content-Type-Options", "nosniff");
+      headers.set("Cache-Control", "private, no-store");
+      return new Response(binary.bytes, { status: 200, headers });
+    }
     return new Response(JSON.stringify((result as { data: unknown }).data), {
       status: 200,
       headers,
     });
   }
 
-  const errorPayload = toJsonErrorPayload((result as any).error, "Image generation provider error") as {
+  const errorPayload = toJsonErrorPayload(
+    (result as any).error,
+    "Image generation provider error"
+  ) as {
     error?: { message?: string };
   };
   const message =
@@ -445,4 +532,30 @@ async function postHandler(request, context) {
   return errorResponse((result as any).status, message);
 }
 
-export const POST = withInjectionGuard(postHandler);
+const guardedPostHandler = withInjectionGuard(postHandler);
+
+export async function POST(request: Request, context?: unknown) {
+  const contentType = request.headers.get("content-type") || "";
+  if (!/multipart\/form-data/i.test(contentType)) {
+    return guardedPostHandler(request, context);
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = await multipartImageGenerationBody(await request.formData());
+  } catch (err) {
+    log.warn("IMAGE", `Invalid multipart body: ${err instanceof Error ? err.message : err}`);
+    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid multipart form body");
+  }
+
+  const headers = new Headers(request.headers);
+  headers.set("content-type", "application/json");
+  headers.delete("content-length");
+  const normalizedRequest = new Request(request.url, {
+    method: request.method,
+    headers,
+    body: JSON.stringify(body),
+    signal: request.signal,
+  });
+  return guardedPostHandler(normalizedRequest, context);
+}
