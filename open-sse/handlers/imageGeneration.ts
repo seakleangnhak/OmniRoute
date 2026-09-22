@@ -175,11 +175,12 @@ export function resolveImageBaseUrl(
   const suffix = `/images/${endpoint}`;
   // Trim trailing slashes without a backtracking-prone regex (`/\/+$/` is a
   // polynomial-ReDoS pattern on long runs of "/" — CodeQL js/polynomial-redos).
-  let normalized = nodeBaseUrl;
+  const url = new URL(nodeBaseUrl);
+  let normalized = url.pathname;
   while (normalized.endsWith("/")) normalized = normalized.slice(0, -1);
-  if (normalized.endsWith(suffix)) return normalized;
   const stripped = normalized.replace(/\/images\/(?:generations|edits)$/, "");
-  return `${stripped}${suffix}`;
+  url.pathname = `${stripped}${suffix}`;
+  return url.toString();
 }
 
 function normalizeImageAspectRatio(value: unknown, fallbackSize: unknown): string {
@@ -396,6 +397,7 @@ export async function handleImageGeneration({
       authType: "apikey",
       authHeader: "bearer",
       format: "openai",
+      forwardImageInputs: true,
     };
 
     return handleOpenAIImageGeneration({
@@ -406,6 +408,7 @@ export async function handleImageGeneration({
       credentials,
       log,
       apiKeyInfo,
+      signal,
     });
   }
 
@@ -717,7 +720,16 @@ export async function handleImageGeneration({
     });
   }
 
-  return handleOpenAIImageGeneration({ model, provider, providerConfig, body, credentials, log, apiKeyInfo });
+  return handleOpenAIImageGeneration({
+    model,
+    provider,
+    providerConfig,
+    body,
+    credentials,
+    log,
+    apiKeyInfo,
+    signal,
+  });
 }
 
 function normalizeKieImageResult(recordData: unknown): string[] {
@@ -1126,6 +1138,7 @@ async function handleOpenAIImageGeneration({
   credentials,
   log,
   apiKeyInfo = null,
+  signal = null,
 }) {
   const startTime = Date.now();
 
@@ -1160,11 +1173,33 @@ async function handleOpenAIImageGeneration({
     if (body.aspect_ratio !== undefined) upstreamBody.aspect_ratio = body.aspect_ratio;
     if (body.resolution !== undefined) upstreamBody.resolution = body.resolution;
 
-    const { imageUrl } = extractImageInputs(body);
-    if (imageUrl && OPENAI_IMAGE_TO_IMAGE_MODELS.has(model)) {
-      upstreamBody.image_url = imageUrl;
+    if (providerConfig.forwardImageInputs) {
+      // Image gateways such as 9router accept their own nested model ids and
+      // reference-image fields. Forward supported inputs without interpreting
+      // the gateway's model as a local Codex model or fetching reference URLs.
+      for (const field of [
+        "background",
+        "image_detail",
+        "output_format",
+        "image",
+        "images",
+        "image_url",
+        "image_urls",
+        "imageUrls",
+      ]) {
+        if (body[field] !== undefined) upstreamBody[field] = body[field];
+      }
+    } else {
+      const { imageUrl } = extractImageInputs(body);
+      if (imageUrl && OPENAI_IMAGE_TO_IMAGE_MODELS.has(model)) {
+        upstreamBody.image_url = imageUrl;
+      }
     }
   }
+
+  // 9router selects raw image output through the query parameter. Keep the
+  // OpenAI JSON body free of the non-standard response_format="binary" value.
+  if (body.response_format === "binary") delete upstreamBody.response_format;
 
   // Build headers
   let headers: Record<string, string> = {
@@ -1203,6 +1238,22 @@ async function handleOpenAIImageGeneration({
   }
 
   const requestBody = JSON.stringify(upstreamBody);
+  const imageGatewayTimeoutMs =
+    providerConfig.forwardImageInputs &&
+    !process.env.FETCH_TIMEOUT_MS &&
+    !process.env.OMNIROUTE_DEFAULT_FETCH_TIMEOUT_MS
+      ? 300_000
+      : getConfiguredTimeout();
+  const fetchOptions = {
+    signal,
+    responseFormat: body.response_format,
+    // Image gateways may spend several minutes generating before sending headers.
+    // Honor operator-configured timeouts; otherwise allow five minutes for images.
+    timeoutMs: imageGatewayTimeoutMs,
+    directResponseStartTimeoutMs: providerConfig.forwardImageInputs
+      ? imageGatewayTimeoutMs
+      : undefined,
+  };
 
   // Try primary URL
   let result = await fetchImageEndpoint(
@@ -1210,7 +1261,8 @@ async function handleOpenAIImageGeneration({
     headers,
     requestBody,
     provider,
-    log
+    log,
+    fetchOptions
   );
 
   // Fallback for providers with fallbackUrl (e.g., Nebius)
@@ -1227,7 +1279,8 @@ async function handleOpenAIImageGeneration({
       headers,
       requestBody,
       provider,
-      log
+      log,
+      fetchOptions
     );
   }
 
@@ -2950,15 +3003,39 @@ export function saveImageErrorResult({
 /**
  * Fetch a single image endpoint and normalize response
  */
-async function fetchImageEndpoint(url, headers, body, provider, log) {
+async function fetchImageEndpoint(
+  url,
+  headers,
+  body,
+  provider,
+  log,
+  options: {
+    signal?: AbortSignal | null;
+    responseFormat?: unknown;
+    timeoutMs?: number;
+    directResponseStartTimeoutMs?: number;
+  } = {}
+) {
   try {
+    if (options.responseFormat === "binary") {
+      const binaryUrl = new URL(url);
+      binaryUrl.searchParams.set("response_format", "binary");
+      url = binaryUrl.toString();
+    }
+    const timeoutMs = options.timeoutMs ?? getConfiguredTimeout();
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, timeoutSignal])
+      : timeoutSignal;
     let response;
     try {
       response = await fetchWithTimeout(url, {
         method: "POST",
         headers,
         body,
-        timeoutMs: getConfiguredTimeout(),
+        signal,
+        timeoutMs,
+        directResponseStartTimeoutMs: options.directResponseStartTimeoutMs,
       });
     } catch (err: unknown) {
       const isAbortError =
@@ -2989,6 +3066,32 @@ async function fetchImageEndpoint(url, headers, body, provider, log) {
         success: false,
         status: response.status,
         error: errorText,
+      };
+    }
+
+    const contentType = (response.headers.get("content-type") || "")
+      .split(";")[0]
+      .trim()
+      .toLowerCase();
+    if (contentType.startsWith("image/")) {
+      if (
+        !["image/png", "image/jpeg", "image/webp", "image/gif", "image/avif"].includes(contentType)
+      ) {
+        return { success: false, status: 502, error: "Unsupported image provider response type" };
+      }
+      const bytes = await response.arrayBuffer();
+      if (bytes.byteLength === 0) {
+        return { success: false, status: 502, error: "Image provider returned an empty image" };
+      }
+      const base64 = Buffer.from(bytes).toString("base64");
+      const image =
+        options.responseFormat === "url"
+          ? { url: `data:${contentType};base64,${base64}` }
+          : { b64_json: base64 };
+      return {
+        success: true,
+        data: { created: Math.floor(Date.now() / 1000), data: [image] },
+        binary: { bytes, contentType },
       };
     }
 

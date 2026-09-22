@@ -13,6 +13,10 @@ const FETCH_TIMEOUT_MS = parseInt(process.env.FETCH_TIMEOUT_MS || "", 10) || DEF
 
 interface FetchTimeoutOptions extends RequestInit {
   timeoutMs?: number;
+  /** Optional response-start bound consumed by OmniRoute's patched fetch layer.
+   *  This is useful for long-running media endpoints that legitimately take
+   *  longer than the normal direct-transport anti-stall window to send headers. */
+  directResponseStartTimeoutMs?: number;
   /** Alternative fetch function to use instead of globalThis.fetch.
    *  Pass getOriginalFetch() to bypass the proxy/TLS patch layer. */
   fetchFn?: typeof globalThis.fetch;
@@ -22,6 +26,7 @@ export async function fetchWithTimeout(url: string | URL, options: FetchTimeoutO
   const {
     timeoutMs = FETCH_TIMEOUT_MS,
     signal: externalSignal,
+    directResponseStartTimeoutMs,
     fetchFn,
     ...fetchOptions
   } = options;
@@ -40,10 +45,14 @@ export async function fetchWithTimeout(url: string | URL, options: FetchTimeoutO
 
   try {
     const doFetch = fetchFn || globalThis.fetch;
-    const response = await doFetch(url, {
+    const requestInit: RequestInit & { directResponseStartTimeoutMs?: number } = {
       ...fetchOptions,
       signal: controller.signal,
-    });
+    };
+    if (!fetchFn && directResponseStartTimeoutMs !== undefined) {
+      requestInit.directResponseStartTimeoutMs = directResponseStartTimeoutMs;
+    }
+    const response = await doFetch(url, requestInit);
     return response;
   } catch (error: any) {
     if (error.name === "AbortError") {

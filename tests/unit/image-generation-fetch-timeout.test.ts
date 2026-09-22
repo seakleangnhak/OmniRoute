@@ -77,3 +77,32 @@ test("successful image gen passes AbortSignal and returns URL", () =>
     assert.ok(seenSignal, "AbortSignal should be passed through fetchWithTimeout");
     assert.equal(result.data.data[0].url, "https://cdn.example.com/timeout-test.png");
   }));
+
+test("custom image gateways request a long direct response-start window", () =>
+  restore(async () => {
+    let responseStartTimeoutMs: unknown;
+    globalThis.fetch = async (_url, options) => {
+      responseStartTimeoutMs = (
+        options as RequestInit & {
+          directResponseStartTimeoutMs?: number;
+        }
+      ).directResponseStartTimeoutMs;
+      return Response.json({ created: 999, data: [{ url: "https://cdn.example.com/image.png" }] });
+    };
+
+    const result = await handleImageGeneration({
+      body: {
+        model: "openai-compatible-images/cx/gpt-image-2.5",
+        prompt: "slow image",
+      },
+      resolvedProvider: "openai-compatible-images",
+      credentials: {
+        apiKey: "test-key",
+        providerSpecificData: { baseUrl: "https://images.example.test/v1" },
+      },
+      log: null,
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(responseStartTimeoutMs, 300_000);
+  }));

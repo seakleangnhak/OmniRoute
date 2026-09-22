@@ -152,3 +152,40 @@ test("#10214 a healthy fast response is untouched by the bound (single attempt, 
   assert.equal(capture.dispatchers[0], getDefaultDispatcher());
   assert.equal(await res.text(), "ok");
 });
+
+test("a request-specific response-start timeout allows slow image generation without changing the global guard", async () => {
+  const previous = process.env.OMNIROUTE_DIRECT_HEADERS_TIMEOUT_MS;
+  process.env.OMNIROUTE_DIRECT_HEADERS_TIMEOUT_MS = "20";
+  let calls = 0;
+  const mockUndici = async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    calls++;
+    return await new Promise<Response>((resolve, reject) => {
+      const timer = setTimeout(() => resolve(new Response("ok", { status: 200 })), 60);
+      init?.signal?.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(timer);
+          reject(init.signal!.reason);
+        },
+        { once: true }
+      );
+    });
+  };
+
+  try {
+    const response = await proxyFetch(
+      "https://images.example.test/v1/images/generations",
+      {
+        method: "POST",
+        ...({ directResponseStartTimeoutMs: 100 } as unknown as RequestInit),
+      },
+      { undiciFetch: mockUndici }
+    );
+
+    assert.equal(await response.text(), "ok");
+    assert.equal(calls, 1, "the longer request-specific window should avoid the retry path");
+  } finally {
+    if (previous === undefined) delete process.env.OMNIROUTE_DIRECT_HEADERS_TIMEOUT_MS;
+    else process.env.OMNIROUTE_DIRECT_HEADERS_TIMEOUT_MS = previous;
+  }
+});

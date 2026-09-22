@@ -184,7 +184,10 @@ export function runWithAppliedProxyCapture<T>(sink: AppliedProxySink, fn: () => 
   return appliedProxyContext.run(sink, fn);
 }
 
-type FetchWithDispatcherOptions = RequestInit & { dispatcher?: unknown };
+type FetchWithDispatcherOptions = RequestInit & {
+  dispatcher?: unknown;
+  directResponseStartTimeoutMs?: number;
+};
 type FetchWithDispatcher = (
   input: RequestInfo | URL,
   init?: FetchWithDispatcherOptions
@@ -730,6 +733,17 @@ async function patchedFetch(
   options: FetchWithDispatcherOptions = {},
   deps: ProxyFetchDeps = {}
 ) {
+  const requestedDirectResponseStartTimeoutMs = Number(options.directResponseStartTimeoutMs);
+  const directResponseStartTimeoutOverrideMs =
+    Number.isFinite(requestedDirectResponseStartTimeoutMs) &&
+    requestedDirectResponseStartTimeoutMs > 0
+      ? Math.floor(requestedDirectResponseStartTimeoutMs)
+      : null;
+  if ("directResponseStartTimeoutMs" in options) {
+    options = { ...options };
+    delete options.directResponseStartTimeoutMs;
+  }
+
   // Explicit direct contexts must win even when a caller supplied a stale
   // dispatcher. Native fetch preserves direct streaming semantics.
   if (proxyContext.getStore() === DIRECT_PROXY_CONTEXT) {
@@ -818,7 +832,8 @@ async function patchedFetch(
     const _nativeFallback =
       (deps.nativeFetch as FetchWithDispatcher | undefined) ?? originalFetchWithDispatcher;
     let lastDispatcherError: unknown = null;
-    const directHeadersTimeoutMs = resolveDirectHeadersTimeoutMs();
+    const directHeadersTimeoutMs =
+      directResponseStartTimeoutOverrideMs ?? resolveDirectHeadersTimeoutMs();
     let targetHostForLogs = "";
     try {
       targetHostForLogs = new URL(targetUrl).host;
