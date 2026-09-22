@@ -73,33 +73,6 @@ type EnrichModelForVscodeOptions = {
   preserveNativeId?: boolean;
 };
 
-function isUsableChatModel(model: CatalogModelEntry) {
-  if (typeof model.owned_by === "string" && model.owned_by.trim().toLowerCase() === "combo") {
-    return false;
-  }
-  if (typeof model.parent === "string" && model.parent.length > 0) return false;
-  if (typeof model.type === "string" && model.type !== "chat") return false;
-  if (typeof model.api_format === "string" && model.api_format !== "chat-completions") {
-    return false;
-  }
-  if (
-    Array.isArray(model.supported_endpoints) &&
-    model.supported_endpoints.length > 0 &&
-    !model.supported_endpoints.includes("chat")
-  ) {
-    return false;
-  }
-  if (
-    Array.isArray(model.output_modalities) &&
-    model.output_modalities.length > 0 &&
-    !model.output_modalities.includes("text")
-  ) {
-    return false;
-  }
-
-  return true;
-}
-
 function getModelImportReasoningEffortValues(
   model: VscodeCatalogModel,
   reasoningEffortValues: string[]
