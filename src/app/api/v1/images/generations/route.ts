@@ -23,6 +23,7 @@ import { getComboByName } from "@/lib/db/combos";
 import { getAllCustomModels } from "@/lib/db/models";
 import { resolveProxyForConnection } from "@/lib/db/settings";
 import { resolveImageRouteModel } from "@/lib/images/imageRouteModel";
+import { materializeImageResponseUrls } from "@/lib/images/tempImageFile";
 import {
   resolveCodexImageGatewayRoute,
   type CodexImageGatewayRoute,
@@ -40,6 +41,7 @@ import { enforceClientApiRouteAuth } from "@/shared/utils/clientApiRouteAuth";
 import { runWithCallLogApiKeyContext } from "@/lib/usage/callLogApiKeyContext";
 import { executeImageWithCredentialFallback } from "@/sse/services/imageCredentialRetry";
 import { AUTHZ_HEADER_PEER_LOCALITY } from "@/server/authz/headers";
+import { resolvePublicOrigin } from "@/server/origin/publicOrigin";
 
 export const dynamic = "force-dynamic";
 
@@ -513,7 +515,28 @@ async function postHandler(request, _context) {
       headers.set("Cache-Control", "private, no-store");
       return new Response(binary.bytes, { status: 200, headers });
     }
-    return new Response(JSON.stringify((result as { data: unknown }).data), {
+    let responseData = (result as { data: unknown }).data;
+    if (
+      body.response_format === "url" &&
+      responseData &&
+      typeof responseData === "object" &&
+      "data" in responseData &&
+      Array.isArray((responseData as { data?: unknown }).data)
+    ) {
+      try {
+        responseData = await materializeImageResponseUrls(
+          responseData as { created?: unknown; data: Array<Record<string, unknown>> },
+          resolvePublicOrigin(request).origin
+        );
+      } catch {
+        log.error("IMAGE", "Failed to store generated image for temporary download");
+        return errorResponse(
+          HTTP_STATUS.BAD_GATEWAY,
+          "Generated image could not be prepared for temporary download"
+        );
+      }
+    }
+    return new Response(JSON.stringify(responseData), {
       status: 200,
       headers,
     });

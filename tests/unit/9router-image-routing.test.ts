@@ -18,6 +18,8 @@ const { resolveImageBaseUrl, handleImageGeneration } =
 const route = await import("../../src/app/api/v1/images/generations/route.ts");
 const scopedRoute =
   await import("../../src/app/api/v1/providers/[provider]/images/generations/route.ts");
+const tempImage = await import("../../src/lib/images/tempImageFile.ts");
+const tempImageRoute = await import("../../src/app/api/v1/images/temp/[id]/route.ts");
 
 const providerId = "openai-compatible-nine-router-test";
 const baseUrl = "https://nine-router.example.test/v1";
@@ -181,6 +183,38 @@ test("image generations accepts multipart form fields and forwards image_url to 
     created: 123,
     data: [{ url: "https://cdn.example.test/result.png" }],
   });
+});
+
+test("URL response format stores 9router b64_json as a five-minute download URL", async () => {
+  await seedGateway();
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "omniroute-9router-temp-image-"));
+  tempImage.__setTemporaryImageDirectoryForTesting(tempDir);
+  try {
+    globalThis.fetch = async () =>
+      Response.json({
+        created: 123,
+        data: [{ b64_json: Buffer.from(jpeg).toString("base64") }],
+      });
+
+    const response = await route.POST(imageRequest({ response_format: "url" }));
+    assert.equal(response.status, 200, await response.clone().text());
+    const payload = await response.json();
+    assert.equal(payload.created, 123);
+    assert.equal(payload.data[0].b64_json, undefined);
+    assert.match(payload.data[0].url, /^http:\/\/localhost\/v1\/images\/temp\//);
+
+    const id = new URL(payload.data[0].url).pathname.split("/").pop();
+    assert.ok(id);
+    const download = await tempImageRoute.GET(new Request(payload.data[0].url), {
+      params: Promise.resolve({ id }),
+    });
+    assert.equal(download.status, 200);
+    assert.equal(download.headers.get("content-type"), "image/jpeg");
+    assert.deepEqual(new Uint8Array(await download.arrayBuffer()), jpeg);
+  } finally {
+    tempImage.__setTemporaryImageDirectoryForTesting(null);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("binary query forwards to 9router and returns the actual JPEG content type and bytes", async () => {

@@ -70,6 +70,10 @@ const PUBLIC_READONLY_CORS_API_ROUTES = [
   "/api/v1/chatgpt-web/image/",
 ];
 
+// Browser-loaded short-lived assets. Prefix matching is safe here because
+// these subtrees contain only opaque, read-only download ids.
+const PUBLIC_READONLY_CORS_API_ROUTE_PREFIXES = ["/api/v1/images/temp/"];
+
 // Read-only routes public by EXACT path, WITHOUT the CORS relaxation.
 //
 // `/api/health` has to be reachable without a key — a probe has none, and a 401 there is
@@ -123,6 +127,9 @@ const LOCAL_ONLY_OAUTH_IMPORT_ROUTES = [
  */
 export function isPublicReadonlyCorsRoute(pathname: string, method = "GET"): boolean {
   if (!PUBLIC_READONLY_METHODS.has(String(method).toUpperCase())) return false;
+  if (PUBLIC_READONLY_CORS_API_ROUTE_PREFIXES.some((route) => pathname.startsWith(route))) {
+    return true;
+  }
   return matchesAnyExactRoute(pathname, PUBLIC_READONLY_CORS_API_ROUTES);
 }
 
@@ -162,6 +169,7 @@ export {
   PUBLIC_API_ROUTE_PREFIXES,
   PUBLIC_API_ROUTES_EXACT,
   PUBLIC_READONLY_CORS_API_ROUTES,
+  PUBLIC_READONLY_CORS_API_ROUTE_PREFIXES,
   PUBLIC_READONLY_API_ROUTES_EXACT,
   PUBLIC_READONLY_METHODS,
 };
