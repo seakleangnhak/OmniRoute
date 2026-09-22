@@ -15,8 +15,24 @@ import { logAuditEvent } from "@/lib/compliance";
 import { emit } from "@/lib/events/eventBus";
 import type { RequestCompletedPayload, RequestFailedPayload } from "@/lib/events/types";
 import { saveCallLog } from "@/lib/usageDb";
+import { FORMATS } from "../../translator/formats.ts";
+import { takeEarlyKeepaliveBytes } from "../../utils/earlyKeepaliveByteBuffer.ts";
 import { cloneBoundedChatLogPayload, truncateForLog } from "./logTruncation.ts";
 import { attachLogMeta } from "./cacheUsageMeta.ts";
+
+/**
+ * Extract the OpenAI Responses API response id this attempt produced, so it
+ * can be indexed for OmniRoute-native `previous_response_id` continuation
+ * (see src/lib/db/responsesContinuationStore.ts). Only meaningful when the
+ * client actually used the Responses endpoint -- a Chat Completions
+ * `chatcmpl-*` id must never be mistaken for a Responses response id.
+ */
+function extractResponsesId(sourceFormat: unknown, clientResponse: unknown): string | null {
+  if (sourceFormat !== FORMATS.OPENAI_RESPONSES) return null;
+  if (!clientResponse || typeof clientResponse !== "object") return null;
+  const id = (clientResponse as { id?: unknown }).id;
+  return typeof id === "string" && id.length > 0 ? id : null;
+}
 
 export type PersistAttemptLogsArgs = {
   status: number;
@@ -229,6 +245,22 @@ export function persistAttemptLogs(args: PersistAttemptLogsArgs, ctx: PersistAtt
         message: error,
       };
     }
+    // withEarlyStreamKeepalive writes keepalive/startup/error frames directly
+    // to the client from OUTSIDE this handler's own reqLogger, so they never
+    // reach reqLogger.appendConvertedChunk. correlationId is the only thing
+    // both sides share (see earlyKeepaliveByteBuffer.ts's file doc for why);
+    // merge here, once, right before persistence, prepended in send order.
+    if (detailedLoggingEnabled && correlationId) {
+      const earlyClientBytes = takeEarlyKeepaliveBytes(correlationId);
+      if (earlyClientBytes.length > 0) {
+        const existingStreamChunks =
+          (pipelinePayloads.streamChunks as { client?: string[] } | undefined) ?? {};
+        pipelinePayloads.streamChunks = {
+          ...existingStreamChunks,
+          client: [...earlyClientBytes, ...(existingStreamChunks.client ?? [])],
+        };
+      }
+    }
   }
 
   saveCallLog({
@@ -276,6 +308,7 @@ export function persistAttemptLogs(args: PersistAttemptLogsArgs, ctx: PersistAtt
     correlationId,
     modelPinned: modelPinned || false,
     sessionTag: sessionTag || null,
+    responseId: extractResponsesId(sourceFormat, clientResponse),
   }).catch(() => {});
 
   // Emit the terminal request-lifecycle event to the live dashboard bus. `request.started`

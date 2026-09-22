@@ -70,6 +70,7 @@ export async function POST(request) {
       name,
       noLog,
       scopes,
+      allowedConnections,
       allowUsageCommand,
       usageLimitEnabled,
       dailyUsageLimitUsd,
@@ -80,7 +81,7 @@ export async function POST(request) {
     // Always get machineId from server
     const machineId = await getConsistentMachineId();
     const normalizedScopes = normalizeSelfServiceScopesForCreate(scopes);
-    const apiKey = await createApiKey(name, machineId, normalizedScopes);
+    const apiKey = await createApiKey(name, machineId, normalizedScopes, { allowedConnections });
     if (
       noLog === true ||
       allowUsageCommand === true ||
@@ -120,6 +121,8 @@ export async function POST(request) {
           weeklyUsageLimitUsd: weeklyUsageLimitUsd ?? null,
           chaosModeEnabled: chaosModeEnabled === true,
           streamDefaultMode: "legacy",
+          compressionEnabled: true,
+          cacheDefaultMode: "legacy",
           isActive: true,
           status: "active",
         },

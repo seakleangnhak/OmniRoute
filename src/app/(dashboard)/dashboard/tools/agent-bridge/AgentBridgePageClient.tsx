@@ -94,9 +94,7 @@ export default function AgentBridgePageClient({
       const res = await fetch("/api/tools/agent-bridge/server", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          sudoPassword ? { action, sudoPassword } : { action }
-        ),
+        body: JSON.stringify(sudoPassword ? { action, sudoPassword } : { action }),
       });
       const payload = (await res.json().catch(() => ({}))) as {
         error?: { message?: string };
@@ -186,9 +184,7 @@ export default function AgentBridgePageClient({
           const res = await fetch(`/api/tools/agent-bridge/agents/${agentId}/dns`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(
-              password ? { enabled, sudoPassword: password } : { enabled }
-            ),
+            body: JSON.stringify(password ? { enabled, sudoPassword: password } : { enabled }),
           });
           if (!res.ok) {
             const payload = (await res.json().catch(() => ({}))) as {
@@ -317,6 +313,7 @@ export default function AgentBridgePageClient({
             targets={targets}
             agentStates={data.agentStates}
             serverRunning={data.serverState.running}
+            serverState={data.serverState}
             mappingsMap={data.mappings}
             onDnsToggle={handleDnsToggle}
             onMappingsSave={handleMappingsSave}

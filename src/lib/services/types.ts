@@ -36,6 +36,15 @@ export interface ServiceStatus {
   health: HealthState;
   startedAt: string | null;
   lastError: string | null;
+  /**
+   * True when the currently-running process was adopted from an
+   * already-listening instance rather than spawned by this supervisor. An
+   * adopted process has no piped stdout/stderr (the supervisor never called
+   * `spawn()` for it), so the Logs panel stays empty until it's replaced by a
+   * real spawn — either manually (Stop then Start) or automatically if
+   * `autoRestartAdopted` is enabled for this tool.
+   */
+  adopted: boolean;
 }
 
 export interface LogLine {

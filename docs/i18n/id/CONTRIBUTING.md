@@ -170,7 +170,7 @@ Status tes saat ini: **122 file tes unit** yang mencakup:
 - Penerjemah penyedia dan konversi format
 - Pembatasan laju, pemutus sirkuit, dan ketahanan
 - Cache semantik, idempoten, pelacakan progres
-- Operasi database dan skema (21 modul DB)
+- Operasi database dan skema (110 modul tingkat atas, 130 migrasi)
 - Alur OAuth dan autentikasi
 - Validasi endpoint API (Zod v4)
 - Alat server MCP dan penegakan cakupan
@@ -202,7 +202,7 @@ src/                        # TypeScript (.ts / .tsx)
 │   ├── a2a/                # Server protokol Agent-to-Agent v0.3
 │   ├── acp/                # Registri Agent Communication Protocol
 │   ├── compliance/         # Mesin kebijakan kepatuhan
-│   ├── db/                 # Lapisan database SQLite (21 modul + 16 migrasi)
+│   ├── db/                 # Lapisan database SQLite (110 modul tingkat atas + 130 migrasi)
 │   ├── memory/             # Memori percakapan persisten
 │   ├── oauth/              # Penyedia, layanan, dan utilitas OAuth
 │   ├── skills/             # Kerangka skill yang dapat diperluas
@@ -212,16 +212,16 @@ src/                        # TypeScript (.ts / .tsx)
 ├── mitm/                   # Proxy MITM (sertifikat, DNS, perutean target)
 ├── shared/
 │   ├── components/         # Komponen React (.tsx)
-│   ├── constants/          # Definisi penyedia (60+), cakupan MCP, strategi perutean
+│   ├── constants/          # Definisi penyedia (329), cakupan MCP, 19 strategi perutean
 │   ├── utils/              # Pemutus sirkuit, sanitizer, pembantu autentikasi
 │   └── validation/         # Skema Zod v4
 └── sse/                    # Pipeline proxy SSE
 
 open-sse/                   # Workspace @omniroute/open-sse
-├── executors/              # 14 eksekutor permintaan khusus penyedia
+├── executors/              # 89 modul implementasi executor
 ├── handlers/               # 11 penangan permintaan (chat, responses, embeddings, images, dll.)
-├── mcp-server/             # Server MCP (25 alat, 3 transport, 10 cakupan)
-├── services/               # 36+ layanan (combo, autoCombo, rateLimitManager, dll.)
+├── mcp-server/             # Server MCP (107 alat, 3 transport, 32 cakupan)
+├── services/               # 178 layanan tingkat atas (combo, autoCombo, rateLimitManager, dll.)
 ├── translator/             # Penerjemah format (OpenAI ↔ Claude ↔ Gemini ↔ Responses ↔ Ollama)
 ├── transformer/            # Transformer Responses API
 └── utils/                  # 22 modul utilitas (stream, TLS, proxy, logging)
@@ -241,7 +241,7 @@ docs/                       # Dokumentasi
 ├── API_REFERENCE.md        # Semua endpoint
 ├── USER_GUIDE.md           # Pengaturan penyedia, integrasi CLI
 ├── TROUBLESHOOTING.md      # Masalah umum
-├── MCP-SERVER.md           # Server MCP (25 alat)
+├── MCP-SERVER.md           # Server MCP (107 alat)
 ├── A2A-SERVER.md           # Protokol agen A2A
 ├── AUTO-COMBO.md           # Mesin auto-combo
 ├── CLI-TOOLS.md            # Integrasi alat CLI

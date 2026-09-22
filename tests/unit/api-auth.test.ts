@@ -25,7 +25,7 @@ const ORIGINAL_MANAGEMENT_TOKEN = process.env.OMNIROUTE_MANAGEMENT_TOKEN;
 async function resetStorage() {
   core.resetDbInstance();
   apiKeysDb.resetApiKeyState();
-  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
   delete process.env.JWT_SECRET;
   delete process.env.INITIAL_PASSWORD;
@@ -50,7 +50,7 @@ test.beforeEach(async () => {
 test.after(() => {
   core.resetDbInstance();
   apiKeysDb.resetApiKeyState();
-  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 
   if (ORIGINAL_JWT_SECRET === undefined) {
     delete process.env.JWT_SECRET;

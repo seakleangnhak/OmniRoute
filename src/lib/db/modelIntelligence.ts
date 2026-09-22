@@ -4,7 +4,7 @@
  * Persists per-model intelligence from arena ELO, models.dev tier rankings,
  * and user overrides. Resolution chain: user_override → arena_elo → models_dev_tier.
  *
- * @see Migration 134_model_intelligence.sql
+ * @see Migration 164_model_intelligence.sql
  */
 
 import { getDbInstance, rowToCamel } from "./core";

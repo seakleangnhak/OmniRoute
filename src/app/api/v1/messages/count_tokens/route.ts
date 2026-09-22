@@ -9,6 +9,7 @@ import { getProviderCredentials } from "@/sse/services/auth";
 import { safeResolveProxy } from "@/sse/handlers/chatHelpers";
 import * as log from "@/sse/utils/logger";
 import { enforceClientApiAuth } from "../../_helpers/clientApiAuth";
+import { isInputTokenCountPlausible } from "@omniroute/open-sse/utils/usageTracking.ts";
 
 /**
  * Handle CORS preflight
@@ -86,7 +87,11 @@ export async function POST(request) {
       })
     );
 
-    if (!counted || !Number.isFinite(counted.input_tokens)) {
+    if (
+      !counted ||
+      !Number.isFinite(counted.input_tokens) ||
+      !isInputTokenCountPlausible(counted.input_tokens, body)
+    ) {
       return estimated;
     }
 

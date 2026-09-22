@@ -19,7 +19,7 @@ const { getObsidianConfigForApiKey, setObsidianToken, setObsidianBaseUrl } =
 
 async function resetStorage() {
   coreDb.resetDbInstance();
-  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
 }
 
@@ -36,7 +36,7 @@ test.beforeEach(async () => {
 
 test.after(() => {
   coreDb.resetDbInstance();
-  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 test("apiKeyContextSources: returns null for unknown apiKeyId", () => {

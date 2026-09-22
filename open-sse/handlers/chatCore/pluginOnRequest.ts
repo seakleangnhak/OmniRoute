@@ -23,6 +23,7 @@ export async function runPluginOnRequestHook(args: {
   model: string | null | undefined;
   provider: string | null | undefined;
   apiKeyInfo: unknown;
+  headers?: Record<string, string | string[] | undefined>;
   log?: LoggerLike;
 }): Promise<PluginOnRequestGate> {
   try {
@@ -33,6 +34,7 @@ export async function runPluginOnRequestHook(args: {
       model: args.model,
       provider: args.provider,
       apiKeyInfo: args.apiKeyInfo,
+      headers: args.headers,
       metadata: {},
     };
     const pluginResult = await runOnRequest(pluginCtx);

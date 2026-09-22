@@ -113,3 +113,47 @@ test("blocked attempts do not consume a slot (no double counting)", () => {
     "only the single successful hit aged out"
   );
 });
+
+test("multi-scope acquisition is atomic", () => {
+  const clock = fakeClock();
+  const limiter = new SlidingWindowLimiter({ now: clock.now });
+  const global = { key: "global", window: { requests: 2, windowMs: 1000 } };
+  const provider = { key: "provider:openference", window: { requests: 1, windowMs: 1000 } };
+
+  const first = limiter.tryAcquireMany([global, provider]);
+  assert.equal(first.allowed, true);
+
+  const blocked = limiter.tryAcquireMany([global, provider]);
+  assert.equal(blocked.allowed, false, "the provider scope blocks the second request");
+
+  clock.advance(1001);
+  const second = limiter.tryAcquireMany([global, provider]);
+  assert.equal(second.allowed, true);
+});
+
+test("releasing an un-dispatched multi-scope lease returns every scope", () => {
+  const limiter = new SlidingWindowLimiter();
+  const scopes = [
+    { key: "global", window: { requests: 1, windowMs: 1000 } },
+    { key: "provider", window: { requests: 1, windowMs: 1000 } },
+  ];
+
+  const result = limiter.tryAcquireMany(scopes);
+  assert.equal(result.allowed, true);
+  result.lease?.release();
+  assert.equal(limiter.tryAcquireMany(scopes).allowed, true);
+});
+
+test("rolling leases do not reset as a burst at a fixed boundary", () => {
+  const clock = fakeClock();
+  const limiter = new SlidingWindowLimiter({ now: clock.now });
+  const window = { key: "global", window: { requests: 2, windowMs: 1000 } };
+
+  assert.equal(limiter.tryAcquireMany([window]).allowed, true); // t=0
+  clock.advance(900);
+  assert.equal(limiter.tryAcquireMany([window]).allowed, true); // t=900
+  assert.equal(limiter.tryAcquireMany([window]).allowed, false);
+  clock.advance(100);
+  assert.equal(limiter.tryAcquireMany([window]).allowed, true, "only the t=0 lease returned");
+  assert.equal(limiter.tryAcquireMany([window]).allowed, false, "the t=900 lease remains active");
+});

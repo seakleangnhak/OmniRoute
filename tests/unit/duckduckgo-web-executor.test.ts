@@ -1,6 +1,12 @@
-import { describe, it, mock } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { DuckDuckGoWebExecutor, DUCKDUCKGO_BASE } from "../../open-sse/executors/duckduckgo-web.ts";
+import { FETCH_TIMEOUT_MS } from "../../open-sse/config/constants.ts";
+import {
+  DuckDuckGoWebExecutor,
+  DUCKDUCKGO_BASE,
+  normalizeDuckDuckGoMessages,
+  STATUS_URL,
+} from "../../open-sse/executors/duckduckgo-web.ts";
 
 describe("DuckDuckGoWebExecutor", () => {
   describe("class instantiation", () => {
@@ -33,6 +39,21 @@ describe("DuckDuckGoWebExecutor", () => {
   });
 
   describe("execute method validation", () => {
+    it("normalizes only role-bearing request messages without dropping metadata", () => {
+      assert.deepEqual(
+        normalizeDuckDuckGoMessages([
+          { role: "user", content: "hello", name: "caller" },
+          { role: "assistant", tool_calls: [{ id: "call-1" }] },
+          { content: "missing role" },
+          null,
+        ]),
+        [
+          { role: "user", content: "hello", name: "caller" },
+          { role: "assistant", content: undefined, tool_calls: [{ id: "call-1" }] },
+        ]
+      );
+    });
+
     it("should reject empty messages array", async () => {
       const executor = new DuckDuckGoWebExecutor();
 
@@ -99,21 +120,31 @@ describe("DuckDuckGoWebExecutor", () => {
       }
     });
 
-    it("should complete within timeout", async () => {
-      const executor = new DuckDuckGoWebExecutor();
-      const startTime = Date.now();
+    it("should abort the status request when its timeout expires", async (t) => {
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      let requestSignal: AbortSignal | null = null;
 
-      try {
-        await executor.testConnection({});
-      } catch (error) {
-        // Expected to fail or timeout
-      }
+      t.mock.method(globalThis, "fetch", async (input, init) => {
+        assert.equal(String(input), STATUS_URL);
+        assert.equal(init?.method, "GET");
+        requestSignal = init?.signal ?? null;
 
-      const elapsed = Date.now() - startTime;
-      assert.ok(
-        elapsed < 35000,
-        `testConnection should complete within 35 seconds, took ${elapsed}ms`
-      );
+        return new Promise<Response>((_resolve, reject) => {
+          requestSignal?.addEventListener("abort", () => reject(requestSignal?.reason), {
+            once: true,
+          });
+        });
+      });
+
+      const resultPromise = new DuckDuckGoWebExecutor().testConnection({});
+      assert.ok(requestSignal, "status fetch should receive an AbortSignal");
+      assert.equal(requestSignal.aborted, false);
+
+      t.mock.timers.tick(FETCH_TIMEOUT_MS);
+
+      assert.equal(requestSignal.aborted, true);
+      assert.equal(requestSignal.reason?.name, "TimeoutError");
+      assert.equal(await resultPromise, false);
     });
   });
 

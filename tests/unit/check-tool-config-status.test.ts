@@ -109,6 +109,29 @@ test("hermes: returns 'not_configured' when config points elsewhere", async () =
   assert.equal(result, "not_configured");
 });
 
+test("grok-build: requires the managed default and chat completions backend", async () => {
+  const configured = await writeTempFile(
+    "config.toml",
+    [
+      "[models]",
+      'default = "omniroute"',
+      "",
+      "[model.omniroute]",
+      'model = "openai/gpt-5.5"',
+      'base_url = "https://gateway.example/v1"',
+      'api_backend = "chat_completions"',
+      "",
+    ].join("\n")
+  );
+  assert.equal(await checkToolConfigStatus("grok-build", configured), "configured");
+
+  const inactive = await writeTempFile(
+    "config.toml",
+    '[models]\ndefault = "custom"\n\n[model.omniroute]\nbase_url = "https://gateway.example/v1"\n'
+  );
+  assert.equal(await checkToolConfigStatus("grok-build", inactive), "not_configured");
+});
+
 // ── Droid / Openclaw / Kilo ───────────────────────────────────────────────────
 
 test("droid: returns 'configured' when JSON config contains sk_omniroute marker", async () => {

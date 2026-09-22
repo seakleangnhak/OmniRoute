@@ -6,7 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Minimal i18n stub — returns the key so tests can assert on fallback rendering
 vi.mock("next-intl", () => ({
-  useTranslations: () => (key: string) => key,
+  useLocale: () => "en",
+  useTranslations: () => {
+    const t = (key: string) => key;
+    t.has = () => false;
+    return t;
+  },
 }));
 
 // Minimal shared component stubs — Card wraps children, Tooltip passes through
@@ -272,13 +277,13 @@ describe("TranslateFlowDiagram", () => {
     // When mock returns key, tr() detects key === translation and uses fallback
     // The fallback text should appear in the DOM
     const text = container.textContent ?? "";
-    expect(text).toContain("Sua app");
+    expect(text).toContain("Your app");
     expect(text).toContain("ex: SDK Anthropic");
-    expect(text).toContain("Formato origem");
+    expect(text).toContain("Source format");
     expect(text).toContain("claude");
     // 4th node: OpenAI hub
     expect(text).toContain("OpenAI (hub)");
-    expect(text).toContain("Provider destino");
+    expect(text).toContain("Target provider");
     expect(text).toContain("Gemini");
   });
 });

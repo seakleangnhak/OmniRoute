@@ -1,11 +1,7 @@
 import { z } from "zod";
 
 export type CaptureSource =
-  | "agent-bridge"
-  | "custom-host"
-  | "http-proxy"
-  | "system-proxy"
-  | "tproxy";
+  "agent-bridge" | "custom-host" | "http-proxy" | "system-proxy" | "tproxy";
 export type DetectedKind = "llm" | "app" | "unknown";
 
 export interface InterceptedRequest {
@@ -76,6 +72,13 @@ export type NormalizedBlock =
 export interface NormalizedTurn {
   role: "system" | "user" | "assistant" | "tool";
   blocks: NormalizedBlock[];
+  /** call_logs.id that produced this turn, when a caller has one to attach
+   * (e.g. linking a turn back to its source request) — absent for a plain
+   * single-request normalization. */
+  sourceCallLogId?: string;
+  /** ISO timestamp of the call_logs row that produced this turn — same
+   * scoping as sourceCallLogId. */
+  timestamp?: string;
 }
 
 export interface NormalizedConversation {

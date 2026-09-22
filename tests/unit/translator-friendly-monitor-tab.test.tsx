@@ -6,7 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── i18n stub — returns fallback key so we can assert on translateOrFallback ──
 vi.mock("next-intl", () => ({
-  useTranslations: () => (key: string) => key,
+  useLocale: () => "en",
+  useTranslations: () => {
+    const t = (key: string) => key;
+    t.has = () => false;
+    return t;
+  },
 }));
 
 // ── Shared component stubs ────────────────────────────────────────────────────
@@ -210,10 +215,10 @@ describe("MonitorTab", () => {
 
     // When t() mock returns key, translateOrFallback detects key === translation and uses hardcoded fallback
     const emptyDescription = container.querySelector("[data-testid='empty-description']");
-    expect(emptyDescription?.textContent).toContain("Volte para a aba Translate");
+    expect(emptyDescription?.textContent).toContain("Go back to the Translate tab");
   });
 
-  it("empty state 'Ir para Translate' button calls onGoToTranslate callback", async () => {
+  it("empty state 'Go to Translate' button calls onGoToTranslate callback", async () => {
     mockFetchEmpty();
     const { default: MonitorTab } =
       await import("@/app/(dashboard)/dashboard/translator/components/MonitorTab");
@@ -226,7 +231,7 @@ describe("MonitorTab", () => {
     ) as HTMLButtonElement | null;
     expect(actionBtn).toBeTruthy();
     // Label comes from monitorOpenTranslateButton fallback
-    expect(actionBtn?.textContent).toContain("Ir para Translate");
+    expect(actionBtn?.textContent).toContain("Go to Translate");
 
     await act(async () => {
       actionBtn?.click();

@@ -22,7 +22,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
 vi.mock("next-intl", () => ({
-  useTranslations: () => (key: string) => key,
+  useLocale: () => "en",
+  useTranslations: () => {
+    const t = (key: string) => key;
+    t.has = () => false;
+    return t;
+  },
 }));
 
 vi.mock("next/link", () => ({

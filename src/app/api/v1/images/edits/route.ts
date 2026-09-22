@@ -3,7 +3,13 @@ import {
   handleCodexImageEdit,
   handleImageEdit,
   handleOpenAIImageEdit,
+  handleOpenRouterImageEdit,
 } from "@omniroute/open-sse/handlers/imageGeneration.ts";
+import {
+  handleFalAIImageEdit,
+  FAL_IMAGE_EDIT_MAX_REFERENCES,
+  isFalImageEditModel,
+} from "@omniroute/open-sse/handlers/imageGeneration/providers/fal.ts";
 import { createInjectionGuard } from "@/middleware/promptInjectionGuard";
 import {
   getProviderCredentialsWithQuotaPreflight,
@@ -247,11 +253,10 @@ async function postHandler(request: Request) {
       ? 4
       : providerConfig?.format === "codex-responses"
         ? Number.POSITIVE_INFINITY
-        : MAX_NON_CODEX_IMAGE_EDIT_REFERENCES;
-  if (
-    providerConfig?.format !== "codex-responses" &&
-    imageInputCount > maxRefsForProvider
-  ) {
+        : providerConfig?.format === "fal-ai" && isFalImageEditModel(parsed.model)
+          ? FAL_IMAGE_EDIT_MAX_REFERENCES
+          : MAX_NON_CODEX_IMAGE_EDIT_REFERENCES;
+  if (providerConfig?.format !== "codex-responses" && imageInputCount > maxRefsForProvider) {
     return errorResponse(
       HTTP_STATUS.BAD_REQUEST,
       providerConfig?.format === "adobe-firefly-image"
@@ -402,6 +407,53 @@ async function postHandler(request: Request) {
     );
   }
 
+  if (providerConfig?.format === "fal-ai" && isFalImageEditModel(parsed.model)) {
+    const credentials = await getProviderCredentialsWithQuotaPreflight(
+      parsed.provider,
+      null,
+      allowedConnections,
+      resolvedModel
+    );
+    if (!credentials) {
+      return errorResponse(
+        HTTP_STATUS.UNAUTHORIZED,
+        `No credentials for provider: ${parsed.provider}`
+      );
+    }
+    if (credentials.allRateLimited) {
+      return unavailableResponse(
+        HTTP_STATUS.RATE_LIMITED,
+        `[${parsed.provider}] All accounts rate limited`,
+        credentials.retryAfter,
+        credentials.retryAfterHuman
+      );
+    }
+
+    const result = await handleFalAIImageEdit({
+      provider: parsed.provider,
+      model: parsed.model,
+      providerConfig,
+      body: {
+        prompt,
+        size: size ?? undefined,
+        response_format: responseFormat ?? undefined,
+        n: 1,
+      },
+      images,
+      credentials,
+      log,
+    });
+
+    if (result.success) {
+      await clearRecoveredProviderState(credentials);
+      return jsonResponse(result.data);
+    }
+    return jsonResponse(
+      toJsonErrorPayload(result.error, "Image edit provider error"),
+      result.status
+    );
+  }
+
   // Adobe Firefly: edit = storage upload + generate-async referenceBlobs (same as i2i generate).
   if (providerConfig?.format === "adobe-firefly-image") {
     return handleAdobeFireflyEditRequest({
@@ -416,6 +468,55 @@ async function postHandler(request: Request) {
       imageBytes,
       imageMime,
     });
+  }
+
+  // Built-in OpenRouter uses its unified Image API for reference-image
+  // edits: POST /api/v1/images with input_references. Forward through the
+  // provider-specific adapter (#10197), rather than the multipart
+  // /images/edits path used by custom OpenAI-compatible nodes.
+  if (providerConfig?.id === "openrouter") {
+    const credentials = await getProviderCredentialsWithQuotaPreflight(
+      parsed.provider,
+      null,
+      allowedConnections,
+      resolvedModel
+    );
+    if (!credentials) {
+      return errorResponse(
+        HTTP_STATUS.UNAUTHORIZED,
+        `No credentials for provider: ${parsed.provider}`
+      );
+    }
+    if (credentials.allRateLimited) {
+      return unavailableResponse(
+        HTTP_STATUS.RATE_LIMITED,
+        `[${parsed.provider}] All accounts rate limited`,
+        credentials.retryAfter,
+        credentials.retryAfterHuman
+      );
+    }
+
+    const result = await handleOpenRouterImageEdit({
+      provider: parsed.provider,
+      model: parsed.model,
+      baseUrl: providerConfig.baseUrl,
+      credentials,
+      prompt,
+      imageBytes,
+      imageMime,
+      size: size ?? undefined,
+      n: 1,
+      log,
+    });
+
+    if (result.success) {
+      await clearRecoveredProviderState(credentials);
+      return jsonResponse(result.data);
+    }
+    return jsonResponse(
+      toJsonErrorPayload(result.error, "Image edit provider error"),
+      result.status
+    );
   }
 
   // Other built-in providers do not expose an OpenAI-compatible edit endpoint.

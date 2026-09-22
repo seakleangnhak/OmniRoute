@@ -183,7 +183,9 @@ describe("scorePool with connectionDensity", () => {
 });
 
 describe("Per-Connection Rotation", () => {
-  it("rotates across all 43 Cerebras connection IDs, not just one", () => {
+  it(
+    "rotates across all 43 Cerebras connection IDs, not just one",
+    () => {
     const cerebrasCandidates: ProviderCandidate[] = Array.from({ length: 43 }, (_, i) =>
       makeCandidate({
         provider: "cerebras",
@@ -199,7 +201,13 @@ describe("Per-Connection Rotation", () => {
       if (result.connectionId) seenConnections.add(result.connectionId);
     }
     expect(seenConnections.size).toBeGreaterThanOrEqual(10);
-  });
+    },
+    // 200 synchronous selectProvider() calls over a 43-connection pool are CPU-bound and
+    // vitest's 5000ms default is too tight under shared-devbox contention (load avg 40+
+    // observed alongside parallel test/tsc/lint runs) — the assertion itself is unchanged,
+    // only the execution-time budget is widened. Refs #9985.
+    20000
+  );
 
   it("different combos maintain independent round-robin state", () => {
     const candidates: ProviderCandidate[] = Array.from({ length: 5 }, (_, i) =>

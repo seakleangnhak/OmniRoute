@@ -51,8 +51,8 @@ lastUpdated: 2026-06-28
 | **💰 经济型**  | GLM-4.7           | $0.6/1M    | 每日 10:00     | 预算备用           |
 |                | MiniMax M2.1      | $0.2/1M    | 5 小时滑动窗口 | 最便宜选项         |
 |                | Kimi K2           | $9/月 固定 | 10M Token/月   | 费用可预测         |
-| **🆓 免费**    | Qoder             | $0         | 无限制         | 8 个模型免费       |
-|                | Qwen              | $0         | 无限制         | 3 个模型免费       |
+| **🆓 免费**    | Qoder             | $0         | 未公布 Token 上限；仍有服务商限制 | 8 个模型免费 |
+|                | Qwen              | $0         | 未公布 Token 上限；仍有服务商限制 | 3 个模型免费 |
 |                | Kiro              | $0         | ~50 积分/月    | Claude 免费        |
 
 ---
@@ -78,9 +78,9 @@ Combo: "maximize-claude"
 **问题：** 无法承担订阅费用，需要可靠的 AI 编程辅助
 
 ```
-Combo: "free-forever"
-  1. if/kimi-k2       (无限免费)
-  2. qw/qwen3-coder-plus       (无限免费)
+Combo: "free-tier-fallback"
+  1. if/kimi-k2       (未公布 Token 上限；限制仍适用)
+  2. qw/qwen3-coder-plus       (未公布 Token 上限；限制仍适用)
 
 每月费用：$0
 质量：生产级模型
@@ -108,9 +108,9 @@ Combo: "always-on"
 
 ```
 Combo: "openclaw-free"
-  1. if/qwen3-coder-plus       (无限免费)
-  2. if/deepseek-r1            (无限免费)
-  3. if/kimi-k2                (无限免费)
+  1. if/qwen3-coder-plus       (未公布 Token 上限；限制仍适用)
+  2. if/deepseek-r1            (未公布 Token 上限；限制仍适用)
+  3. if/kimi-k2                (未公布 Token 上限；限制仍适用)
 
 每月费用：$0
 访问途径：WhatsApp, Telegram, Slack, Discord, iMessage, Signal...
@@ -206,7 +206,7 @@ Models:
 #### Qoder（8 个免费模型）
 
 ```bash
-Dashboard → Connect Qoder → OAuth login → Unlimited usage
+Dashboard → Connect Qoder → OAuth login → Access is subject to current provider limits
 
 Models: if/kimi-k2, if/qwen3-coder-plus, if/qwen3-max, if/qwen3-235b, if/deepseek-r1, if/deepseek-v3.2
 ```
@@ -244,10 +244,10 @@ Use in CLI: premium-coding
 ```
 Name: free-combo
 Models:
-  1. if/kimi-k2 (unlimited)
-  2. qw/coder-model (unlimited)
+  1. if/kimi-k2 (no published token cap; provider limits may apply)
+  2. qw/coder-model (no published token cap; provider limits may apply)
 
-Cost: $0 forever!
+Cost: currently listed as $0; terms and availability may change
 ```
 
 ---
@@ -1043,7 +1043,7 @@ OmniRoute 同时是一个 **MCP 服务端**（Model Context Protocol）和一个
 
 ### 权限域
 
-MCP 工具分为 10 个权限域：`analytics`、`auth`、`billing`、`combos`、`health`、`keys`、`memory`、`models`、`providers`、`system`。每个 Bearer Key 可限制到特定权限域 — 完整工具目录见 [MCP-SERVER.md](../frameworks/MCP-SERVER.md)，JSON-RPC Schema 见 [A2A-SERVER.md](../frameworks/A2A-SERVER.md)。
+MCP 当前定义 32 个命名权限域。每个 Bearer Key 可限制到特定权限域；权威权限域与工具清单见 [MCP-SERVER.md](../frameworks/MCP-SERVER.md)，JSON-RPC Schema 见 [A2A-SERVER.md](../frameworks/A2A-SERVER.md)。
 
 ---
 

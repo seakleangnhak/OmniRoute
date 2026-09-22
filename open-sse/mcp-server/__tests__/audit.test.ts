@@ -18,6 +18,13 @@ function createStatementMock() {
   };
 }
 
+// #8959 made the production loader use createRequire() (Electron/global-install
+// resolution), which vi.doMock CANNOT intercept — it only patches Vitest's ESM
+// module graph. The old better-sqlite3 doMock therefore never engaged: the code
+// opened a REAL sqlite file in the temp DATA_DIR ("no such table" on stderr)
+// and every mock assertion counted 0 calls. The shutdown tests now inject the
+// mock through the audit connection cache (globalThis.__omnirouteMcpAuditDb),
+// and the fallback test uses the __setBetterSqliteLoaderForTests seam.
 describe("MCP audit shutdown", () => {
   let dataDir: string;
   let dbFile: string;
@@ -44,15 +51,10 @@ describe("MCP audit shutdown", () => {
       close: vi.fn(),
       open: true,
     };
-    const MockDatabase = vi.fn(function MockDatabase() {
-      return mockDb;
-    });
-
-    vi.doMock("better-sqlite3", () => ({
-      default: MockDatabase,
-    }));
 
     const audit = await import("../audit.ts");
+      // Inject through the connection cache — the seam the module itself uses.
+      globalThis.__omnirouteMcpAuditDb = mockDb as unknown as typeof globalThis.__omnirouteMcpAuditDb;
 
     await audit.logToolCall("omniroute_get_health", { ok: true }, { ok: true }, 12, true);
     expect(mockDb.prepare).toHaveBeenCalledTimes(1);
@@ -76,15 +78,9 @@ describe("MCP audit shutdown", () => {
       close: vi.fn(),
       open: true,
     };
-    const MockDatabase = vi.fn(function MockDatabase() {
-      return mockDb;
-    });
-
-    vi.doMock("better-sqlite3", () => ({
-      default: MockDatabase,
-    }));
 
     const audit = await import("../audit.ts");
+    globalThis.__omnirouteMcpAuditDb = mockDb as unknown as typeof globalThis.__omnirouteMcpAuditDb;
 
     await audit.logToolCall("omniroute_get_health", {}, {}, 5, true);
     expect(audit.closeAuditDb()).toBe(true);
@@ -99,26 +95,16 @@ describe("MCP audit shutdown", () => {
 
     // Simulate a global-install scenario where the bundled native binary
     // never landed in dist/node_modules/better-sqlite3/build/Release/.
+    // Thrown from the loader seam because the real load path is
+    // createRequire("better-sqlite3"), unreachable by vi.doMock.
     const bindingErr = new Error(
       "Could not locate the bindings file. Tried: …/better_sqlite3.node"
     ) as Error & { code?: string };
     bindingErr.code = "MODULE_NOT_FOUND";
-    // Simulate the binding-missing failure as the better-sqlite3 default
-    // constructor throwing — this matches reality (`new Database()` throws
-    // "Could not locate the bindings file" when the prebuilt .node is absent)
-    // and reaches the adapter's `catch (nativeErr)`. A factory that itself
-    // throws is reported by vitest as a mock-setup error and never reaches
-    // the code under test.
-    const ThrowingDatabase = vi.fn(function ThrowingDatabase() {
-      throw bindingErr;
-    });
-    vi.doMock("better-sqlite3", () => ({
-      default: ThrowingDatabase,
-    }));
 
-    // node:sqlite's DatabaseSync does not expose a boolean `open` property,
-    // so the mock intentionally omits it — the adapter tracks open state in
-    // a local closure and exposes it via a getter.
+    // node:sqlite IS loaded via dynamic import(), so doMock works for it.
+    // Its DatabaseSync does not expose a boolean `open` property — the
+    // adapter tracks open state in a local closure.
     const mockNodeDb = {
       prepare: vi.fn(() => createStatementMock()),
       exec: vi.fn(),
@@ -130,7 +116,11 @@ describe("MCP audit shutdown", () => {
     vi.doMock("node:sqlite", () => ({ DatabaseSync }));
 
     const audit = await import("../audit.ts");
+    audit.__setBetterSqliteLoaderForTests(() => {
+      throw bindingErr;
+    });
 
+    try {
     await audit.logToolCall("omniroute_get_health", { ok: true }, { ok: true }, 4, true);
     expect(DatabaseSync).toHaveBeenCalledWith(dbFile);
     expect(mockNodeDb.prepare).toHaveBeenCalled();
@@ -142,5 +132,8 @@ describe("MCP audit shutdown", () => {
     // Cache is cleared after close, so a second close is a no-op.
     expect(audit.closeAuditDb()).toBe(false);
     expect(mockNodeDb.close).toHaveBeenCalledTimes(1);
+    } finally {
+      audit.__setBetterSqliteLoaderForTests(null);
+    }
   });
 });

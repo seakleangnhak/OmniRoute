@@ -1,18 +1,13 @@
 import { NextResponse } from "next/server";
-import {
-  getComboById,
-  updateCombo,
-  deleteCombo,
-  getComboByName,
-  getCombos,
-  isCloudEnabled,
-} from "@/lib/localDb";
+import { getComboById, updateCombo, deleteCombo, getComboByName, getCombos } from "@/lib/db/combos";
+import { isCloudEnabled } from "@/lib/db/settings";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { syncToCloud } from "@/lib/cloudSync";
 import { validateCompositeTiersConfig } from "@/lib/combos/compositeTiers";
 import { normalizeComboModels } from "@/lib/combos/steps";
 import { validateComboDAG, clampComboDepth } from "@omniroute/open-sse/services/combo.ts";
 import { updateComboSchema } from "@/shared/validation/schemas";
+import { requiresQuotaOnlyComboRefExecute } from "@/shared/validation/schemas/combo";
 import { isValidationFailure, validateBody } from "@/shared/validation/helpers";
 import { requireManagementAuth } from "@/lib/api/requireManagementAuth";
 import { QUOTA_MODEL_PREFIX } from "@/lib/quota/quotaModelNaming";
@@ -187,6 +182,17 @@ export async function PUT(request, { params }) {
       ...body,
       name: comboName,
     };
+    if (requiresQuotaOnlyComboRefExecute(nextComboState as never)) {
+      return comboErrorResponse(
+        "COMBO_002",
+        400,
+        {
+          firstField: "config.nestedComboMode",
+          firstMessage: "Quota-only combo references require nestedComboMode execute",
+        },
+        request
+      );
+    }
     const compositeValidation = validateCompositeTiersConfig(nextComboState);
     if (compositeValidation.success === false) {
       const failure = compositeValidation as {
@@ -248,9 +254,7 @@ export async function PUT(request, { params }) {
     // #8530: a combo renamed to a real model id is a supported pattern
     // (#6940 — bare-model-id provider fallback), so it is never rejected.
     // Surface it as a non-blocking warning instead of silently shadowing it.
-    const warning = comboName
-      ? buildComboNameCollisionWarning(String(comboName))
-      : null;
+    const warning = comboName ? buildComboNameCollisionWarning(String(comboName)) : null;
     return NextResponse.json(warning ? { ...combo, warning } : combo);
   } catch (error) {
     if (error instanceof ComboInvariantError) {
@@ -259,6 +263,12 @@ export async function PUT(request, { params }) {
     console.log("Error updating combo:", error);
     return comboErrorResponse("INTERNAL_001", 500, undefined, request);
   }
+}
+
+// PATCH /api/combos/[id] - partial update. PUT merges the body onto the stored
+// combo, so both verbs share one handler (same shape as /api/providers/[id]).
+export async function PATCH(request, ctx) {
+  return PUT(request, ctx);
 }
 
 // DELETE /api/combos/[id] - Delete combo

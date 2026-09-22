@@ -3,6 +3,7 @@
 import { useTranslations } from "next-intl";
 import type { MemorySettingsExtended } from "@/shared/schemas/memory";
 import type { EmbeddingProviderListing } from "@/lib/memory/embedding/types";
+import CustomEmbeddingEndpointFields from "./CustomEmbeddingEndpointFields";
 
 interface Props {
   settings: MemorySettingsExtended;
@@ -105,6 +106,7 @@ export default function EmbeddingSourceSelector({ settings, providers, onSave, s
               )}
             </select>
           )}
+          <CustomEmbeddingEndpointFields settings={settings} onSave={onSave} saving={saving} />
         </div>
       )}
 

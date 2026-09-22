@@ -241,7 +241,7 @@ src/                        # TypeScript（.ts / .tsx）
 │   ├── a2a/                # Agent-to-Agent v0.3 协议服务器
 │   ├── acp/                # Agent Communication Protocol 注册中心
 │   ├── compliance/         # 合规策略引擎
-│   ├── db/                 # SQLite 数据库层（21 个模块 + 16 次迁移）
+│   ├── db/                 # SQLite 数据库层（110 个顶层模块 + 130 次迁移）
 │   ├── memory/             # 持久化会话记忆
 │   ├── oauth/              # OAuth 服务商、服务与工具
 │   ├── skills/             # 可扩展技能框架
@@ -251,16 +251,16 @@ src/                        # TypeScript（.ts / .tsx）
 ├── mitm/                   # MITM 代理（证书、DNS、目标路由）
 ├── shared/
 │   ├── components/         # React 组件（.tsx）
-│   ├── constants/          # 服务商定义（177 个）、MCP 权限域、14 种路由策略
+│   ├── constants/          # 服务商定义（329 个）、MCP 权限域、19 种路由策略
 │   ├── utils/              # 熔断器、清洗器、认证辅助函数
 │   └── validation/         # Zod v4 Schema
 └── sse/                    # SSE 代理流水线
 
 open-sse/                   # @omniroute/open-sse 工作区
-├── executors/              # 14 个服务商专用请求执行器
+├── executors/              # 89 个执行器实现模块
 ├── handlers/               # 11 个请求处理器（chat、responses、embeddings、images 等）
-├── mcp-server/             # MCP Server（25 个工具、3 种传输、10 个权限域）
-├── services/               # 36+ 个服务（combo、autoCombo、rateLimitManager 等）
+├── mcp-server/             # MCP Server（107 个工具、3 种传输、32 个权限域）
+├── services/               # 178 个顶层服务（combo、autoCombo、rateLimitManager 等）
 ├── translator/             # 格式翻译器（OpenAI ↔ Claude ↔ Gemini ↔ Responses ↔ Ollama）
 ├── transformer/            # Responses API 变换器
 └── utils/                  # 22 个工具模块（stream、TLS、proxy、logging）

@@ -180,10 +180,37 @@ async function qdrantFetch(cfg: QdrantConfig, path: string, init?: RequestInit):
   });
 }
 
+export type QdrantCollectionMetadata =
+  { exists: false } | { exists: true; vectorSize: number; vectorName: string | null };
+
+export async function getQdrantCollectionMetadata(): Promise<QdrantCollectionMetadata | null> {
+  const cfg = await getQdrantConfig();
+  if (!cfg.enabled || !cfg.host) return null;
+
+  const res = await qdrantFetch(cfg, `/collections/${encodeURIComponent(cfg.collection)}`, {
+    method: "GET",
+  });
+  if (res.status === 404) return { exists: false };
+  if (!res.ok) return null;
+
+  const data = (await res.json().catch(() => null)) as any;
+  const vectors = data?.result?.config?.params?.vectors;
+  if (!vectors || typeof vectors !== "object" || Array.isArray(vectors)) return null;
+  if (typeof vectors.size === "number") {
+    return { exists: true, vectorSize: vectors.size, vectorName: null };
+  }
+
+  const vectorName = Object.keys(vectors)[0];
+  const vectorSize = vectorName ? vectors[vectorName]?.size : null;
+  if (typeof vectorSize !== "number") return null;
+  return { exists: true, vectorSize, vectorName };
+}
+
 export async function checkQdrantHealth(): Promise<{
   ok: boolean;
   latencyMs: number;
   error?: string;
+  collection?: QdrantCollectionMetadata;
 }> {
   const cfg = await getQdrantConfig();
   const start = Date.now();
@@ -198,7 +225,8 @@ export async function checkQdrantHealth(): Promise<{
       const text = await res.text().catch(() => "");
       return { ok: false, latencyMs, error: text.slice(0, 200) || `HTTP ${res.status}` };
     }
-    return { ok: true, latencyMs };
+    const collection = await getQdrantCollectionMetadata();
+    return { ok: true, latencyMs, ...(collection ? { collection } : {}) };
   } catch (err) {
     return {
       ok: false,

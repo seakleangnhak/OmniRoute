@@ -8,6 +8,7 @@ import {
   readCompressionRequestHeader,
   withCompressionHeaderEcho,
 } from "@/shared/utils/compressionHeaderEcho";
+import { withChatAdmission } from "@/shared/middleware/withChatAdmission";
 
 let initPromise = null;
 const injectionGuard = createInjectionGuard();
@@ -42,7 +43,7 @@ export async function OPTIONS() {
  *
  * @see https://platform.openai.com/docs/api-reference/completions
  */
-export async function POST(request: Request) {
+async function postHandler(request: Request) {
   const authRejection = await enforceClientApiAuth(request);
   if (authRejection) return authRejection;
 
@@ -86,6 +87,7 @@ export async function POST(request: Request) {
           method: request.method,
           headers: request.headers,
           body: JSON.stringify(normalized),
+          signal: request.signal,
         });
         // #3571 — translate the chat-pipeline response back to the legacy
         // text-completion shape so OpenAI Completion clients (e.g. TabbyML) work.
@@ -94,7 +96,7 @@ export async function POST(request: Request) {
         // echo the compression header on the way out.
         return withCompressionHeaderEcho(
           await asTextCompletionResponse(
-            await handleChat(newRequest, buildClientRawRequest(request, body)),
+            await handleChat(newRequest, () => buildClientRawRequest(request, body)),
             typeof body.model === "string" ? body.model : undefined
           ),
           compressionRequestHeader
@@ -125,3 +127,5 @@ export async function POST(request: Request) {
     compressionRequestHeader
   );
 }
+
+export const POST = withChatAdmission(postHandler);

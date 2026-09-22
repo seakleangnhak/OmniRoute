@@ -1,3 +1,13 @@
+// ENVIRONMENT NOTE (sandbox better-sqlite3 / glibc limitation, not a code defect):
+// This test constructs or exercises a real better-sqlite3-backed SQLite database.
+// better-sqlite3 is a native addon; production and CI load it normally, but some
+// sandboxes/dev boxes ship a system glibc older than the prebuilt binary requires
+// ("GLIBC_2.29 not found"), so the native module fails to dlopen and any test that
+// reaches better-sqlite3 directly (or asserts stdout that the load-failure warning
+// would pollute) fails HERE while passing in CI. This is a known environment
+// limitation, not a defect in the code under test: the OmniRoute runtime itself
+// cascades to node:sqlite/sql.js when better-sqlite3 is unavailable. See
+// tests/unit/_helpers/betterSqlite3Availability.ts for a guard helper.
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -1747,9 +1757,9 @@ test(
             FROM key_value
             WHERE namespace = 'settings' AND key = 'codexSessionAffinityTtlMs';
           `,
-          "134_model_intelligence.sql":
+          "164_model_intelligence.sql":
             "CREATE TABLE IF NOT EXISTS model_intelligence (model TEXT PRIMARY KEY, source TEXT, category TEXT, score REAL);",
-          "135_clear_semantic_cache_for_key_isolation.sql": "DELETE FROM semantic_cache;",
+          "165_clear_semantic_cache_for_key_isolation.sql": "DELETE FROM semantic_cache;",
         },
         () => runner.runMigrations(db)
       );
@@ -1776,11 +1786,11 @@ test(
         "clear_semantic_cache_for_key_isolation"
       );
       assert.equal(
-        db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("134")?.name,
+        db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("164")?.name,
         "model_intelligence"
       );
       assert.equal(
-        db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("135")?.name,
+        db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("165")?.name,
         "clear_semantic_cache_for_key_isolation"
       );
       assert.ok(
@@ -1891,7 +1901,7 @@ test(
 );
 
 test(
-  "reconcileRenumberedMigrations rehomes merged 097/098 collision markers to 134/135",
+  "reconcileRenumberedMigrations rehomes merged 097/098 collision markers to 164/165",
   serial,
   async () => {
     const runner = await importFresh("src/lib/db/migrationRunner.ts");
@@ -1947,9 +1957,9 @@ test(
               ALTER TABLE api_keys ADD COLUMN daily_usage_limit_usd REAL;
               ALTER TABLE api_keys ADD COLUMN weekly_usage_limit_usd REAL;
             `,
-            "134_model_intelligence.sql":
+            "164_model_intelligence.sql":
               "CREATE TABLE IF NOT EXISTS model_intelligence (model TEXT PRIMARY KEY, source TEXT, category TEXT, score REAL);",
-            "135_clear_semantic_cache_for_key_isolation.sql": "DELETE FROM semantic_cache;",
+            "165_clear_semantic_cache_for_key_isolation.sql": "DELETE FROM semantic_cache;",
           },
           () => runner.runMigrations(db)
         );
@@ -1972,11 +1982,11 @@ test(
           "api_key_usage_limits"
         );
         assert.equal(
-          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("134")?.name,
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("164")?.name,
           "model_intelligence"
         );
         assert.equal(
-          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("135")?.name,
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("165")?.name,
           "clear_semantic_cache_for_key_isolation"
         );
 
@@ -1998,7 +2008,7 @@ test(
 );
 
 test(
-  "reconcileRenumberedMigrations rehomes pre-merge 100/101 collision markers to 134/135",
+  "reconcileRenumberedMigrations rehomes pre-merge 100/101 collision markers to 164/165",
   serial,
   async () => {
     const runner = await importFresh("src/lib/db/migrationRunner.ts");
@@ -2047,9 +2057,9 @@ test(
               ALTER TABLE api_keys ADD COLUMN daily_usage_limit_usd REAL;
               ALTER TABLE api_keys ADD COLUMN weekly_usage_limit_usd REAL;
             `,
-            "134_model_intelligence.sql":
+            "164_model_intelligence.sql":
               "CREATE TABLE IF NOT EXISTS model_intelligence (model TEXT PRIMARY KEY, source TEXT, category TEXT, score REAL);",
-            "135_clear_semantic_cache_for_key_isolation.sql": "DELETE FROM semantic_cache;",
+            "165_clear_semantic_cache_for_key_isolation.sql": "DELETE FROM semantic_cache;",
           },
           () => runner.runMigrations(db)
         );
@@ -2064,11 +2074,11 @@ test(
           "api_key_usage_limits"
         );
         assert.equal(
-          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("134")?.name,
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("164")?.name,
           "model_intelligence"
         );
         assert.equal(
-          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("135")?.name,
+          db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("165")?.name,
           "clear_semantic_cache_for_key_isolation"
         );
 
@@ -2127,9 +2137,9 @@ test(
             "CREATE TABLE IF NOT EXISTS current_103_applied (id TEXT PRIMARY KEY);",
           "104_normalize_database_cache_size.sql":
             "CREATE TABLE IF NOT EXISTS current_104_applied (id TEXT PRIMARY KEY);",
-          "134_model_intelligence.sql":
+          "164_model_intelligence.sql":
             "CREATE TABLE IF NOT EXISTS model_intelligence (model TEXT PRIMARY KEY, source TEXT, category TEXT, score REAL);",
-          "135_clear_semantic_cache_for_key_isolation.sql": "DELETE FROM semantic_cache;",
+          "165_clear_semantic_cache_for_key_isolation.sql": "DELETE FROM semantic_cache;",
         },
         () => runner.runMigrations(db)
       );
@@ -2144,11 +2154,11 @@ test(
         "normalize_database_cache_size"
       );
       assert.equal(
-        db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("134")?.name,
+        db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("164")?.name,
         "model_intelligence"
       );
       assert.equal(
-        db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("135")?.name,
+        db.prepare("SELECT name FROM _omniroute_migrations WHERE version = ?").get("165")?.name,
         "clear_semantic_cache_for_key_isolation"
       );
     } finally {

@@ -18,6 +18,7 @@ import {
   TokenExtractionConfig,
   type TokenSource,
 } from "./tokenExtractionConfig";
+import { matchesCookieDomain } from "../utils/cookieDomain";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -30,6 +31,20 @@ export interface LoginResult {
 interface ActiveLogin {
   providerId: string;
   aborted: boolean;
+}
+
+export function captureConfiguredHeaders(
+  tokenSources: readonly TokenSource[],
+  requestHeaders: Record<string, string>,
+  credentials: Record<string, string>
+): void {
+  for (const source of tokenSources) {
+    if (source.type !== "header" || credentials[source.name]) continue;
+    const value = requestHeaders[source.name.toLowerCase()];
+    if (typeof value === "string" && value.trim()) {
+      credentials[source.name] = value.trim();
+    }
+  }
 }
 
 // ─── Service ────────────────────────────────────────────────────────────────
@@ -123,6 +138,19 @@ export class InAppLoginService extends EventEmitter {
         locale: "en-US",
       });
       const page = await context.newPage();
+      const credentials: Record<string, string> = {};
+
+      // Playwright normalizes request header names to lowercase. Capture only
+      // explicitly configured credentials and never replace the first token
+      // observed after login.
+      page.on("request", (request: { allHeaders(): Promise<Record<string, string>> }) => {
+        void request
+          .allHeaders()
+          .then((headers) => captureConfiguredHeaders(config.tokenSources, headers, credentials))
+          .catch(() => {
+            // Some browser-internal requests do not expose their full headers.
+          });
+      });
 
       // Navigate to login URL
       this.emit("status", {
@@ -134,7 +162,6 @@ export class InAppLoginService extends EventEmitter {
 
       // Poll for success URL + token extraction
       const maxPolls = Math.floor(maxTimeout / pollInterval);
-      const credentials: Record<string, string> = {};
       const startTime = Date.now();
 
       for (let i = 0; i < maxPolls; i++) {
@@ -170,9 +197,14 @@ export class InAppLoginService extends EventEmitter {
         for (const source of tokenSources) {
           if (source.type === "cookie") {
             const domain = source.domain || undefined;
+            // Exact host or dot-boundary suffix, never `includes()`: a cookie
+            // from `<domain>.attacker.tld` would otherwise be captured and
+            // persisted as the operator's credential. Same class CodeQL flagged
+            // in volcengineConsoleAutoLogin (#860/#861); this callsite was not
+            // flagged because the expected domain is config-supplied.
             const matched = cookies.find(
               (c: any) =>
-                c.name === source.name && (!domain || c.domain.includes(domain.replace(/^\./, "")))
+                c.name === source.name && (!domain || matchesCookieDomain(c.domain, domain))
             );
             if (matched && !credentials[source.name]) {
               credentials[source.name] = matched.value;

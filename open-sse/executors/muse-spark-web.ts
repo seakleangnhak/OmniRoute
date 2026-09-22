@@ -1070,7 +1070,7 @@ async function wsChat(
 
     const fail = (error: string) => finish({ content: "", deltas: [], error });
 
-    timeout = setTimeout(() => fail("Meta AI WebSocket timed out"), 30000);
+    timeout = setTimeout(() => fail(`Meta AI WS timed out (readyState=${ws.readyState})`), 30000);
     abortHandler = () => fail("Request aborted");
     signal?.addEventListener("abort", abortHandler, { once: true });
 
@@ -1287,7 +1287,7 @@ export class MuseSparkWebExecutor extends BaseExecutor {
     if (!authorization) {
       return errorResult(
         400,
-        "Missing Authorization for Meta AI WebSocket — your cookie must include an ecto1:... auth token.",
+        "Missing Authorization for Meta AI WebSocket — paste the ecto1:... WS auth token from meta.ai DevTools (Network → WS → clippy request Authorization param), alongside your ecto_1_sess cookie.",
         "missing_authorization",
         {},
         body

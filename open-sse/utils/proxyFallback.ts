@@ -285,6 +285,14 @@ export async function testProxiesAgainstTarget(
 // Find working proxy (with caching)
 // ---------------------------------------------------------------------------
 
+// #9100: single-flight probe dedup. Under concurrent failures (e.g. 5 parallel
+// chat requests all hitting a dead pinned proxy), every request would otherwise
+// probe the whole proxy pool simultaneously — a thundering herd of TCP connects
+// that throttles the very proxies it is trying to reach. Concurrent
+// findWorkingProxy calls for the same cache key share ONE probe promise;
+// mirrors the proxyHealthInflight pattern in src/lib/proxyHealth.ts.
+const inflightProbes = new Map<string, Promise<string | null>>();
+
 /**
  * Find a working proxy for the given target hostname and URL.
  *
@@ -315,6 +323,14 @@ export async function findWorkingProxy(
     PROXY_FALLBACK_CACHE.delete(cacheKey);
   }
 
+  // #9100: single-flight — if a probe for this cache key is already running,
+  // share its promise instead of starting another (thundering-herd guard).
+  const existingProbe = inflightProbes.get(cacheKey);
+  if (existingProbe) {
+    return existingProbe;
+  }
+
+  const probe = (async (): Promise<string | null> => {
   // Collect candidates
   const candidates = await (proxyFallbackTestHooks?.getProxyCandidates ?? getProxyCandidates)(
     targetUrl
@@ -353,6 +369,18 @@ export async function findWorkingProxy(
   });
 
   return null;
+  })();
+
+  inflightProbes.set(cacheKey, probe);
+  try {
+    return await probe;
+  } finally {
+    // Only the owning caller removes the entry — a later caller that picked up
+    // the shared promise must not delete it out from under the first caller.
+    if (inflightProbes.get(cacheKey) === probe) {
+      inflightProbes.delete(cacheKey);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

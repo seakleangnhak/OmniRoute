@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import vm from "node:vm";
 import { solveDuckDuckGoChallenge, makeDuckDuckGoFeSignals } from "./duckduckgo-web/challenge.ts";
@@ -136,12 +137,22 @@ interface DuckDuckGoModelCapabilities {
   reasoningEffort: string | null;
 }
 
-type DuckDuckGoChallengeResult = {
-  client_hashes?: unknown;
-  [key: string]: unknown;
+type DuckDuckGoRequestMessage = Record<string, unknown> & {
+  role: string;
+  content: unknown;
 };
 
 let durablePublicKey: JsonWebKey | null = null;
+
+export function normalizeDuckDuckGoMessages(value: unknown): DuckDuckGoRequestMessage[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((message) => {
+    if (!message || typeof message !== "object" || Array.isArray(message)) return [];
+    const record = message as Record<string, unknown>;
+    if (typeof record.role !== "string") return [];
+    return [{ ...record, role: record.role, content: record.content }];
+  });
+}
 
 function extractDuckDuckGoContent(data: unknown): string {
   if (!data || typeof data !== "object") return "";
@@ -255,11 +266,14 @@ export function normalizeDuckDuckGoModel(model: string | undefined): string {
 }
 
 function getDuckDuckGoModelCapabilities(model: string): DuckDuckGoModelCapabilities {
-  // Per duckchat/v1/models (2026-07-22): claude-haiku-4-5 and gpt-oss-120b take a "low"
-  // reasoningEffort on the free tier; the others omit it (duck.ai applies its own default).
+  // `reasoningEffort` is REQUIRED on every duckchat/v1/chat request. Omitting it
+  // returns 400 ERR_BAD_REQUEST — A/B verified live against duck.ai with an
+  // otherwise byte-identical payload (200 with the field, 400 without, repeated).
+  // The live duck.ai bundle always sends one, so there is no "let the server
+  // pick a default" path any more.
   if (model === "claude-haiku-4-5") return { reasoningEffort: "low" };
   if (model === "tinfoil/gpt-oss-120b") return { reasoningEffort: "low" };
-  return { reasoningEffort: null };
+  return { reasoningEffort: "none" };
 }
 
 function extractDuckDuckGoFeVersion(html: string): string | null {
@@ -357,7 +371,6 @@ export class DuckDuckGoWebExecutor extends BaseExecutor {
   }
 
   private warmed = false;
-  private seeded = false;
   private feVersion = DEFAULT_FE_VERSION;
   private pendingVqdHash1: string | null = null;
   private readonly cookieJar = new Map<string, string>();
@@ -444,14 +457,12 @@ export class DuckDuckGoWebExecutor extends BaseExecutor {
     const { model, body, stream, signal, upstreamExtraHeaders } = input;
     const upstreamModel = normalizeDuckDuckGoModel(model);
     const bodyObj = (body || {}) as Record<string, unknown>;
-    const rawMessages = Array.isArray((body as { messages?: unknown[] } | null)?.messages)
-      ? ((body as { messages: unknown[] }).messages as Array<Record<string, unknown>>)
-      : [];
+    const rawMessages = normalizeDuckDuckGoMessages(bodyObj.messages);
     const { hasTools, requestedTools, effectiveMessages } = prepareToolMessages(
       bodyObj,
       rawMessages
     );
-    const messages = effectiveMessages as Array<Record<string, unknown>>;
+    const messages = effectiveMessages;
     const isStreaming = stream !== false;
     const upstreamHeaders = upstreamExtraHeaders || {};
 
@@ -499,7 +510,7 @@ export class DuckDuckGoWebExecutor extends BaseExecutor {
         // Wrap the captured body as a Response so processResponse
         // (already a streaming/non-streaming transformer) can be
         // reused unchanged.
-        const upstreamResp = new Response(result.body, {
+        const upstreamResp = new Response(Buffer.from(result.body), {
           status: result.status,
           headers: {
             "Content-Type": result.contentType || "text/event-stream",
@@ -565,7 +576,12 @@ export class DuckDuckGoWebExecutor extends BaseExecutor {
       }
 
       await this.warmSession(mergedSignal);
-      await this.seedChallengeChain(upstreamModel, mergedSignal);
+      // NOTE: the throwaway "seed" chat POST that used to run here has been removed.
+      // It existed to coax a usable challenge out of the upstream while the solver
+      // was broken; now that the solver reproduces a real browser's probe vectors
+      // exactly, the first real request succeeds on its own. Keeping it only doubled
+      // the chat calls per user request against an IP-rate-limited endpoint, which
+      // showed up as spurious 429 ERR_RATE_LIMIT.
       const vqdHeaders = await this.acquireAuthHeaders(mergedSignal);
       if (!vqdHeaders.vqd4 && !vqdHeaders.vqdHash1) {
         clearTimeout(timeout);
@@ -772,41 +788,6 @@ export class DuckDuckGoWebExecutor extends BaseExecutor {
       }),
       signal
     );
-  }
-
-  private async seedChallengeChain(model: string, signal: AbortSignal): Promise<void> {
-    if (this.seeded || signal.aborted) return;
-    this.seeded = true;
-    const seedMessages = [{ role: "user", content: "hi" }];
-    const previousPending = this.pendingVqdHash1;
-    try {
-      const vqdHeaders = await this.acquireAuthHeaders(signal);
-      if (!vqdHeaders.vqd4 && !vqdHeaders.vqdHash1) {
-        this.pendingVqdHash1 = previousPending;
-        return;
-      }
-      const response = await fetch(CHAT_URL, {
-        method: "POST",
-        headers: mergeHeadersCaseInsensitive(this.buildRequestHeaders(), {
-          Accept: "text/event-stream",
-          "Content-Type": "application/json",
-          "x-ddg-journey-id": randomUUID().replaceAll("-", ""),
-          "x-fe-signals": makeDuckDuckGoFeSignals(),
-          "x-fe-version": this.feVersion,
-          ...(vqdHeaders.vqd4 ? { "x-vqd-4": vqdHeaders.vqd4 } : {}),
-          ...(vqdHeaders.vqdHash1 ? { "x-vqd-hash-1": vqdHeaders.vqdHash1 } : {}),
-        }),
-        body: JSON.stringify(buildDuckDuckGoPayload(model, seedMessages, false)),
-        signal,
-      });
-      this.rememberResponseCookies(response);
-      if (response.ok) this.rememberChallengeHeader(response);
-      else this.pendingVqdHash1 = previousPending;
-      await response.body?.cancel().catch(() => {});
-    } catch (error) {
-      void error;
-      this.pendingVqdHash1 = previousPending;
-    }
   }
 
   private async processResponse(

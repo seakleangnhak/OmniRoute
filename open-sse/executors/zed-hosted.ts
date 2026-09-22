@@ -21,7 +21,7 @@
  *
  * Ported from decolua/9router PR #2328 (open-sse/executors/zed.js),
  * adapted to TypeScript + OmniRoute's BaseExecutor/translator conventions.
- * Like WindsurfExecutor, this overrides execute() entirely rather than
+ * Like DevinDesktopExecutor, this overrides execute() entirely rather than
  * using BaseExecutor's default Claude-Code-oriented pipeline, because the
  * Zed wire request/response shape (thread envelope, LLM-token exchange,
  * NDJSON status frames) doesn't fit the generic transformRequest/buildUrl
@@ -45,11 +45,21 @@ import {
   type ZedCredentials,
 } from "../shared/zedAuth.ts";
 
+// Wire values for the `provider` field of POST /completions. These are NOT
+// display names: cloud.zed.dev matches them exactly, and an unrecognized value
+// fails the whole request with `500 {"message":"An internal server error
+// occurred."}` before the model is ever looked at — which is why every model id,
+// including invalid ones, produced an identical 500.
+//
+// The spellings come from Zed's own GET /models catalog, which reports
+// `anthropic`, `open_ai` and `google` (note the underscore); `x_ai` follows the
+// same convention. Feeding a catalog value back through normalizeZedProvider is
+// therefore identity, as it must be.
 const ZED_PROVIDER = {
-  anthropic: "Anthropic",
-  openai: "OpenAi",
-  google: "Google",
-  xai: "XAi",
+  anthropic: "anthropic",
+  openai: "open_ai",
+  google: "google",
+  xai: "x_ai",
 } as const;
 
 type ZedProviderName = (typeof ZED_PROVIDER)[keyof typeof ZED_PROVIDER];

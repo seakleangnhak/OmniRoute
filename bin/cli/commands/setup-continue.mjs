@@ -14,6 +14,7 @@ import os from "node:os";
 import { printHeading, printInfo, printSuccess, printError } from "../io.mjs";
 import { resolveActiveContext } from "../contexts.mjs";
 import { categoriseModel } from "./setup-codex.mjs";
+import { guardHostConfigTarget } from "../utils/config-home-guard.mjs";
 
 const SECRET_REF = "${{ secrets.OMNIROUTE_API_KEY }}";
 
@@ -111,6 +112,14 @@ export async function runSetupContinueCommand(opts = {}) {
   const configPath =
     opts.configPath ?? opts["config-path"] ?? join(os.homedir(), ".continue", "config.yaml");
 
+  const guard = await guardHostConfigTarget(configPath, {
+    toolLabel: "Continue",
+    hostCommand: "omniroute setup-continue",
+    allowContainerWrite: Boolean(opts.allowContainerWrite ?? opts["allow-container-write"]),
+    dryRun,
+  });
+  if (guard !== 0) return guard;
+
   printHeading("OmniRoute → Continue (config.yaml)");
   printInfo(`apiBase: ${apiBase}`);
 
@@ -172,6 +181,10 @@ export function registerSetupContinue(program) {
     .option("--only <patterns>", "Comma-separated substrings — keep only matching model IDs")
     .option("--config-path <path>", "config.yaml path (default: ~/.continue/config.yaml)")
     .option("--dry-run", "Print what would be written without touching the filesystem")
+    .option(
+      "--allow-container-write",
+      "Write even when the target is inside a container and not mounted from the host"
+    )
     .action(async (opts) => {
       const code = await runSetupContinueCommand(opts);
       if (code !== 0) process.exit(code);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { useTranslations } from "next-intl";
 
 type ButtonState = "idle" | "distributing" | "complete";
 
@@ -22,6 +23,7 @@ export default function DistributeProxiesButton({
   size = "md",
 }: DistributeProxiesButtonProps) {
   const [state, setState] = useState<ButtonState>("idle");
+  const t = useTranslations("sharedComponents.distributeProxies");
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -55,7 +57,11 @@ export default function DistributeProxiesButton({
 
   const icon = state === "distributing" ? "sync" : state === "complete" ? "check" : "swap_horiz";
   const displayLabel =
-    state === "distributing" ? "Distributing..." : state === "complete" ? "Complete" : label;
+    state === "distributing"
+      ? t("distributing")
+      : state === "complete"
+        ? t("complete")
+        : label || t("defaultLabel");
 
   return (
     <button

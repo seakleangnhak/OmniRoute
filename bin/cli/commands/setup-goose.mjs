@@ -14,6 +14,7 @@ import { join } from "node:path";
 import os from "node:os";
 import { printHeading, printInfo, printSuccess, printError, createPrompt } from "../io.mjs";
 import { resolveActiveContext } from "../contexts.mjs";
+import { guardHostConfigTarget } from "../utils/config-home-guard.mjs";
 
 function stripToRoot(url) {
   const s = String(url || "").replace(/\/+$/, "");
@@ -95,6 +96,14 @@ export async function runSetupGooseCommand(opts = {}) {
   const configPath =
     opts.configPath ?? opts["config-path"] ?? join(os.homedir(), ".config", "goose", "config.yaml");
 
+  const guard = await guardHostConfigTarget(configPath, {
+    toolLabel: "Goose",
+    hostCommand: "omniroute setup-goose",
+    allowContainerWrite: Boolean(opts.allowContainerWrite ?? opts["allow-container-write"]),
+    dryRun,
+  });
+  if (guard !== 0) return guard;
+
   printHeading("OmniRoute → Goose (openai-compatible)");
   printInfo(`OPENAI_HOST: ${host}   (no /v1 — Goose appends it)`);
 
@@ -148,6 +157,10 @@ export function registerSetupGoose(program) {
     .option("--config-path <path>", "config.yaml path (default: ~/.config/goose/config.yaml)")
     .option("--yes", "Non-interactive: do not prompt (requires --model)")
     .option("--dry-run", "Print what would be written without touching the filesystem")
+    .option(
+      "--allow-container-write",
+      "Write even when the target is inside a container and not mounted from the host"
+    )
     .action(async (opts) => {
       const code = await runSetupGooseCommand(opts);
       if (code !== 0) process.exit(code);

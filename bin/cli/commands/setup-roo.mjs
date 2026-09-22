@@ -16,6 +16,7 @@ import { join } from "node:path";
 import os from "node:os";
 import { printHeading, printInfo, printSuccess, printError } from "../io.mjs";
 import { resolveActiveContext } from "../contexts.mjs";
+import { guardHostConfigTarget } from "../utils/config-home-guard.mjs";
 
 function ensureV1(url) {
   const s = String(url || "").replace(/\/+$/, "");
@@ -101,6 +102,14 @@ export async function runSetupRooCommand(opts = {}) {
   const dryRun = Boolean(opts.dryRun ?? opts["dry-run"]);
   const importPath =
     opts.importPath ?? opts["import-path"] ?? join(os.homedir(), ".omniroute", "roo-settings.json");
+
+  const guard = await guardHostConfigTarget(importPath, {
+    toolLabel: "Roo Code",
+    hostCommand: "omniroute setup-roo",
+    allowContainerWrite: Boolean(opts.allowContainerWrite ?? opts["allow-container-write"]),
+    dryRun,
+  });
+  if (guard !== 0) return guard;
   const vscodePath =
     opts.vscodeSettings ??
     opts["vscode-settings"] ??
@@ -193,6 +202,10 @@ export function registerSetupRoo(program) {
     )
     .option("--yes", "Non-interactive: do not prompt (requires --model)")
     .option("--dry-run", "Print what would be written without touching the filesystem")
+    .option(
+      "--allow-container-write",
+      "Write even when the target is inside a container and not mounted from the host"
+    )
     .action(async (opts) => {
       const code = await runSetupRooCommand(opts);
       if (code !== 0) process.exit(code);

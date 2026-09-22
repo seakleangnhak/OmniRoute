@@ -58,6 +58,9 @@ describe("QdrantConfigCard", () => {
           }),
         });
       }
+      if (url === "/api/settings/qdrant/search") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, results: [] }) });
+      }
       return Promise.resolve({ ok: true, json: async () => ({}) });
     });
   });
@@ -86,7 +89,7 @@ describe("QdrantConfigCard", () => {
     expect(container.querySelector("[data-testid='qdrant-cleanup']")).toBeTruthy();
   });
 
-  it("toggle enabled switch calls PUT /api/settings/qdrant", async () => {
+  it("requires a search validation before enabling and exposes the setup tutorial", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string, opts?: { method?: string }) => {
       if (url === "/api/settings/qdrant" && opts?.method === "PUT") {
         return Promise.resolve({
@@ -105,6 +108,9 @@ describe("QdrantConfigCard", () => {
           ok: true,
           json: async () => ({ models: [] }),
         });
+      }
+      if (url === "/api/settings/qdrant/search") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, results: [] }) });
       }
       return Promise.resolve({ ok: true, json: async () => ({}) });
     });
@@ -125,19 +131,50 @@ describe("QdrantConfigCard", () => {
       "[data-testid='qdrant-enabled-switch']"
     ) as HTMLButtonElement | null;
     expect(toggleBtn).toBeTruthy();
+    expect(toggleBtn?.disabled).toBe(true);
+
+    // #11213: enabling is gated on a successful embedding search — validate first
+    const searchInput = container.querySelector(
+      "input[placeholder='qdrant.searchPlaceholder']"
+    ) as HTMLInputElement | null;
+    expect(searchInput).toBeTruthy();
+    const setVal = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )!.set!;
+    setVal.call(searchInput, "memory probe");
+    searchInput!.dispatchEvent(new Event("input", { bubbles: true }));
+    const searchBtn = container.querySelector(
+      "[data-testid='qdrant-search-test']"
+    ) as HTMLButtonElement | null;
+    await act(async () => {
+      searchBtn?.click();
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
     await act(async () => {
       toggleBtn?.click();
     });
     await act(async () => {
       await new Promise((r) => setTimeout(r, 50));
     });
-
     const putCalls = fetchMock.mock.calls.filter(
       (c: [string, { method?: string }]) =>
         typeof c[0] === "string" && c[0] === "/api/settings/qdrant" && c[1]?.method === "PUT"
     );
     expect(putCalls.length).toBeGreaterThan(0);
+
+    const tutorial = container.querySelector(
+      "[data-testid='qdrant-setup-tutorial']",
+    ) as HTMLButtonElement | null;
+    expect(tutorial).toBeTruthy();
+    await act(async () => {
+      tutorial?.click();
   });
+    expect(container.querySelector("[role='dialog']")).toBeTruthy();
+    expect(container.textContent).toContain("Rafa Martins");  });
 
   it("test connection button calls /api/settings/qdrant/health", async () => {
     const fetchMock = vi.fn().mockImplementation((url: string) => {
@@ -158,6 +195,9 @@ describe("QdrantConfigCard", () => {
           ok: true,
           json: async () => ({ ok: true, latencyMs: 12 }),
         });
+      }
+      if (url === "/api/settings/qdrant/search") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, results: [] }) });
       }
       return Promise.resolve({ ok: true, json: async () => ({}) });
     });
@@ -218,6 +258,9 @@ describe("QdrantConfigCard", () => {
             }),
           });
         }
+        if (url === "/api/settings/qdrant/search") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, results: [] }) });
+      }
         return Promise.resolve({ ok: true, json: async () => ({}) });
       });
     globalThis.fetch = fetchMock;
@@ -292,6 +335,9 @@ describe("QdrantConfigCard", () => {
           json: async () => ({ ok: true, deletedCount: 5 }),
         });
       }
+      if (url === "/api/settings/qdrant/search") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, results: [] }) });
+      }
       return Promise.resolve({ ok: true, json: async () => ({}) });
     });
     globalThis.fetch = fetchMock;
@@ -327,5 +373,148 @@ describe("QdrantConfigCard", () => {
     expect(cleanupCalls.length).toBeGreaterThan(0);
     // Shows cleanup success message
     expect(container.textContent).toContain("qdrant.cleanupSuccess");
+  });
+
+  it("auto-checks health on mount when enabled (no red error after refresh)", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/settings/qdrant") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ ...MOCK_QDRANT_SETTINGS, enabled: true }),
+        });
+      }
+      if (url === "/api/settings/qdrant/embedding-models") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ models: [] }),
+        });
+      }
+      if (url === "/api/settings/qdrant/health") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ ok: true, latencyMs: 2 }),
+        });
+      }
+      if (url === "/api/settings/qdrant/search") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, results: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    });
+    globalThis.fetch = fetchMock;
+
+    const { default: QdrantConfigCard } =
+      await import("../../../src/app/(dashboard)/dashboard/memory/components/QdrantConfigCard");
+    const container = makeContainer();
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<QdrantConfigCard />);
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // The health endpoint must be hit automatically on mount — no manual
+    // "Test connection" click required. Regression: the badge used to render
+    // red after a page refresh because health started as null and the mount
+    // effect never checked it.
+    const healthCalls = fetchMock.mock.calls.filter(
+      (c: [string]) => typeof c[0] === "string" && c[0] === "/api/settings/qdrant/health"
+    );
+    expect(healthCalls.length).toBeGreaterThan(0);
+    // Badge shows the real healthy state, not a red error.
+    expect(container.textContent).toContain("qdrant.statusActive");
+    expect(container.textContent).not.toContain("qdrant.statusError");
+  });
+
+  it("re-checks health after a successful save so a stale optimistic-window result cannot leave the badge red (enable ordering)", async () => {
+    let healthFetchCount = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string, opts?: { method?: string }) => {
+      if (url === "/api/settings/qdrant" && opts?.method === "PUT") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ ...MOCK_QDRANT_SETTINGS, enabled: true }),
+        });
+      }
+      if (url === "/api/settings/qdrant") {
+        return Promise.resolve({ ok: true, json: async () => MOCK_QDRANT_SETTINGS });
+      }
+      if (url === "/api/settings/qdrant/embedding-models") {
+        return Promise.resolve({ ok: true, json: async () => ({ models: [] }) });
+      }
+      if (url === "/api/settings/qdrant/health") {
+        healthFetchCount += 1;
+        // The first GET races the settings PUT and sees the OLD persisted
+        // config (enabled=false) -> not_configured. Post-PUT checks see a
+        // healthy Qdrant.
+        if (healthFetchCount === 1) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ ok: false, latencyMs: 0, error: "not configured" }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, latencyMs: 2 }) });
+      }
+      if (url === "/api/settings/qdrant/search") {
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, results: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    });
+    globalThis.fetch = fetchMock;
+
+    const { default: QdrantConfigCard } =
+      await import("../../../src/app/(dashboard)/dashboard/memory/components/QdrantConfigCard");
+    const container = makeContainer();
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<QdrantConfigCard />);
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // Enable Qdrant: save() optimistically flips the switch and starts the
+    // PUT while the mount effect immediately GETs health against the OLD
+    // persisted settings (returned as not_configured above).
+    const toggleBtn = container.querySelector(
+      "[data-testid='qdrant-enabled-switch']"
+    ) as HTMLButtonElement | null;
+    expect(toggleBtn).toBeTruthy();
+
+    // #11213: enabling is gated on a successful embedding search — validate first
+    const searchInput = container.querySelector(
+      "input[placeholder='qdrant.searchPlaceholder']"
+    ) as HTMLInputElement | null;
+    expect(searchInput).toBeTruthy();
+    const setVal = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )!.set!;
+    setVal.call(searchInput, "memory probe");
+    searchInput!.dispatchEvent(new Event("input", { bubbles: true }));
+    const searchBtn = container.querySelector(
+      "[data-testid='qdrant-search-test']"
+    ) as HTMLButtonElement | null;
+    await act(async () => {
+      searchBtn?.click();
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    await act(async () => {
+      toggleBtn?.click();
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // The stale first check must not be the last word: a fresh health GET must
+    // be scheduled after the PUT succeeds so the badge ends green.
+    const allHealthCalls = fetchMock.mock.calls.filter(
+      (c: [string]) => typeof c[0] === "string" && c[0] === "/api/settings/qdrant/health"
+    );
+    expect(allHealthCalls.length).toBeGreaterThanOrEqual(2);
+    expect(container.textContent).toContain("qdrant.statusActive");
+    expect(container.textContent).not.toContain("qdrant.statusError");
   });
 });

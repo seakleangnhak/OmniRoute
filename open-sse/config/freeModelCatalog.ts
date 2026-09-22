@@ -26,6 +26,20 @@ export interface FreeModelBudget {
    * reports this per model as `mayTrainOnYourPrompts` on its public catalog.
    */
   trainsOnPrompts?: boolean;
+  /**
+   * True only when the provider's own published terms document that exceeding
+   * the free allowance is a hard stop (request refused / rate-limited) and NOT
+   * automatic pay-as-you-go billing — e.g. an explicit "no credit card
+   * required" claim on the provider's pricing page. This is a curated fact
+   * about the upstream provider, not something derivable from `freeType` or
+   * from any live API response, so it must be set by hand per entry with the
+   * source of the claim in a comment. Leave unset (undefined) whenever this
+   * isn't independently documented — `undefined` and `false` are both treated
+   * as "not guaranteed" by `strictZeroCostFilter.ts`; never default to `true`
+   * to grow the catalog. See STRICT_ZERO_COST in
+   * `open-sse/services/autoCombo/strictZeroCostFilter.ts`.
+   */
+  hardStopGuaranteed?: boolean;
 }
 
 export interface FreeModelTotals {

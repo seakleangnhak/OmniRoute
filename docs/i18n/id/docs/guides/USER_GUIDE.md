@@ -67,17 +67,17 @@ vs. $20 + terkena batas = frustrasi
 **Masalah:** Tidak mampu berlangganan, butuh AI coding yang andal
 
 ```
-Combo: "free-forever"
-  1. if/kimi-k2-thinking       (unlimited free)
-  2. qw/qwen3-coder-plus       (unlimited free)
+Combo: "free-tier-fallback"
+  1. if/kimi-k2-thinking       (no published token cap; limits apply)
+  2. qw/qwen3-coder-plus       (no published token cap; limits apply)
 
-Biaya bulanan: $0
-Kualitas: Model siap produksi
+Biaya bulanan: $0 pada jatah yang saat ini tercantum
+Kualitas: verifikasi model, batas, privasi, dan SLA untuk beban kerja Anda
 ```
 
-### Kasus 3: "Saya butuh coding 24/7, tanpa gangguan"
+### Kasus 3: "Saya butuh fallback berlapis untuk coding"
 
-**Masalah:** Tenggat waktu, tidak boleh ada downtime
+**Masalah:** Tenggat waktu dan kebutuhan untuk mengurangi dampak batas penyedia
 
 ```
 Combo: "always-on"
@@ -85,23 +85,23 @@ Combo: "always-on"
   2. cx/gpt-5.2-codex          (langganan kedua)
   3. glm/glm-4.7               (murah, reset harian)
   4. minimax/MiniMax-M2.1      (termurah, reset 5 jam)
-  5. if/kimi-k2-thinking       (gratis tanpa batas)
+  5. if/kimi-k2-thinking       (akses gratis tercantum; batas penyedia berlaku)
 
-Hasil: 5 lapis fallback = nol downtime
+Hasil: 5 lapis fallback memperluas ketahanan; ketersediaan upstream tidak dijamin
 Biaya bulanan: $20-200 (langganan) + $10-20 (cadangan)
 ```
 
 ### Kasus 4: "Saya ingin AI GRATIS di OpenClaw"
 
-**Masalah:** Perlu asisten AI di aplikasi pesan, sepenuhnya gratis
+**Masalah:** Perlu asisten AI di aplikasi pesan dengan opsi akses gratis
 
 ```
 Combo: "openclaw-free"
-  1. if/glm-4.7                (gratis tanpa batas)
-  2. if/minimax-m2.1           (gratis tanpa batas)
-  3. if/kimi-k2-thinking       (gratis tanpa batas)
+  1. if/glm-4.7                (akses gratis tercantum; batas penyedia berlaku)
+  2. if/minimax-m2.1           (akses gratis tercantum; batas penyedia berlaku)
+  3. if/kimi-k2-thinking       (akses gratis tercantum; batas penyedia berlaku)
 
-Biaya bulanan: $0
+Biaya bulanan: $0 pada jatah yang saat ini tercantum; ketentuan dapat berubah
 Akses melalui: WhatsApp, Telegram, Slack, Discord, iMessage, Signal...
 ```
 
@@ -180,7 +180,7 @@ Models:
 #### Qoder (8 model GRATIS)
 
 ```bash
-Dashboard → Connect Qoder → OAuth login → Unlimited usage
+Dashboard → Connect Qoder → OAuth login → Access is subject to current provider limits
 
 Models: if/kimi-k2-thinking, if/qwen3-coder-plus, if/glm-4.7, if/minimax-m2, if/deepseek-r1
 ```
@@ -188,7 +188,7 @@ Models: if/kimi-k2-thinking, if/qwen3-coder-plus, if/glm-4.7, if/minimax-m2, if/
 #### Qwen (3 model GRATIS)
 
 ```bash
-Dashboard → Connect Qwen → Device code auth → Unlimited usage
+Dashboard → Connect Qwen → Device code auth → Access is subject to current provider limits
 
 Models: qw/qwen3-coder-plus, qw/qwen3-coder-flash
 ```
@@ -226,10 +226,10 @@ Use in CLI: premium-coding
 ```
 Name: free-combo
 Models:
-  1. if/kimi-k2-thinking (unlimited)
-  2. qw/qwen3-coder-plus (unlimited)
+  1. if/kimi-k2-thinking (no published token cap; provider limits may apply)
+  2. qw/qwen3-coder-plus (no published token cap; provider limits may apply)
 
-Cost: $0 selamanya!
+Cost: saat ini $0 dalam batas penyedia; ketentuan dan ketersediaan dapat berubah
 ```
 
 ---

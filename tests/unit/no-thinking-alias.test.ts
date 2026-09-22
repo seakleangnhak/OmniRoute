@@ -73,7 +73,11 @@ test("applyNoThinkingAlias expresses reasoning_effort:none without a thinking bl
   // #6879: a thinks-by-default OpenAI-shape model must carry reasoning_effort:"none"
   // explicitly (not merely have the field deleted), so suppression actually takes
   // effect downstream; the Responses-shaped `reasoning` object is still dropped.
-  assert.equal(body.reasoning_effort, "none", "reasoning_effort must express none, not be stripped");
+  assert.equal(
+    body.reasoning_effort,
+    "none",
+    "reasoning_effort must express none, not be stripped"
+  );
   assert.ok(!("reasoning" in body), "reasoning object must be dropped");
 });
 
@@ -150,4 +154,33 @@ test("appendNoThinkingVariants keeps alias prefix when no map is provided", () =
   const out = appendNoThinkingVariants(models);
   const ids = out.map((m) => m.id);
   assert.ok(ids.includes("no-think/cc/claude-opus-4-5"), "alias prefix preserved");
+});
+
+test("appendNoThinkingVariants keeps root bare even when id carries a provider prefix", () => {
+  const models = [entry("vertex/claude-opus-4-5", "vertex")];
+  const out = appendNoThinkingVariants(models);
+  const variant = out.find((m) => m.id === "no-think/vertex/claude-opus-4-5");
+  assert.ok(variant, "variant with the fully-qualified id must exist");
+  assert.equal(
+    variant!.root,
+    "no-think/claude-opus-4-5",
+    "root must be bare (no embedded provider segment), matching the effort-variant convention"
+  );
+});
+
+test("shouldExposeNoThinkingAlias rejects an already effort-suffixed id", () => {
+  assert.equal(shouldExposeNoThinkingAlias(entry("vertex/claude-sonnet-5-high")), false);
+  assert.equal(shouldExposeNoThinkingAlias(entry("claude-opus-4-5-xhigh")), false);
+});
+
+test("appendNoThinkingVariants does not synthesize a no-think variant of an effort variant", () => {
+  // Simulates the real pipeline order in catalogResponse.ts: appendClaudeEffortVariants
+  // runs first and produces an id like this before appendNoThinkingVariants ever sees it.
+  const models = [entry("vertex/claude-sonnet-5-high")];
+  const out = appendNoThinkingVariants(models);
+  assert.equal(out, models, "no variant should be added for an effort-suffixed id");
+  assert.ok(
+    !out.some((m) => m.id === "no-think/vertex/claude-sonnet-5-high"),
+    "the incoherent combined id must never be advertised"
+  );
 });

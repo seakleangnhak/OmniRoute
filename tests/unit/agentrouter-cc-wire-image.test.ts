@@ -56,7 +56,7 @@ test("(b) applyFingerprint selects the claude-code-compatible fingerprint for ag
   const { headers } = applyFingerprint(
     "agentrouter",
     buildProviderHeaders("agentrouter", { apiKey: "sk-agentrouter" }, true),
-    { model: "claude-opus-4-6", messages: [] }
+    { model: "claude-opus-4-8", messages: [] }
   );
   // Fingerprint reordering keeps the CC wire image + the preserved x-api-key auth.
   assert.equal(headers["x-api-key"], "sk-agentrouter");
@@ -70,7 +70,7 @@ test("(c) CRUX: agentrouter keeps its OWN x-api-key auth (NOT CC Bearer)", () =>
 });
 
 test("(c) CRUX: agentrouter keeps its OWN registry baseUrl + ?beta=true", () => {
-  const url = buildProviderUrl("agentrouter", "claude-opus-4-6", true);
+  const url = buildProviderUrl("agentrouter", "claude-opus-4-8", true);
   assert.equal(url, "https://agentrouter.org/v1/messages?beta=true");
   // NOT the CC-family anthropic default baseUrl.
   assert.ok(!url.includes("api.anthropic.com"));

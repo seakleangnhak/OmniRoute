@@ -11,6 +11,7 @@ export interface ProviderPluginModel {
   toolCalling?: boolean;
   supportsReasoning?: boolean;
   supportsVision?: boolean;
+  supportsVideo?: boolean;
   unsupportedParams?: readonly string[];
   targetFormat?: string;
 }
@@ -66,6 +67,7 @@ function mapModel(model: RegistryModel): ProviderPluginModel {
     toolCalling: model.toolCalling,
     supportsReasoning: model.supportsReasoning,
     supportsVision: model.supportsVision,
+    supportsVideo: model.supportsVideo,
     unsupportedParams: model.unsupportedParams,
     targetFormat: model.targetFormat,
   }) as ProviderPluginModel;
@@ -186,7 +188,7 @@ export function createServiceBackendManifestEntry(
   template: Pick<
     ProviderPluginManifestEntry,
     "format" | "executor" | "auth" | "endpoints" | "capabilities" | "passthroughModels" | "sidecar"
-  >,
+  >
 ): ProviderPluginManifestEntry {
   return {
     id: pluginId,

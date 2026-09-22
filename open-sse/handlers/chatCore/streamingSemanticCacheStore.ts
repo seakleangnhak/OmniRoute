@@ -21,8 +21,8 @@ type LoggerLike = { debug?: (...args: unknown[]) => void } | null | undefined;
 type CacheBody = {
   messages?: unknown;
   input?: unknown;
-  temperature?: unknown;
-  top_p?: unknown;
+  temperature?: number;
+  top_p?: number;
 };
 
 export interface StreamingSemanticCacheStoreDeps {
@@ -46,7 +46,7 @@ interface StreamingCacheArgs {
   body: CacheBody;
   headers: unknown;
   model: string;
-  apiKeyId?: string | number;
+  apiKeyId?: string;
   streamUsage?: Record<string, unknown> | null;
   log?: LoggerLike;
 }

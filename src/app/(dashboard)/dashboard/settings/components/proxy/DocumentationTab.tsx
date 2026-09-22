@@ -41,8 +41,8 @@ export default function DocumentationTab() {
         <h3 className="font-semibold mb-2">SOCKS5</h3>
         <p className="text-sm text-text-muted">
           {t("proxyDocumentationSocks5DescBefore")}{" "}
-          <code className="bg-surface-alt px-1 rounded">ENABLE_SOCKS5_PROXY=false</code> to disable
-          (ON by default).
+          <code className="bg-surface-alt px-1 rounded">ENABLE_SOCKS5_PROXY=false</code>{" "}
+          {t("proxyDocumentationSocks5DescAfter")}
         </p>
       </section>
 

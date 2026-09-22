@@ -72,6 +72,38 @@ test("PollinationsExecutor enhances 401 errors for premium models with actionabl
   }
 });
 
+test("anonymous premium model fails fast with guidance and never dispatches upstream (#9827)", async () => {
+  const executor = new PollinationsExecutor();
+  let dispatched = false;
+
+  const origBaseExec = Object.getPrototypeOf(Object.getPrototypeOf(executor)).execute;
+  Object.getPrototypeOf(Object.getPrototypeOf(executor)).execute = async function () {
+    dispatched = true;
+    return new Response("ok", { status: 200 });
+  };
+
+  try {
+    await executor.execute({
+      model: "gemini",
+      body: { messages: [{ role: "user", content: "hi" }] },
+      stream: false,
+      credentials: {},
+    });
+    assert.fail("Should have thrown");
+  } catch (err) {
+    assert.equal(err.status, 401);
+    assert.match(err.message, /Pollinations model "gemini" requires an API key/);
+    assert.match(err.message, /Free keyless models/);
+    assert.equal(
+      dispatched,
+      false,
+      "upstream must not be called for premium models on the anonymous path"
+    );
+  } finally {
+    Object.getPrototypeOf(Object.getPrototypeOf(executor)).execute = origBaseExec;
+  }
+});
+
 test("PollinationsExecutor passes through 401 errors for non-premium models", async () => {
   const executor = new PollinationsExecutor();
 

@@ -42,3 +42,33 @@ export function selectCallLogIdsBefore(cutoff: string, limit = CALL_LOG_QUERY_PA
     .all(cutoff, limit) as Array<{ id: string }>;
   return rows.map((row) => String(row.id));
 }
+
+export function selectOverflowArtifactPaths(maxEntries: number, limit: number): string[] {
+  const db = getDbInstance();
+  const rows = db
+    .prepare(
+      `SELECT artifact_relpath
+       FROM call_logs
+       WHERE artifact_relpath IS NOT NULL
+       ORDER BY timestamp DESC, id DESC
+       LIMIT ? OFFSET ?`
+    )
+    .all(limit, maxEntries) as Array<{ artifact_relpath: string }>;
+  return rows.map((row) => row.artifact_relpath);
+}
+
+export function findReferencedArtifacts(relativePaths: string[]): Set<string> {
+  if (relativePaths.length === 0) return new Set();
+
+  const db = getDbInstance();
+  const placeholders = relativePaths.map(() => "?").join(", ");
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT artifact_relpath
+       FROM call_logs
+       WHERE artifact_relpath IN (${placeholders})
+       LIMIT ?`
+    )
+    .all(...relativePaths, relativePaths.length) as Array<{ artifact_relpath: string }>;
+  return new Set(rows.map((row) => row.artifact_relpath));
+}

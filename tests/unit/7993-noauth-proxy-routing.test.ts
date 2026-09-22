@@ -73,7 +73,7 @@ test.before(async () => {
 test.after(() => {
   proxyServer?.close();
   core.resetDbInstance();
-  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 test("#7993 getProviderCredentials('opencode-zen') uses the managed sibling 'opencode' connection", async () => {
@@ -113,7 +113,7 @@ test("#7993 a canonical 'opencode/<model>' resolved combo/catalog target egresse
 
   try {
     const result = await exec.execute({
-      model: "grok-code",
+      model: "deepseek-v4-flash-free",
       body: { messages: [{ role: "user", content: "hi" }], stream: false },
       stream: false,
       signal: null,

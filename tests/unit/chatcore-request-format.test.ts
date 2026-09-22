@@ -42,6 +42,29 @@ test("/responses endpoint → openai-responses source + isResponsesEndpoint, kep
   assert.equal(r.clientResponseFormat, FORMATS.OPENAI_RESPONSES);
 });
 
+test("xAI oauth on /responses enables nativeXaiResponsesPassthrough (#8964)", () => {
+  const r = resolveChatCoreRequestFormat({
+    body: { input: "x", tools: [{ type: "web_search" }, { type: "x_search" }] },
+    provider: "xai-oauth",
+    userAgent: "unit-test",
+    clientRawRequest: { endpoint: "/v1/responses", headers: new Headers() },
+  });
+  assert.equal(r.sourceFormat, FORMATS.OPENAI_RESPONSES);
+  assert.equal(r.isResponsesEndpoint, true);
+  assert.equal(r.nativeXaiResponsesPassthrough, true);
+  assert.equal(r.nativeCodexPassthrough, false);
+});
+
+test("xao alias on /responses enables nativeXaiResponsesPassthrough (#8964)", () => {
+  const r = resolveChatCoreRequestFormat({
+    body: { input: "x" },
+    provider: "xao",
+    userAgent: "unit-test",
+    clientRawRequest: { endpoint: "/v1/responses", headers: new Headers() },
+  });
+  assert.equal(r.nativeXaiResponsesPassthrough, true);
+});
+
 test("Responses-shaped body on a /chat/completions endpoint downgrades clientResponseFormat to openai", () => {
   const r = resolveChatCoreRequestFormat({
     body: { input: "describe" }, // input + no messages → openai-responses via body
@@ -97,6 +120,8 @@ test("nativeCodexPassthrough delegates to shouldUseNativeCodexPassthrough (codex
       provider: "codex",
       sourceFormat: r.sourceFormat,
       endpointPath: r.endpointPath,
+      body: { input: "x" },
+      headers: new Headers(),
     })
   );
 });
