@@ -1130,6 +1130,21 @@ function buildAgnesImageRequestBody(model, body) {
   return upstreamBody;
 }
 
+async function inlineCodexGatewayImageReference(value: unknown): Promise<unknown> {
+  if (typeof value !== "string") return value;
+
+  const trimmed = value.trim();
+  if (!isHttpUrl(trimmed)) return value;
+
+  const remoteImage = await fetchRemoteImage(trimmed);
+  const contentType = remoteImage.contentType.split(";")[0]?.trim().toLowerCase() || "";
+  if (!contentType.startsWith("image/")) {
+    throw new Error("Reference image URL did not return an image");
+  }
+
+  return `data:${contentType};base64,${remoteImage.buffer.toString("base64")}`;
+}
+
 async function handleOpenAIImageGeneration({
   model,
   provider,
@@ -1176,7 +1191,7 @@ async function handleOpenAIImageGeneration({
     if (providerConfig.forwardImageInputs) {
       // Image gateways such as 9router accept their own nested model ids and
       // reference-image fields. Forward supported inputs without interpreting
-      // the gateway's model as a local Codex model or fetching reference URLs.
+      // the gateway's model as a local Codex model.
       for (const field of [
         "background",
         "image_detail",
@@ -1206,6 +1221,32 @@ async function handleOpenAIImageGeneration({
               ? body.imageUrls
               : null;
           if (imageUrls?.length) upstreamBody.images = imageUrls;
+        }
+
+        try {
+          if (upstreamBody.image !== undefined) {
+            upstreamBody.image = await inlineCodexGatewayImageReference(upstreamBody.image);
+          }
+          if (Array.isArray(upstreamBody.images)) {
+            upstreamBody.images = await Promise.all(
+              upstreamBody.images.map((image) => inlineCodexGatewayImageReference(image))
+            );
+          }
+        } catch (error) {
+          const message = sanitizeErrorMessage(
+            error instanceof Error ? error.message : String(error)
+          );
+          return saveImageErrorResult({
+            provider,
+            model,
+            status: 400,
+            startTime,
+            error: `Reference image could not be downloaded: ${message}`,
+            requestBody: logRequestBody,
+            connectionId: credentials?.connectionId || null,
+            apiKeyId: apiKeyInfo?.id || null,
+            apiKeyName: apiKeyInfo?.name || null,
+          });
         }
       } else {
         for (const field of ["image_url", "image_urls", "imageUrls"]) {

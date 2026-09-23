@@ -123,17 +123,25 @@ test("custom image endpoint normalization preserves query parameters without dup
 
 test("custom image routing preserves the nested Codex model and 9router image options", async () => {
   await seedGateway();
-  let calls = 0;
+  const imageUrl = "https://assets.example.test/reference.jpg";
+  const imageDataUrl = `data:image/jpeg;base64,${Buffer.from(jpeg).toString("base64")}`;
+  let referenceFetches = 0;
+  let gatewayCalls = 0;
   const options = {
     size: "auto",
     quality: "auto",
     background: "auto",
     image_detail: "low",
     output_format: "jpeg",
-    image: "https://assets.example.test/reference.jpg",
+    image: imageUrl,
   };
   globalThis.fetch = async (input, init) => {
-    calls += 1;
+    if (String(input) === imageUrl) {
+      referenceFetches += 1;
+      return new Response(jpeg, { headers: { "Content-Type": "image/jpeg" } });
+    }
+
+    gatewayCalls += 1;
     assert.equal(String(input), `${baseUrl}/images/generations`);
     assert.equal(new Headers(init?.headers).get("authorization"), `Bearer ${upstreamKey}`);
     assert.deepEqual(JSON.parse(String(init?.body)), {
@@ -141,19 +149,30 @@ test("custom image routing preserves the nested Codex model and 9router image op
       prompt: "A cute cat wearing a hat",
       n: 1,
       ...options,
+      image: imageDataUrl,
     });
     return Response.json({ created: 123, data: [{ b64_json: "dGVzdA==" }] });
   };
   const response = await route.POST(imageRequest({ ...options, internalRoutingHint: "drop-me" }));
   assert.equal(response.status, 200, await response.clone().text());
   assert.deepEqual(await response.json(), { created: 123, data: [{ b64_json: "dGVzdA==" }] });
-  assert.equal(calls, 1);
+  assert.equal(referenceFetches, 1);
+  assert.equal(gatewayCalls, 1);
 });
 
 test("image generations maps multipart image_url to 9router's image edit field", async () => {
   await seedGateway();
   const imageUrl = "https://assets.example.test/reference.jpg";
+  const imageDataUrl = `data:image/jpeg;base64,${Buffer.from(jpeg).toString("base64")}`;
+  let referenceFetches = 0;
+  let gatewayCalls = 0;
   globalThis.fetch = async (input, init) => {
+    if (String(input) === imageUrl) {
+      referenceFetches += 1;
+      return new Response(jpeg, { headers: { "Content-Type": "image/jpeg" } });
+    }
+
+    gatewayCalls += 1;
     assert.equal(String(input), `${baseUrl}/images/generations`);
     assert.equal(new Headers(init?.headers).get("authorization"), `Bearer ${upstreamKey}`);
     assert.deepEqual(JSON.parse(String(init?.body)), {
@@ -162,7 +181,7 @@ test("image generations maps multipart image_url to 9router's image edit field",
       response_format: "url",
       n: 1,
       aspect_ratio: "16:9",
-      image: imageUrl,
+      image: imageDataUrl,
     });
     return Response.json({ created: 123, data: [{ url: "https://cdn.example.test/result.png" }] });
   };
@@ -183,6 +202,8 @@ test("image generations maps multipart image_url to 9router's image edit field",
     created: 123,
     data: [{ url: "https://cdn.example.test/result.png" }],
   });
+  assert.equal(referenceFetches, 1);
+  assert.equal(gatewayCalls, 1);
 });
 
 test("URL response format stores 9router b64_json as a five-minute download URL", async () => {
@@ -352,25 +373,41 @@ test("client cancellation reaches the upstream image request", async () => {
 
 test("existing Codex model names route through the configured gateway without a client prefix change", async () => {
   process.env.OMNIROUTE_CODEX_IMAGE_CONNECTION_ID = await seedGateway();
+  const imageUrl = "https://assets.example.test/reference.jpg";
+  const imageDataUrl = `data:image/jpeg;base64,${Buffer.from(jpeg).toString("base64")}`;
   const receivedModels: string[] = [];
+  let referenceFetches = 0;
+  let gatewayCalls = 0;
   globalThis.fetch = async (input, init) => {
+    if (String(input) === imageUrl) {
+      referenceFetches += 1;
+      return new Response(jpeg, { headers: { "Content-Type": "image/jpeg" } });
+    }
+
+    gatewayCalls += 1;
     assert.equal(String(input), `${baseUrl}/images/generations`);
     assert.equal(new Headers(init?.headers).get("authorization"), `Bearer ${upstreamKey}`);
     const body = JSON.parse(String(init?.body));
     receivedModels.push(body.model);
-    assert.equal(body.image, "https://assets.example.test/reference.jpg");
+    assert.equal(body.image, imageDataUrl);
     return new Response(jpeg, { headers: { "Content-Type": "image/jpeg" } });
   };
   for (const model of ["cx/gpt-image-2.5", "codex/gpt-image-2.5", "codex/gpt-5.6-sol"]) {
-    const response = await route.POST(imageRequest({
-      model,
-      image: "https://assets.example.test/reference.jpg",
-      response_format: "b64_json",
-    }));
+    const response = await route.POST(
+      imageRequest({
+        model,
+        image: imageUrl,
+        response_format: "b64_json",
+      })
+    );
     assert.equal(response.status, 200, await response.clone().text());
-    assert.deepEqual((await response.json()).data, [{ b64_json: Buffer.from(jpeg).toString("base64") }]);
+    assert.deepEqual((await response.json()).data, [
+      { b64_json: Buffer.from(jpeg).toString("base64") },
+    ]);
   }
   assert.deepEqual(receivedModels, Array(3).fill("cx/gpt-image-2.5"));
+  assert.equal(referenceFetches, 3);
+  assert.equal(gatewayCalls, 3);
 });
 
 test("existing provider-scoped Codex API shares gateway routing and binary responses", async () => {
